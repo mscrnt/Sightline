@@ -215,10 +215,12 @@ their names; new subsystems use the `sl_` prefix.
 
 ## Public mirror
 
-The GitHub repository at https://github.com/mscrnt/Sightline is published
-as a read-only source mirror. Development happens privately; GitHub
-Issues, Discussions and pull requests are not used as this project's
-workflow, and contributions are not accepted through them.
+The GitHub repository at https://github.com/mscrnt/Sightline is a
+generated, read-only source mirror: each release of the private canonical
+tree is exported, stripped of private infrastructure, and committed there
+as a single publication commit. The private development history is not
+published. GitHub Issues, Discussions and pull requests are not used as
+this project's workflow, and contributions are not accepted through them.
 
 ## Credits and acknowledgements
 
