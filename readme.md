@@ -165,8 +165,10 @@ The matching build also targets the JP and PAL dumps upstream supports
 `167c3c433dec1f1eb921736f7d53fac8cb45ee31`).
 
 GoldenEye 007 is the property of its rightsholders. This project is
-unaffiliated with Rare, Nintendo, MGM, or Danjaq, and ships only original
-code and original artwork.
+unaffiliated with Rare, Nintendo, MGM, or Danjaq. Sightline distributes
+no ROM or ROM-derived game assets; original Sightline-authored artwork
+is included, while inherited source and third-party material retain
+their existing copyright and licensing status.
 
 ## Licensing
 
