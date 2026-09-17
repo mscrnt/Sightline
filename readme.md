@@ -204,15 +204,6 @@ data/asset-overrides/ original boot-screen models authored for Sightline
 docs/                 roadmap, divergences, backlog, decisions
 ```
 
-## Contributing
-
-Read [docs/project-rules.md](docs/project-rules.md) first — it holds the
-non-negotiable rules (the trace gate, docs-first format authority, no
-per-level hand-authoring, and what is explicitly out of scope). Upstream's guides still apply to the
-decomp side: [docs/StructureGuide.md](docs/StructureGuide.md) and
-[docs/StyleGuide.md](docs/StyleGuide.md). Original decomp symbols keep
-their names; new subsystems use the `sl_` prefix.
-
 ## Public mirror
 
 The GitHub repository at https://github.com/mscrnt/Sightline is a
