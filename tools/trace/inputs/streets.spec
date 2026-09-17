@@ -1,0 +1,1 @@
+LEVEL=streets DIFFICULTY=agent TOUGH=

@@ -1,0 +1,1 @@
+LEVEL=jungle DIFFICULTY=agent TOUGH=10 S007=///

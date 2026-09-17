@@ -1,0 +1,1 @@
+LEVEL=bunker1 DIFFICULTY=secret TOUGH=10 S007=///

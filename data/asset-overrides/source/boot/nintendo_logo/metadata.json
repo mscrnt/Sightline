@@ -1,0 +1,23 @@
+{
+ "logo": "loadbearing",
+ "asset_id": "boot.nintendo_logo",
+ "scale": 1.0,
+ "provenance": "AUTHORED, NOT EXTRACTED. NOTHING IN THIS MODEL COMES FROM THE ROM.",
+ "provenance_detail": "Geometry authored by the project owner from the owner's OWN source artwork, and the single texture is the author's own chrome environment map. No ROM vertex, normal, display-list or pixel data is present. This model needs nothing from the player's ROM at runtime.",
+ "texture_refs": {},
+ "texture_refs_note": "DELIBERATELY EMPTY, and it must stay that way while this model has no game texture in it. An earlier revision REFERENCED the game's nintendo.logo_i8 and shipped an authored placeholder standing in for it; the texture is now the author's own chrome map, so both the reference and the placeholder are gone and the build passes no --texture-ref for this package. A stale entry here would name a texture this package no longer has - at best an error, at worst a silent wrong resolution.",
+ "textures_authored": "textures/chrome_authored.png is embedded and carries extras.sl_authored with its own provenance string in the glTF, which is what --repo checks before allowing any pixels into a committed model. It is not resampled from, traced from, or derived from any ROM texture.",
+ "material_declarations_note": "BOTH ARE LOAD-BEARING and each fails differently, so neither may be dropped in a re-export. extras.sl_texgen true keeps the environment map sampled by the vertex normal per frame; without it the material falls back to baked UVs and the logo renders FLAT. KHR_materials_unlit keeps it unlit; without it the logo renders at 0.66x the original's brightness, which is exactly the defect that made an earlier committed copy the 'stale LIT version'. Both failures are silent - the geometry is still correct and it still draws.",
+ "normals": "AUTHORED AND DELIBERATE - DO NOT NORMALISE OR RECOMPUTE. Front and back faces carry a 30-degree radial dome with a 0.28 downward bias, so G_TEXTURE_GEN samples the environment map as intended. These are tuned against captured frames; they are NOT an export defect and true geometric normals are NOT wanted here.",
+ "known_deferred": {
+  "aspect": "This model is 3706 x 599.6 x 366.9 model units against the original prop's 3706 x 814 x 498 - correct width, about 74% of its height and depth. The importer therefore reports per-axis fit factors X 1 / Y 1.358 / Z 1.357. This is EXPECTED OUTPUT, not an error. It is not fixable by a uniform scale and needs a rebuild at the right aspect, which the owner has deliberately deferred. Do not apply a scale or adjust the geometry to compensate."
+ },
+ "materials": [
+  {
+   "material": "N64-nintendo-env",
+   "texgen": true,
+   "unlit": true,
+   "texture": "textures/chrome_authored.png (authored, embedded)"
+  }
+ ]
+}

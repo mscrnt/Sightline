@@ -1,0 +1,1 @@
+LEVEL=cradle DIFFICULTY=secret TOUGH=10 S007=///

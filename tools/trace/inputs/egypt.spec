@@ -1,0 +1,1 @@
+LEVEL=egypt DIFFICULTY=agent TOUGH=

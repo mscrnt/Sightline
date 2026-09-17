@@ -1,0 +1,1 @@
+LEVEL=frigate DIFFICULTY=agent TOUGH=

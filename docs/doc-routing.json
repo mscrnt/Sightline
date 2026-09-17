@@ -1,0 +1,861 @@
+{
+  "_comment": [
+    "Routing table: which of Zoinkity's 617 notes is AUTHORITATIVE for a given",
+    "question, and which source files each area governs.",
+    "",
+    "This exists because searching 617 files is a decision, and under momentum",
+    "the decision does not get made - four times in one session, at a cost of",
+    "hours, when each lookup would have taken under a minute. The table turns",
+    "'which doc covers this?' from judgement into a lookup.",
+    "",
+    "GROW THIS. Every time a doc answers a question, add the mapping. Every time",
+    "the docs are searched and found silent, add it to 'not_covered' so nobody",
+    "re-searches a dead end.",
+    "",
+    "Authority warning: 'Rand++ Documentation (Misc)/' documents a ROM HACK's",
+    "modified formats, not the base game. Never cite it as authority.",
+    "",
+    "docs_root below is INTENTIONALLY EMPTY. gedocs.py resolves the notes in",
+    "this order: $GEDOCS_DOCS_ROOT, then the value below IF IT IS SET AND THAT",
+    "PATH EXISTS, then ../goldeneye_docs/notes/GE Documentation beside this",
+    "repo. Leaving it empty means the sibling rule decides, which is the rule",
+    "that actually holds on Windows, WSL and Linux alike.",
+    "",
+    "It previously recorded an absolute pre-migration path. Measured 2026-09-01:",
+    "that path still exists under WSL and is at the SAME COMMIT as the canonical",
+    "checkout, so it was serving identical content and nothing was wrong today.",
+    "It was a latent trap, not an active bug - the pre-migration copy is kept",
+    "deliberately frozen as a safety reference, so it would have outranked the",
+    "canonical sibling the first time the canonical copy moved ahead.",
+    "",
+    "Do not put a machine's absolute path here. Set $GEDOCS_DOCS_ROOT instead."
+  ],
+  "docs_root": "",
+  "areas": {
+    "display-lists": {
+      "why": "DL command set, opcode values, operand layout, byte order",
+      "files": [
+        [
+          "Display Lists and Object Generation/ucode05.txt",
+          "the command set. 04 = rsp_uc05_vertex. Warns Rare's Tri4 diverges from F3DEX"
+        ],
+        [
+          "Display Lists and Object Generation/ucode05_old.txt",
+          "the fallback table whenever ucode05.txt punts to a .HTM that is not in the corpus - carries F5 settile and FC setcombine in full"
+        ],
+        [
+          "Display Lists and Object Generation/Objects/Sample Parsings",
+          "worked parses of real display lists - ground truth to check a parser against"
+        ],
+        [
+          "Display Lists and Object Generation/7F098A2C - sky DL gen.txt",
+          "the game generating a DL itself; cross-check for command usage"
+        ],
+        [
+          "Display Lists and Object Generation/Objects/Texture application (Rooms).txt",
+          "the authority on what 'untextured' means in a list. Gives the two patterns side by side: textured is BA 2-cycle + FC26A004 1F1093FF + BB002801, untextured is BA 1-cycle + FCFFFFFF FFFE793C + BB000001. BB stays ON in both - it is the RSP's texture-coordinate switch, not the RDP's sampler - so the COMBINER is what decides"
+        ]
+      ],
+      "governs": [
+        "src/game/propobj.c",
+        "src/game/model.c",
+        "src/game/sl_swap_model.c",
+        "src/game/title.c",
+        "src/game/title3.c",
+        "src/gfx/sl_gfx_dl.c",
+        "src/game/sky.c"
+      ],
+      "learned": "2026-08-24: the collision-DL crash was an opcode read from byte 0 of a list sl_gfx_dl_swap had already rewritten to NATIVE word order (opcode is byte 3 on x86). Two source-reading theories were wrong; ucode05.txt settled it. From the same file, for the parser conversion: opcodes 04=vertex, B1=GE_TRI4 (Rare's four-triangle command in F3DEX's G_TRI2 slot, explicitly NOT F3DEX format), BF=tri1, B8=enddl, B9/BA=setothermode_l/h. tri4 indices are nibbles 0-F packed across both words; the vertex buffer is 16 entries because only 0-F is addressable; all-zero triangles are skipped; and triangles REQUIRE a vertex offset set by the vertex command - the precondition the crash violated.  2026-08-25, the 2D command set (E4 texrect + B3/B4 rdphalf, F6 fillrect, F7/F8/FA/FB colour registers, FC setcombine, B6/B7 geometry mode, FF/FE image pointers): ucode05.txt covers all of them EXCEPT FC, which it sends to SETCOMBINE.HTM - not in the corpus, and ucode05_old.txt carries the table, the same fallback that already worked for F5 settile and B9/BA setothermode. TWO CORRECTIONS TO THE NOTES, both measured against a live Facility frame. (1) ucode05.txt's E4 entry has its corner labels transposed: it calls the upper word 'upper left' and the lower word 'lower right', but 225 of 225 texrects in one frame put the LARGER coordinate in w0, which is its own E5 entry's labelling and gbi.h's packing. (2) A texrect is three 64-bit commands, not one 128-bit one - E4, then B4 with s/t, then B3 with dsdx/dtdy - and the three fixed-point scales differ: rectangle 10.2, s/t 10.5, dsdx/dtdy s5.10. Also load-bearing and stated nowhere in the notes: F6 fillrect takes the fill-colour register ONLY in FILL cycle type; in 1-cycle it goes through the colour combiner, which is how GoldenEye draws its menu scrims and level fades (textrelated.c:181 draw_blackbox_to_screen). 2026-08-25, B-021 - A THIRD CORRECTION TO THE NOTES, and the one that was costing character models: ucode05.txt's Rare vertex table gives 'upper 000FFFFF number of bytes to grab', reading bits 16-19 as the top nibble of a 20-bit length. Bits 16-19 are actually v0, the DESTINATION SLOT in the 16-entry vertex buffer. The note's reading is indistinguishable from the truth whenever v0 == 0, which is most of the time. Authority is include/PR/gbi.h:1865, the plain-F3D branch this build compiles (neither F3DEX_GBI nor F3DEX_GBI_2 is defined - build.sh DEFS, and a tree-wide grep finds them only inside gbi.h/gs2dex.h/sptask.h's own ifdefs): gSPVertex(pkt,v,n,v0) = gDma1p(pkt,G_VTX,v,sizeof(Vtx)*(n),((n)-1)<<4|(v0)), and gDma1p puts that byte at bits 16-23 - so 20-23 are n-1 and 16-19 are v0. Settled by measurement, since note and header disagreed: on a streets frame with guards, 513 of 513 vertex commands had (w0 & 0xffff) == n*16 but only 476 had the 20-bit field equal, and the 37 that differed were exactly the 37 carrying a non-zero bits 16-19 - and exactly the 37 the old length check rejected. Facility and dam measure 0, which is why an earlier '3360 of 3360' check on those two levels looked clean. ALSO from B-021, and stated nowhere in the notes: the RSP transforms a vertex WHEN THE 04 LOADS IT, with the modelview then in effect, and a later 01 does not re-transform what is already loaded. That is how GoldenEye deforms a limb with no matrix stack at all - dotube (model.c:4683-4686) loads a tube's proximal ring under one bone matrix and the rest under the next bone's. Corollary: push=0/pop=0 is CORRECT for this game, not a bug - G_MTX_PUSH and gSPPopMatrix appear nowhere in src/ (tree-wide grep empty), because bone hierarchy is composed on the CPU into model->render_pos (model.c:1783) and issued as absolute LOAD|NOPUSH matrices. 2026-08-26, B-035: the in-game health ring drew at 8/255 of its correct hue because tex_apply gated 3D texturing on BB's enable byte alone. 'Texture application (Rooms).txt' settles it in one line - untextured room geometry is spelled BB000001 (ON, level 0) plus FCFFFFFF FFFE793C, so BB is never the gate and a list that issues no BB of its own inherits the previous draw's tile. The gauge (gDPSetCombineMode G_CC_SHADE, bondview2.c:8617) sets exactly that FC and emits only gSPVertex/gSP2Triangles. This CORRECTS B-034 hypothesis 1, which had the first half right ('level is not a texture gate') and then concluded no triangle draws under a texel-free combiner - false, and measured on the submitted stream rather than on the renderer. Live per-frame counts with the gate armed: dam 34, streets 68, statue 56, archives 3, facility 0. Only four texel-free combiners appear across the twenty-level sweep plus the watch path, all of the same family: fcffffff fffe793c (SHADE/SHADE, the note's own pattern), fffe7838 (1-cycle sibling), fffe7b3d (colour SHADE, alpha ENVIRONMENT), fffdf6fb (PRIM/PRIM, watch menu). 2026-08-26, B-046: THREE more things the combiner table settles that the renderer had guessed at. (1) ucode05_old.txt's FC table is the authority on the c mux being FIVE bits (0x1f at bit 15) while a/b/d are four and three: 8..15 in the b mux and 7 in the d mux are the constant ZERO, which is what makes (X - 0) * K + 0 recognisable as an ordinary modulate. The renderer recognised only the ZERO-MULTIPLIER shape (c >= 16, output exactly d) and drew every modulate as plain white, discarding PRIMITIVE and ENVIRONMENT everywhere - the death blood overlay (fc119623 ff2fffff =(TEXEL0-0)*PRIM+0 over a 4-bit INTENSITY image, prim 96 00 00 b4 measured byte for byte against blood_animation.c:266) and the boot-logo fade-in (same combiner, 260 triangles, prim ramping 000000 to 100e10 over six frames). (2) The explosion colour is NOT in a colour register at all: all fifteen lists in assets/oddtextures.c set G_CC_INTERFERENCE = TEXEL0 * TEXEL1 in 2-cycle and load an IA smoke frame into tile 0 and an RGBA16 FIRE frame into tile 1, so a renderer that binds one texture gets a white smokeball by construction. Measured live as fc111404 ff13ffff. (3) ucode05.txt's '03 rsp_uc05_movemem' type 0x80 viewport is NOT ignorable for one player: GoldenEye renders into a 320x220 letterbox, measured every frame on statue/dam/facility as scale=(640,440) trans=(640,480) -> x[0,320] y[10,230] of 320x240, and its full-screen overlays cover exactly that (fillrect y[10.0,231.0]). Dropping the viewport stretched all 3D by 240/220 and let the world draw over the letterbox, which reads as 'the overlay has gaps' when the overlay is correct and the world is too tall. ALSO settled here, for the boot logos: geometry mode seen=001f3205 carries G_LIGHTING (0x20000) and G_TEXTURE_GEN (0x40000) and movemem uploads G_MV_L0/G_MV_L1, so the Vtx cn[] bytes there are NORMALS, not colours - reading them as colours is what makes the logos a smooth rainbow that follows surface orientation. 2026-08-26, B-044 - a FOURTH correction, and this one is about what the RDP does NOT draw. gbi.h:4602 (the plain-F3D branch this build compiles) packs the E4 texrect's xh/yh - the LOWER RIGHT corner - into w0 and xl/yl into w1, which is the labelling ucode05.txt has transposed (already recorded above, 225 of 225 measured). What follows from it and was NOT recorded: an inverted rectangle draws NOTHING, because the RDP rasterises spans from uly down to lry and lry < uly is zero spans. GoldenEye emits inverted texrects on purpose-built-wrong input - textRenderGlyph's bottom-clip branch (textrelated.c:333) computes lry as `clipY + clipHeight + text_y` and omits the * 4 that every other coordinate in the same command carries, so a glyph straddling the bottom edge of a text clip box arrives as lry=200 against uly=776. Measured on a facility watch capture: 45 such commands, 9 per frame (the nine letters of DETONATOR) on exactly 5 frames, all with w0 y=200 and w1 y=776. draw_texrect's min/max corner normalisation turned each into a valid 144-pixel-tall rect, and with dtdy=1024 over a ~10px glyph the texture tiled ~14 times down it - which is the whole artefact. Rejecting the inverted command restores hardware behaviour; the game's arithmetic is Rare's and stays untouched. 2026-08-26, B-048: the F5 setile LOWER WORD's shift fields, which this file's F5 entry lists as a field table but does not break out - shiftt is 0x00003C00 and shifts is 0x0000000F. Authority is include/PR/gbi.h:3401 gDPSetTile, which packs _SHIFTL(shiftt,10,4) and _SHIFTL(shifts,0,4), and the explosion display lists in assets/oddtextures.c are its own emitter. Values 0..10 shift the incoming s/t RIGHT; 11..15 shift LEFT by 16-shift, and only right shifts occur in this game (measured: odd-shift=0 on every frame that draws one). This is LOAD-BEARING and had been dropped entirely: an explosion's fire tile is F5 line=4 tmem=392 shifts/shiftt=2 with F2 s[0,220] t[0,220], i.e. a settilesize of 56x56 over a loadblock of 224 texels. The two only reconcile through the shift - 56>>2 = 14 texels of real image, on a row stride of line*4 = 16, so the fire is 14 columns padded to 16 for tmem's 8-byte rows. Sizing that tile from settilesize the way tile_texture does is wrong by 4x in both axes. Also measured the same day, on the twenty-level boot sweep plus two explosion replays: twenty distinct combiners reach a draw, ELEVEN name TEXEL1, and exactly ONE is a product - fc111404 ff13ffff, the explosion. The other ten are all (TEXEL1 - TEXEL0) * LODFRAC + TEXEL0 (or PRIMLOD), the 2-cycle mip chain, where TEXEL1 is the next LOD level rather than a second image. 2026-08-28, B9 setothermode_l SHAPES, settled by census over 7300 frames rather than inferred: the game emits exactly TWO shapes - sft=3/len=29 (gDPSetRenderMode, which carries a COMPLETE othermode_l value) and sft=0/len=2 (gDPSetAlphaCompare). Masking the render-mode write field-wise strips bits 0-2, the alpha-compare field, so G_AC_DITHER becomes unreachable - 0050004b was never once observed, only 00500048. The ONLY word in the whole game carrying ac=3 is that render-mode word; explicit gDPSetAlphaCompare fires 8 times and is ALWAYS G_AC_NONE, and the 17 render-mode words carrying ac=0 are what actively CLEAR dither, which is what keeps quiet surfaces clean. Two rival readings were REFUTED by consequence, not argued away: masking field-wise makes dither unreachable while the cartridge visibly dithers; ORing the data in unmasked predicts dither persisting onto the page-select bars drawn next under G_RM_XLU_SURF, and those bars measure 0.38-0.68x the dithered face's frame-to-frame difference, never at or above 1, so they show it THROUGH rather than being cut out. The implemented rule is therefore NARROW - only sft==3 && len==29 takes the whole word, every other shape keeps the field-wise write, so gDPSetAlphaCompare and gDPSetDepthSource still touch only their own fields. The BEHAVIOUR is measured; the microcode-level REASON is not established. See B-056. 2026-09-02, B-077 - the TMEM ADDRESS UNIT, settled by the corpus and needed by anything that addresses inside a load. ucode05_old.txt's `F5 rdp_settile` upper word gives tmem as `0x000001FF` - NINE bits, 512 units across the RDP's texture memory, so one unit is a 64-bit word and a tile sitting `d` units into a load holds the source bytes `d * 8` in. The same entry's lower word carries `0x0003C000 mask t` and `0x000000F0 mask s`, the exponents the RDP wraps s/t at. Corroborated by the game's OWN generator, `images text and font/7F076D68 - generate DL for ImgDecl.txt`: line 985 steps `tmem += tilesize` once per mip level, where tilesize is height * width-rounded-up-to-a-word (:864/:884/:904/:924 per depth) and that same rounded width is written as the F5 `line`; it also sets mask s / mask t to `nearest root to width / height`, i.e. ceil(log2(dim)). One F3 covers the WHOLE chain - texGetDepthAndSize (src/game/tex.c:358) sums every lod into the single length gDPLoadBlock receives (tex.c:514). MEASURED consequence on Facility, and the reason this matters less than it looks: the renderer binds G_TX_RENDERTILE only, that tile is always at the load's own start, and 241654 of 241654 resolutions in a 400-frame windowed run were exact-start - so B-052's interior case is real but never reached by consumed output, and 2^mask equals the renderer's divisor on every REPEATING axis (the six NPOT tiles that disagree are clamped on exactly the disagreeing axis). 2026-09-03, B-088 - A FIFTH CORRECTION TO THE NOTES, and the one that was costing the Rareware logo its material. ucode05_old.txt's F2 entry (:901) says 'Sets size of image to be mapped' and gives width=(lrs-uls)/4+1, height=(lrt-ult)/4+1. That is the CLAMP RECTANGLE, not the image extent, and reading it as the extent is wrong on any axis that REPEATS: the RDP wraps a repeating axis at 2^mask and samples the whole of that span. The mask fields themselves ARE in the corpus and had simply never been read by this renderer - the same F5 lower-word table B-048 took its shifts from carries '0003C000 mask t' and '000000F0 mask s' (ucode05_old.txt:972,:976), bit for bit what include/PR/gbi.h:3415 gsDPSetTile packs as _SHIFTL(maskt,14,4) and _SHIFTL(masks,4,4); G_TX_CLAMP is 0x2 at gbi.h:393. The two readings are indistinguishable whenever the F2 span already equals 2^mask, which is every repeating axis in Facility - B-077 measured exactly that, and it is a fact about Facility, not about the RDP. MEASURED where they disagree: the Rareware logo's D_02004758 (assets/rarewarelogo.c:1245) issues gsDPSetTileSize(0, 46, 116, 124, 124) over a tile title.c:363 loaded with gDPLoadTextureBlock(..., RGBA, 16b, 32, 32, 0, G_TX_WRAP, G_TX_WRAP, 5, 5, ...), so the F2 span is 20x3 while cms=cmt=WRAP with masks=maskt=5 means the RDP wraps at 32x32. 242 of the logo's 260 triangles were therefore sampling a three-texel-tall strip of a 32x32 environment map - shape and texture present, material finish wrong. Corroborated independently by the tile's own declared row stride: line=8 is 64 bytes is 32 texels at 16bpp, and the stride-disagreement census went 1 -> 0 when the width became 32. Containment measured rather than argued: the resize counter is 0 across LEGAL and NINTENDO and 0 in BOTH arms on Facility (identical 1026 textured tris, 27 distinct textures), and first becomes non-zero inside the Rareware window at exactly 242 per frame. 2026-09-03, B-089 - THE ROUTING TABLE HAD NO ENTRY FOR title.c ('no mapped area governs src/game/title.c'), and the operand layout it needed was already here: ucode05.txt's 04 vertex entry gives the lower word as '0f000000 segment / 00ffffff offset in point table'. title.c builds the EYE_INTRO gun-barrel aperture AT RUNTIME - createGunbarrelRenderHole (title3.c:15) writes 30 Vtx_t records, sub_GAME_7F01BFF8 (title3.c:75) wraps them in gSPVertex + gSP1Triangle - and handed the vertex operand as `barrelDisplayListPtr + 0x80000000`, a KSEG0->PHYSICAL conversion spelled as a 32-bit wrap-around ADD instead of through OS_K0_TO_PHYSICAL, so B-019's native fix to those macros never reached it. On the cartridge it is correct because segment 0 is left at 0 and the RSP resolves segment 0 + offset to the RDRAM address behind the KSEG0 pointer; natively there is one flat space and no segment to subtract through. MEASURED on one windowed run: the list carried '04f00100 a00de470' for vertices living at 0x200de470, dl_operand() returned NULL for all 4 vertex batches every frame (vtx=0, unres=4) while the 56 triangles naming them still executed against a vertex buffer nothing had loaded - so the aperture was drawn every frame, degenerate. This is the ONLY hand-rolled address conversion of its kind: `grep -rn \"+ *0x80000000\" src/` finds that line and nothing else. The carry-forward is not the arithmetic but WHERE it hid - a display list the game BUILDS at runtime is exactly where an address-space assumption survives, because nothing in the asset pipeline byte-swaps or relocates it on the way in, and every earlier sweep had been over lists that arrive from ROM.\n  2026-09-08, the Dam sky. ucode05.txt's B2/B3/B4 entries are the AUTHORITY for GoldenEye's hand-built RDP commands, and the B2 entry names the caller outright: \"rsp_uc05_rdphalf_cont ... Used by sky and water generators in GE. Follows B4 rdphalf_1 command. Acts as an indicator that the command continues with the given lower word. This is used only when operators longer than 64bits are in use.\" Its worked example assembles B4/B2 pairs into an 0xCE (G_TRI_SHADE_TXTR, gbi.h:219) triangle - which is exactly what src/game/sky.c emits and what this interpreter was discarding. THE MEASUREMENT that found it: SL_DL_CENSUS=1 on a dam boot reported `sl_ops: top: B2=19` and `orphan-halves=21` every frame with `texrect cmds=0`, i.e. 40 words dropped, and 40 is exactly one 0xCE primitive (8 edge + 16 shade + 16 texture). Facility reports 0 and 0 because its environment row sets clouds=0 (bgfog.c:131) and sky.c:320 takes the fill-rectangle path instead - Facility structurally CANNOT witness the sky path and is never a control for it. THE TRAP, and it cost a wrong first fix: an RDP 'triangle' is not necessarily a triangle. It carries three independent edges - major H over YH..YL, minor M over YH..YM, minor L over YM..YL - so when the minor pair is not collinear the primitive rasterises a TRAPEZOID. skyRenderFull uses this deliberately, setting XH to the left screen edge and XM to the right with zero slopes (sky.c:2209,:2212) to cover the whole sky band with ONE command; it has two triangle headers in an if/else but only one shade and one texture block, so 40 words describe a four-cornered shape. Decoding it as three vertices drew half the band and left the rest showing the backdrop, which still looked like 'Dam has no sky'. Walk the boundary as a polygon; a genuine triangle falls out of the same code as a degenerate case. METHOD note worth more than the bug: the first A/B looked like a 3.8% pixel win and was almost entirely the level-title CAPTION appearing in one run and not the other - the sky band itself had moved 827 pixels by a mean of 7. Counting differing pixels across a whole frame is not evidence that the thing you changed changed; band the diff to the region under test, and look at the image.  2026-09-08, B-101, ED rdp_setscissor: ucode05.txt gives the layout in full - ulx 0x00FFF000 / uly 0x00000FFF in the upper word, lrx / lry likewise in the lower, all four in 10.2 fixed point. That was enough to decode the per-room portal box without reading any decomp. What the notes do NOT say, and what no file in the corpus answers, is whether the RDP's scissor is load-bearing for the IMAGE on a port that already has a depth buffer - see not_covered. Measured instead: honouring it changes nothing at all on dam and depot (232 sampled frames of recorded play, zero pixels), and on frigate it REMOVES an 11x199 framebuffer band of ship structure, so it is not the safe no-op it looks like.  2026-09-08, opcode 06 - CALL versus BRANCH, and the reason an F8 bug mark described a third of the frame it claimed to cover. ucode05.txt:243-244 gives the two forms of the display-list command in two lines - `xx00xxxx push display list` and `xx01xxxx branch to display list` - and :437-440 (B8 rsp_enddl) completes them: \"If the current list was called by an 06 command, returns from branch.\" So a PUSH suspends the running list and resumes it after the 06, consuming a stack level; a BRANCH REPLACES the running list, which never resumes, and consumes none. A branch target is a SIBLING of the list it replaced, not a child of it, and the distinction is not cosmetic: MEASURED on a dam-seam-02 replay at room 111, one frame took six chained tail transfers and reached call-level 1 while sl_gfx_dl.c's walk() - which recurses for both forms - reached recursion depth 7. 1 + 6 = 7 exactly, so the walker's depth is its own branch count and nothing about the game's list. walk() refuses to descend past 8, and refused=0 on every frame of every run measured, so the cap has never fired - but the margin is one more chained transfer, and it is the BRANCH conflation that consumes it. WHAT IT COST: the mark table recorded submissions only at depth 0, and the frame's content lives under the transfers. On that same frame 95 of 136 submissions and 2311 of 3517 triangles - two thirds of the frame, including room 113's geometry and 62 segment-5 lists - were below the gate and could never appear. Triangle COUNTS still reconciled, because everything inside a transfer was tallied against it, which is exactly what made a truncated table look whole. A count that reconciles is not evidence of coverage; the table has to say what its own coverage was.  2026-09-10, B-108, the Dam water's spatial frequency: ucode05_old.txt's F5 mask fields (mask s 0x000000F0, mask t 0x0003C000) are the WRAP PERIOD exponents and the same entry's tmem/line give the ROW STRIDE, and the two are INDEPENDENT quantities a tile may set differently. src/game/unk_092E50.c's water tiles are the witness: CI8 line=2 (16 texels a row) under masks=maskt=5 (wrap at 32), so the RDP's visible 32x32 period is a 16-byte-stride walk of the 1024-byte source - each sampled row is 32 CONSECUTIVE bytes starting at t*16, successive rows overlapping by half, which is just what TMEM addressing t*line+s says. B-102 read the stride as the width and B-088 read the mask as both; each is right about ONE quantity. Sizing the GL repeat from the stride made Sightline wrap S at 16 texels where the RDP wraps at 32 - measured at the owner's mark 20260910-070752/mark-001: the water span s[-158.66,552.19] texels is 22.2 RDP periods and was drawn as 44.4, exactly 2x too dense in S while T (mask 32, height 32) was right. The fix (SL_TILE_PERIOD, default on): period = 2^mask on a wrapping masked axis, decode rows at the tile's line stride; the two coincide on every ordinary texture (B-077 measured that equality on Facility), and the 64-state texprobe census at the mark changed nothing but the water. ALSO measured, and easy to misread: the F3 for this load names 512 texels at siz=2 - 16-BIT units, 1024 bytes of CI8 indices with the TLUT at +0x400 - so the source has 64 stride-rows and the 32x32 window's last row (bytes 496..527) is real data, not an overflow. 2026-09-13, B-128 - the tracer's rainbow (Gitea #16). `7F076D68 - generate DL for ImgDecl.txt` answered twice more: :982-987 `tmem += tilesize` per level is the authority that a mip chain is ONE loadblock with tiles 1..n at word offsets INSIDE it (so a tmem address is a RANGE query, not a start-match - the native map matched starts only and answered the flare's tile 1 with the treeline strip an earlier draw had loaded at word 128), and the per-depth line rule gives the word size: 'width to nearest word' = (width+3)>>2 for 16-bit (:885-890) AND 32-bit (:870-875), 8-bit (:900-905) >>3, 4-bit (:915-920) >>4 - so a 64-bit tmem word holds 4 texels at 32bpp too, i.e. 16 DRAM bytes per word (gbi.h:431 G_IM_SIZ_32b_LINE_BYTES=2 against :430 _BYTES=4 is the same fact). The corpus is otherwise silent on tmem itself (grep -rni tmem over the notes: only the F5 tmem field, ucode05.txt:751 / ucode05_old.txt:965, and the generators' use of it). See docs/backlog.md B-128."
+    },
+    "setup-objects": {
+      "why": "per-type setup object layouts, propdef type codes, field offsets",
+      "files": [
+        [
+          "Setup File Microcodes and Paths/objects/object block types.txt",
+          "per-type layouts with field offsets, incl. camera (06) rotation limits"
+        ],
+        [
+          "Setup File Microcodes and Paths/Action block microcode/Action Block Types.txt",
+          "type table with word counts: 01 Door 0x40, 08 Weapon 0x22, 09 Guard 7, 06 Camera 0x3B"
+        ],
+        [
+          "Objects and Attributes/destruction table.txt",
+          "destructible object codes 0x00-0x0B"
+        ]
+      ],
+      "governs": [
+        "src/game/propobj.c",
+        "src/game/loadobjectmodel.c",
+        "src/native/sl_swap_setup.c"
+      ],
+      "learned": "PROPDEF_CCTV=6 and PROPDEF_AUTOGUN=13 cross-check against 'type 06 camera' and '0D autoturrets'. The 'Action Block Types.txt' word-count table is the authority on RECORD LENGTH, and bondtypes.h is not: sizepropdef() reproduces that table exactly for all 47 types, but sizeof(CCTVRecord)/4 is 63 against the file's 0x3b, because the struct describes what the game READS (it reads past the record) rather than what the file holds. Every other per-type struct matches its stride - measured 2026-08-25 by dumping every sizeof against the table. Anything that WRITES a record must bound itself by the table, not by sizeof. 2026-08-25, B-033: 'object block types.txt' type 04 key annotates offset 0x80 as \"lock bit values.  Door locks are masked with these values in order to open them\", with the example word 00 00 00 06 - so 0x80 is a WORD, and bondtypes.h's union { s8 keyID; u32 keyflags; } at that offset is a byte VIEW of it, not the field. gen_swap.py resolves a union by its FIRST MEMBER, saw the s8, and emitted no swap, so KeyRecord.keyflags stayed wire-order while DoorRecord.keyflags (0x9c) was swapped - the AND in bondinvCheckHasKeyFlags could then never match and no keycard opened any door. The rule this yields: when a union spans a documented field, the NOTE decides the width, and the narrow member is extracted arithmetically at its read sites (keyID is the wire MSB; its only reader is propobj.c check_if_entry_is_collectable). Facility measures 523 propdef records - 46 doors, 2 keys carrying bits 6 and 4, 0 padlock (0x26) records. 2026-08-26, B-051: 'object block types.txt' type 2F Tinted Glass is the authority that facility's lab/security windows are DISTANCE-GRADED BY DESIGN, and it is the note that three rounds of measurement missed. It gives 0x80 '+/- 4byte distance to full illumination' and 0x84 '+/- 4byte distance before you can see through window', states that the difference between them sets the fade, and notes a negative first value makes glass that never becomes clear. Those are TintDist/CullDist in bondtypes.h:3740 and the sample record's 0x190/0x258 = 400/600 are the values facility actually carries (measured live: 400/600 and 350/550, unk90=0.0 on every pane). Beyond CullDist glassCalculateOpacity (propobj.c:4203) returns 255 and objTick DISABLES THE PORTAL (propobj.c:5889), so the far room is legitimately not traversed - that part is Rare's and rule 5 applies. What the note does NOT cover is the render path, and that is where the defect is - but NOT where two earlier rounds put it. 2026-08-27, measured on the owner's ten-mark run: the pane IS submitted at the window (SL_TRI_WATCH names triangles 1195/1196 on the glass combiner fc26a004/1f1093fb, prim alpha 255, quad NDC mapping to px x[261,410] y[86,196] against a measured 149x101 rectangle at x[261,409] y[99,199]), and it contributes ZERO pixels. Painting every glass triangle opaque magenta (SL_GLASS_MARK=1) leaves the frame byte-identical while the counter proves 480 vertices were painted; dropping only that draw's TEXTURE (SL_GLASS_MARK=2) turns exactly 14390 of 14390 masked pixels magenta. So the pane is lost at the TEXTURE stage - GL_MODULATE multiplies the texel alpha into the vertex alpha - and every value the decomp controls, from the 2F record through glassCalculateOpacity to prim alpha, is correct. This also explains why the earlier SL_CC_GLASS fix (return PRIM alpha) measured 0 pixels changed: the value was right and was killed one stage later. The superseded claim 'this port draws nothing and the backdrop shows' is WITHDRAWN - a real quad is there. CAUTION on the instrument: SL_TRI_ID disables texturing (sl_gfx_dl.c:1935), so a TRI_ID capture must never be read as evidence about the shipped image; that error was made here and caught only by a second probe contradicting it on the same frame. CAUTION, and it cost real time here: the 'global visibility types.txt' finding that room visibility has no distance operator is true of the MICROCODE only. Distance reaches the portal flags through this prop type instead, so 'there is no distance mechanism' must not be read as a whole-system claim. 2026-09-15, Statue first pass: 'object block types.txt' answered three audit questions before any decomp was read - the type table (0x15 body armour, 0x28 aircraft, 0x08 weapon pickup) named the cartridge prop list's propdef codes, and its 0C-0F flags byte table decoded the six near-spawn weapon props' flags word 03520008 as no-object-collision / don't-load-4P / don't-load-2P / bulletproof / don't-load-MP, i.e. NOT the 0D x8 'invisible' bit. The objid a prop probe prints is the MODEL id, the PROP enum index in src/bondconstants.h (274 PROP_CHRBLACKBOX, 283 PROP_TIGER, 115 PROP_BODYARMOUR, 24 PROP_CCTV, 275 PROP_CHRVIDEOTAPE all cross-check); those six are model 119 PROP_HATCHBOLT, drawn by neither the cartridge nor the native at the same pose - a setup device, not a pickup. 2026-09-15, Archives first pass: the 'Action Block Types.txt' type table named the Archives prop list's propdef codes before any decomp was read - 07 Ammo Clip (model 133 PROP_WPPKMAG) and 08 Weapon (191 PROP_CHRWPPK) on the interrogation table, 2A Glass (104 PROP_WINDOW office partitions, 105/106/107 the lattice library and corridor windows), 2B Safe (254 PROP_SAFE) with its 01 Door (293 PROP_SAFEDOOR) and the 03 object inside it (274 PROP_CHRBLACKBOX, objective c's collect target) in room 5, 15 Body Armour (115/116), and the 01 Door records 297/298 PROP_ARCHSECDOOR1/2 for the two moving walls (rooms 62/63); model ids resolved from src/bondconstants.h as before. 2026-09-15, Streets first pass: the same type table named the Streets prop list before any decomp was read - 14 Ammo Box (model 5 PROP_AMMO_CRATE3, in Valentin's room 12), 15 Body Armour (115, five of them), 27 Wheeled Vehicles (280 PROP_JEEP x8), 2D Tank (288 PROP_TANK, one, in the start courtyard room 8), 08 Weapon (185 PROP_CHRGRENADELAUNCH in room 12, 196 PROP_CHRGRENADE in room 55), and 03 Std Object for the 30 PROP_LANDMINE, 22 PROP_BARRICADE, 11 PROP_CARGOLF, 7 PROP_CARWEIRD and the 27 PROP_ST_PETE_ROOM_1I/2I/3T/5C/6C street-block models that sit at every street tile's centre (y 437-463, flags 000204e1) - the buildings of the grid are props, not BG."
+    },
+    "guards-ai": {
+      "why": "chr/GUARDdata records, guard construction, AI lists, perception",
+      "files": [
+        [
+          "Setup File Microcodes and Paths/Action block microcode/7F03415C - guard constructor.txt",
+          "takes body, head, preset, pad; returns a guard id, never below 3. Identity is the body+head PAIR"
+        ],
+        [
+          "Actor-Specific Data and Animations/Initialization/7F000EB8 - allocate and intialize GUARDdata entries.txt",
+          "chr record allocation and initial field values"
+        ],
+        [
+          "Setup File Microcodes and Paths/generate guards.txt",
+          "guard generation"
+        ],
+        [
+          "expando guard.txt",
+          "0x34-byte position record; type codes; bit 2 = actually on screen"
+        ]
+      ],
+      "governs": [
+        "src/game/chr.c",
+        "src/game/chraction.c",
+        "src/game/chrai.c",
+        "src/game/chrprop.c"
+      ],
+      "learned": "The AI COMMAND LISTS themselves are not documented here - chraidata.c is the only reference for those."
+    },
+    "damage-hits": {
+      "why": "hit regions, damage multipliers, kill attribution",
+      "files": [
+        [
+          "Gameplay and Misc/Character hit locations.txt",
+          "part -> hit type table: 8 head, 7/F body, 0x64 weapon, 0x6E hat"
+        ],
+        [
+          "Gameplay and Misc/Damage and Kill Attributement.txt",
+          "damage model"
+        ]
+      ],
+      "governs": [
+        "src/game/chraction.c",
+        "src/game/gunfire.c"
+      ],
+      "learned": "HIT_GUN (0x64) and HIT_HAT (0x6E) do ZERO damage but register a hit."
+    },
+    "saves-eeprom": {
+      "why": "save block format, checksums, options word",
+      "files": [
+        [
+          "Gameplay and Misc/Goldeneye eeprom saves.txt",
+          "save block format"
+        ]
+      ],
+      "governs": [
+        "src/game/file2.c",
+        "tools/trace/sltrace/savefile.py",
+        "tools/save/ge_unlock_save.py"
+      ],
+      "learned": "Checksums and options are read as VALUES out of a cartridge-order image; the native port must swap them or validation silently resets the slot. 2026-09-11, measured against a save the game itself wrote (all six blocks): the 4kbit EEPROM is one 32-byte smallSave at byte 0 (magic 0x42 = SAVEFLAGS_SET(FOLDER3,SAVESLOT1,BOND_CONNERY,0), CRC over its 24 payload bytes) plus five 0x60 save_data slots from byte 32; each slot's CRC (crc.c fileGenerateCRC, the game's own RNG step seeded 0x8F809F473108B3C1) covers wire bytes +0x08..+0x60 and is stored big-endian at +0/+4; the flags byte reads folder=0x07 slot=0x18 bond=0x60 doreset=0x80 (the SAVEFLAGS_SET macro's PARAMETER NAMES are swapped relative to the fields - trust the accessors); the wear-level spare slot is written do-reset WITH a valid CRC; and the mupen64plus-family libretro .srm (parallel_n64 included) is EEPROM at offset 0 of a 0x48800 SAVE_RAM blob, wire order, no byteswap. tools/save/ge_unlock_save.py synthesizes/validates these images."
+    },
+    "objectives": {
+      "why": "objective types, completion conditions, runtime status",
+      "files": [
+        [
+          "Setup File Microcodes and Paths/objectives and briefings/objective types.txt",
+          "create 0x17, end 0x18, destroy 0x19, complete-if 0x1A, fail-if 0x1B, collect 0x1C, each with a minimum-difficulty byte"
+        ],
+        [
+          "Setup File Microcodes and Paths/objectives and briefings/7F057238 - return objective status.txt",
+          "runtime per-objective status, up to 10"
+        ],
+        [
+          "Main Menus/Solo Menus/briefings.txt",
+          "AUTHORITY for the front-end briefing FILE (Ubrief*Z): 0x30 bytes, and every field is a halfword - 0x0/0x2/0x4/0x6 the Background/M/Q/Moneypenny page text IDs, then up to 10 objective entries of {0x0 text ID, 0x2 lowest difficulty}. Also carries the 0x1C-byte mission-folder Briefings table at 0x9E54. Distinct from the setup file's type 23 watch text, which is the objectives-and-briefings folder above."
+        ]
+      ],
+      "governs": [
+        "src/game/objective_status.c",
+        "tools/trace/sltrace/state.py",
+        "src/game/front.c"
+      ],
+      "learned": "2026-09-03 (B-086): the mission briefing crashed on a NULL src in textWrap. The null was NOT born in the text engine - Ubrief*Z is loaded raw from the cartridge and nothing byte-swapped it, so every halfword in struct BriefingData was reversed. Dam's objective text IDs read 042c 052c 062c 072c instead of 2c04 2c05 2c06 2c07; langGet takes the bank from slotID >> 10, so those asked bank 1 (never loaded, NULL) instead of bank 11 (the bank the briefing had just filled). The minimum-difficulty halfwords were wrong the same way, 0x0100/0x0200 instead of 1/2, which silently skipped every objective above Agent. briefings.txt settled the layout in one lookup; `for src/game/front.c` had returned only cheats+multiplayer, which is why this mapping now exists."
+    },
+    "background-stan": {
+      "why": "bg, portal, clipping/stan file formats; visibility",
+      "files": [
+        [
+          "Background File Data/background data.txt",
+          "AUTHORITY for the bg file's own section layout, and specifically for the PORTAL DATA TABLE, which settled B-099. The table at bg_file+0x8 is a list of 8-byte records: 4-byte OFFSET to portal polygonal data (mask with 0x0F000000), then connected room 1, connected room 2, two control bytes; NULL record terminates. The record and the POLYGON are separate objects and the mapping is many-to-one - several records legitimately name ONE polygon, one per pair of rooms the same opening joins (Dam has polygons with two, three and four records each; 194 records over 160 polygons). The Global Visibility Microcode section of the same note reaches those polygons by offset as well ('64000000 0Fxxxxxx  offset within file, typically to portal data'). A polygon is numPoints in the first byte, 3 filler bytes, then x/y/z floats, points clockwise, relative to stage origin - and the note states each float SHOULD BE AN INTEGER VALUE, which is a free correctness check on any decode of them. Reading the table as one-record-one-polygon is what made sl_bg_file_swap byte-swap shared polygons once per REFERENCE; an even reference count restored big-endian, the floats decoded as denormals, and every portal plane derived from them collapsed to a zero normal - so the portal was rejected as a back face forever and the room behind it was never drawn."
+        ],
+        [
+          "Background File Data/Clipping (stan) Files/clipping files.txt",
+          "stan format"
+        ],
+        [
+          "Background File Data/Clipping (stan) Files/tile roving.txt",
+          "tile traversal"
+        ],
+        [
+          "Background File Data/Portal (port) Lists/port format.txt",
+          "portal format"
+        ],
+        [
+          "Background File Data/Global Visibility Microcode/global visibility types.txt",
+          "how rooms are determined visible"
+        ],
+        [
+          "Background File Data/Global Visibility Microcode/commands.txt",
+          "the visibility command STRUCTURE, which 'global visibility types.txt' does not restate: type at 0x0, minimum operand count at 0x1, reserved 0x2-0x3, data at 0x4, and the walk advancing by cmd.size * 8. That is the dispatch bg.c parse_global_vis_command_list implements one-for-one"
+        ],
+        [
+          "Background File Data/Fog Water and Sky/NTSC fog and sky.txt",
+          "AUTHORITY for the environment record AND for the near-fog triple - it covers far more than colours, which an earlier not_covered entry got wrong. 7F0BA758 (fogLoadCurrentEnvironment) fetches mCurrentLevelVisibilityScale via 7F0B4878 (800413FC) and applies exactly two DIV.S: pervasiveness/BlendMultiplier and far fog. The near-fog record is then stored as a RAW pointer into the same table row (ADDIU T7,A1,000C) with no scale applied. 7F054B80 (chrobjFogVisRangeRelated) reads that pointer at +0 NearFog, +4 MaxVisRange, +8 MaxObfuscationRange and compares against prop+0x18 (zDepth): f12 = lodscalez * (100*(zDepth-obfusc)/size + obfusc), invisible when maxvisrange <= f12, fading as (maxvisrange-f12)/(maxvisrange-nearfog) once nearfog < f12. Settles 'does the level visibility scale enter the prop size/distance fade' - on cartridge it does not. ALSO AUTHORITY FOR THE SKY'S COMBINER, which settled B-098: the note ends with the cartridge's own sky display list, and the combiner word in it is literally FC40FE81 55FEF97C, preceded by an FB SetEnvColor and followed by the B4/B2 rdphalf pair that carries the CE triangle. Through ucode05_old.txt's 'FC rdp_setcombine' mux table that decodes to rgb=(SHADE-ENV)*TEXEL0+ENV and alpha=(0-0)*0+SHADE in both cycles - i.e. the cloud texture is the LERP FACTOR between the fog row's Red/Green/Blue base and the per-vertex cloud shade, and the sky is OPAQUE. Reading it as shade*texel (GL_MODULATE) drops the base colour entirely and renders a blue sky as near-black. Confirms sky.c:1281 independently of the decomp."
+        ],
+        [
+          "Display Lists and Object Generation/7F098A2C - sky DL gen.txt",
+          "the sky DL generator (skyRender and friends) at the instruction level - governs src/game/sky.c and the raw-RDP-triangle path in src/gfx/sl_gfx_dl.c"
+        ]
+      ],
+      "governs": [
+        "src/game/bg.c",
+        "src/game/stan.c",
+        "src/game/bgfog.c",
+        "src/game/bg_portal_table.c",
+        "src/game/bgapply.c",
+        "src/game/bgroomtrans.c",
+        "src/game/sky.c",
+        "src/gfx/sl_gfx_dl.c"
+      ],
+      "learned": "2026-09-07, Dam symptoms #3-#6. 'global visibility types.txt' enumerates the whole operator set and there is NO DISTANCE OPERATOR in it - the microcode decides room visibility by portal line-of-sight and screen-box intersection only. The one distance term in the room path is not in the microcode at all: bgIsRoomOnScreen (bg.c:1544) rejects a room when all 8 bbox corners are beyond viGetZRange()[1] / mCurrentLevelVisibilityScale, and that scale is 1.0 on every level except DAM, SURFACE and SURFACE2, which carry 0.2 (bg.c levelinfotable). MEASURED on a Dam boot: want=6 drew=6 every frame, portal visits=12 added=6, nothing dropped for streaming or for z. So the microcode was NOT the mechanism behind the reported symptoms, and this entry exists so the next reader does not re-walk it. 2026-09-08, Dam prop fade (B-090). The SAME note settles the follow-up: the level visibility scale reaches BlendMultiplier and FarFog but NOT the NearFogRecord triple, on cartridge as well as here. Sightline, D:/Projects/007 and the ROM disassembly agree line for line across fogLoadCurrentEnvironment and chrobjFogVisRangeRelated, and the owner's Dam log reproduces the unscaled formula at 9 of 9 sample points, each within one alpha step. The near Dam prop fade is therefore Rare's own unit asymmetry, not a port divergence - do not re-open it as one. 2026-09-08, B-099 (Dam dry-side intro, the dam face missing). The room path was the mechanism after all this time, but NOT through the microcode and NOT through any distance term: the portal POLYGON DATA was being destroyed at load. Portal table records share polygons many-to-one, which 'background data.txt' states plainly, and the native byte swap ran once per record; even reference counts swapped a polygon back to big-endian. Parity is the whole rule - on Dam the 139 singly-referenced polygons all decode correctly, the 14 doubly- and 6 quadruply-referenced ones all decode to (0,0,0), and the ONE triply-referenced polygon decodes correctly, which is what rules out 'shared portals are simply degenerate in the file'. Also worth carrying forward: the earlier 'want=6 drew=6' Dam result was measured with the camera INSIDE the level during gameplay, and a cinematic camera is a different input entirely - the B-099 intro camera sits at (8947,2920,4098), outside every room in the level. Do not carry a gameplay visibility result forward to a cutscene camera."
+    },
+    "weapons-ammo": {
+      "why": "weapon object types, ammo types, amounts, maximums",
+      "files": [
+        [
+          "Objects and Attributes/Expansion/08 weapons/08 weapon object type.txt",
+          "bitflag 0x4000 = assigned to a guard"
+        ],
+        [
+          "Objects and Attributes/ammunition/ammo types and amounts.txt",
+          "ammo types and pickup amounts"
+        ],
+        [
+          "Objects and Attributes/ammunition/ammo value tables and maximums.txt",
+          "maximums"
+        ]
+      ],
+      "governs": [
+        "src/game/gunfire.c",
+        "src/game/gun.c",
+        "src/game/bondinv.c"
+      ]
+    },
+    "turrets": {
+      "why": "autoguns, CCTV, drone guns - a separate AI class from chrs",
+      "files": [
+        [
+          "Objects and Attributes/Data and Features/0D Autoturrets/notes.txt",
+          "damage frequency, firing rate"
+        ],
+        [
+          "Objects and Attributes/Expansion/0D autoturrets/7F004500 - object 0D expansion - autoturrets.txt",
+          "autogun record layout"
+        ]
+      ],
+      "governs": [
+        "src/game/propobj.c"
+      ]
+    },
+    "cheats": {
+      "why": "cheat table, activation, button codes",
+      "files": [
+        [
+          "Main Menus/Cheat Menu/Activate Cheats.txt",
+          "activation path"
+        ],
+        [
+          "Main Menus/Cheat Menu/Deactivate Cheats.txt",
+          "deactivation"
+        ],
+        [
+          "Main Menus/Cheat Menu/Button Cheat Codes.txt",
+          "button codes"
+        ]
+      ],
+      "governs": [
+        "src/game/cheat.c",
+        "src/game/front.c"
+      ]
+    },
+    "multiplayer": {
+      "why": "scenarios, scoring, respawn, per-player stats",
+      "files": [
+        [
+          "Gameplay and Misc/player statistics.txt",
+          "per-player stats block; shots fired, head/body/leg/other hits, kills"
+        ],
+        [
+          "Multiplayer/scenarios",
+          "scenario rules"
+        ],
+        [
+          "Multiplayer/object respawn.txt",
+          "respawn flag at obj+2 bit 0x04"
+        ],
+        [
+          "Multiplayer/7F0888E8 - MP respawn.txt",
+          "respawn path"
+        ]
+      ],
+      "governs": [
+        "src/game/mp_music.c",
+        "src/game/front.c"
+      ]
+    },
+    "input-recording": {
+      "why": "the game's OWN input recording system - prior art for the trace harness",
+      "files": [
+        [
+          "Gameplay and Misc/Ramrom Demos/7F0BFE5C - record controller input as packet.txt",
+          "how the game records controller input"
+        ]
+      ],
+      "governs": [
+        "tools/trace/sltrace/record_libretro.py",
+        "tools/trace/sltrace/emu_libretro.py"
+      ]
+    },
+    "models-animation": {
+      "why": "model file structure, skeletons, animation data",
+      "files": [
+        [
+          "Display Lists and Object Generation/Objects/Object Parsing.pdf",
+          "model/object parsing (PDF)"
+        ],
+        [
+          "Display Lists and Object Generation/Objects/Object headers.txt",
+          "object headers"
+        ],
+        [
+          "Display Lists and Object Generation/Objects/GE Object Offsets.txt",
+          "object offsets"
+        ],
+        [
+          "Display Lists and Object Generation/Objects/object templates.txt",
+          "skeleton templates per prop class: which node types position each part"
+        ],
+        [
+          "Actor-Specific Data and Animations/Animation/7F000A00 - expand animation table entries.txt",
+          "THE authority on the animation-table relocation pass: entry list stepped 4 bytes, sentinel value 1 and terminator 0 both skipped, base added to entry+0 then to +0x08 and +0x10, then ROM base 0x124AC0 added to the word at +0"
+        ],
+        [
+          "Actor-Specific Data and Animations/Animation/7F000AAC - allocate, load, and expand animation tables.txt",
+          "the caller: allocates the table, DMAs it from ROM 0x28E980, then expands both offset tables (0x80029D6C and 0x8002A04C)"
+        ],
+        [
+          "Display Lists and Object Generation/Objects/1st person/G-Z Models.txt",
+          "the first-person weapon model: the 0C flare, and the type 16 'gunfire' node - 0x0 is the NUMBER OF FLARES, four points each (one 04+B1 per flare), 0x4 the point table, 0x8 the mapping"
+        ]
+      ],
+      "governs": [
+        "src/game/model.c",
+        "src/game/sl_swap_model.c",
+        "src/game/initanitable.c",
+        "src/native/sl_swap_model.c"
+      ],
+      "learned": "2026-08-25, B-028: 'object templates.txt' lists the skeleton template of every prop class and the node-type commands that position its parts. It is the authority on WHICH node type positions WHAT, and it settled why only held weapons and hats were mispositioned natively: Pchr*Z (item pickups - '0015.0000.0000 pos: primary model', '0015.0001.0001 pos: gunfire effect') and Phat*Z (hats - '0015.0000.0000 pos: primary model') are the only classes whose parts are 0015 (GROUPSIMPLE) commands. Bodies, doors, tanks, vehicles and the walletbond all use 0002 (GROUP). The native byte-swap pass swapped GROUP.Origin and not GROUPSIMPLE.Origin, so exactly that one class of prop - and nothing else - got a garbage translation row. Reading the decomp could show the missing swap but not that the blast radius was precisely 'held items and hats'; the template list did.  2026-08-25, B-036: the animation-table relocation pass was AUDITED CLEAN natively - do not re-suspect it for a garbage ModelAnimation pointer. '7F000A00 - expand animation table entries.txt' is the authority and the native build agrees with it on every point. Linker symbols match the note exactly: _animation_entriesSegmentRomStart = 0x00124AC0, _animation_dataSegmentRomStart = 0x0028E980. ONE CORRECTION TO A NAIVE READING OF THE NOTE: 'ADDIU T6,T6,E7E0' sign-extends, so the allocation is 0x10000 - 0x1820 = 0xE7E0 bytes, NOT 0x1E7E0; _animation_dataSegmentEnd - _animation_dataSegmentStart measures 0xE7E0, and initanitable.h's 'largest offset is 0xE7C0' agrees. The three native hazards a relocation pass invites are all absent here, each ruled out by measurement rather than reading: (1) unswapped offsets - the entry offsets are compile-time constants in assets/animationtable_data.h, not ROM bytes, and the +0x08/+0x10 fields that DO come from ROM are swapped by sl_anim_header_swap at initanitable.c:247 BEFORE the adds; (2) sentinel misread - the 13 value-1 sentinels and the 0 terminator are literal C constants, no byte order involved; (3) double relocation - 0 duplicate non-sentinel offsets across both tables (173 relocatable entries). Measured end state, dumped under gdb after expansion: all 173 entries have entry pointer, bitDescriptors (+0x08) and bitStream (+0x10) inside [base, base+0xE7E0), address a plausible ROM offset, frame count sane - 0 problems. 2026-09-15, the AR33 'blinding' muzzle flash (Jungle, owner): 'G-Z Models.txt' settles the type 16 gunfire node's count - '0x0 number of flares created (4 points each, 1 04+B1-mapping command for each)' - and model.c:4427 dorottex agrees (allocates numVertices * 4, walks src += 4 per flare). sl_swap_model.c had swapped numVertices RECORDS for a DLPRIMARY node, so only the first six of the AR33 star's 24 points were in native order; the other 18 read as coordinates in the thousands and the petal quads covered the whole frame at 50% alpha. Measured with a per-load vertex watch on the fire frame (petal 0 at ~200 model units, petals 1-5 at 6000-31000, modelview scale 0.12) against the cartridge's ~25-unit star at the same pose. The count is flares; multiply by four."
+    },
+    "player-spawn": {
+      "why": "where Bond starts a level: intro block, spawn pads, start placement",
+      "files": [
+        [
+          "Setup File Microcodes and Paths/Intro Block/Intro Block Commands.txt",
+          "intro command list: 0 spawn, 1 weapon, 2 ammo, 3 swirl cam, 4 anim, 5 cuff, 6 fixed cams, 7 watch, 8 credits, 9 end"
+        ],
+        [
+          "Setup File Microcodes and Paths/Intro Block/Type 0 - Spawn/7F0790F0 - selected spawn.txt",
+          "spawn selection: depends on current player number and player count"
+        ],
+        [
+          "Actor-Specific Data and Animations/player spawning routine.txt",
+          "7F079CF0-7F07A4A0 solo character load; player position via the object position record (type 6)"
+        ],
+        [
+          "Setup File Microcodes and Paths/Intro Block/7F0057C4 - Intro Block Handler.txt",
+          "AUTHORITY for intro-camera SELECTION, and for the per-type record SIZES the walk strides by. After the list ends it does JAL 7000A450 (= randomGetNext, src/random.s), DIVU by 800364BC (camera count), MFHI, then follows 0024(entry) - the prev link - that many times, storing the result to 800364C0. Also the reset block that zeroes 800364B8 (last entry), 800364BC (count), 800364C0 (selected). Confirms bondview_r.c:356-362 is retail-faithful"
+        ],
+        [
+          "Setup File Microcodes and Paths/Intro Block/Camera Modes.txt",
+          "camera mode 1 is the stationary intro camera and reads 800364C0 = ptr_random06cam_entry, the selected type-6 record; 0 there means no camera was selected"
+        ]
+      ],
+      "governs": [
+        "src/game/bondview_r.c",
+        "src/game/bondview.c",
+        "src/game/bondview2.c"
+      ],
+      "learned": "Solo takes getPlayerCount()==1 -> rand_pad_index 0 -> g_Startpad[0], and only X and Z come from the pad (Y comes from the stan ground). g_Startpad[n] = &g_CurrentSetup.pads[intro->index]. Measured on archives: the emulator picks pad index 192 at (260.47, 39.46, 962.93). NOTE the emulator's Bond is NOT at that pad by fc=451, so fc=451 is well after spawn - do not treat it as level start. The setup pad LIST format is not in the notes (see not_covered). 2026-08-28, intro camera: record sizes from 'Intro Block Commands.txt' are 0/spawn 0x0C, 1/weapon 0x10, 2/ammo 0x10, 3/swirl 0x20, 4/anim 0x08, 5/cuff 0x08, 6/camera 0x28, 7/watch 0x0C, 8/credits 0x08, 9/end - matching bondtypes.h and the intro arm of sl_setup_file_swap (prop.c) exactly. One divergence there: on an UNKNOWN type retail advances 4 and KEEPS GOING (7F005DE0), which bondview_r.c reproduces but the swap walk does not - it stops. Never fired on the 20 campaign levels. The intro camera is NOT deterministic in the original: it is randomGetNext() % count walking back from the LAST type-6 record, and g_randomSeed comes from osGetCount() at boss.c:388, i.e. boot timing. Facility (UsetuparkZ) has FOUR type-6 records; three are anchored on pad 104 at the far/tank end and one on pad 2 by the bathroom hallway, so 'wrong room' there is a SEED difference, not a decode difference - measured on both sides: same count, same 0x28 stride, same floats."
+    },
+    "textures": {
+      "why": "image type codes, per-code bit depth, image declarations, the global image bank, texture compression",
+      "files": [
+        [
+          "images text and font/Huffman/huffman compression types.txt",
+          "the 13 image type codes 0-C and the seven value tables; #5 gives the N64 image type per code and #6 the pixel size, which is what fixes each code's depth. Also #7 'imageflip values for indexed types'"
+        ],
+        [
+          "images text and font/image declarations.txt",
+          "the 0xC-byte declaration record, format/bitdepth nibbles, and the C0 pseudo-command types 0-4 that name an image by ID"
+        ],
+        [
+          "images text and font/load global image bank.txt",
+          "the global image bank is 0x1400 bytes at ROM 0x29D160 loaded into bank 4, then scanned for settextureimage commands tagged ABCD - a table of DECLARATIONS, not of pixels"
+        ],
+        [
+          "images text and font/imageTypes.txt",
+          "per-image-ID inventory: address, W/H, depth, paletted vs greyscale, colour count"
+        ],
+        [
+          "note on compression.txt",
+          "Rare's '1172' zlib variant, plus the bespoke per-format huffman scheme"
+        ],
+        [
+          "Display Lists and Object Generation/Objects/Texture application (Rooms).txt",
+          "BB texture command, the level -> assembled size table (level 5 = 0x800, max 7 = 0x2000), and the four combiner settings GE ever uses"
+        ]
+      ],
+      "governs": [
+        "src/gfx/sl_gfx_tex.c",
+        "src/game/image.c",
+        "src/game/tex.c",
+        "src/game/othermodemicrocode.c",
+        "src/game/image_bank.c",
+        "assets/oddtextures.c"
+      ],
+      "learned": "2026-08-25: the notes fix the format codes and depths but are SILENT on the odd-row texel swizzle - see the not_covered entry. Two codes are traps: type 2 (RGB24) is stored 32bpp 'forced to 32bit fixed alpha' and type 3 (RGB15) stored 16bpp 'with forced alpha', so both decode identically to their wide siblings rather than at their nominal depth. The 5551 and I8A8 bit splits were taken from Rare's own palette arithmetic in texShrinkPaletted (image.c), not guessed.  2026-08-25, B-027 - the crosshair's untextured white square. \"image declarations.txt\" gives the 0xC-byte declaration record and settles that ONLY the leading u32 is word data: 0x4 width, 0x5 height, 0x6 level, 0x7 format, 0x8 bitdepth, 0x9/0xA clamp-mirror S/T, 0xB pad are eight independent u8 fields. image_bank.c:180 was word-swapping the whole 0x1400 bank (\"load global image bank.txt\"), which reverses those eight bytes in two groups of four, for EVERY image in the bank - crosshair, ammo icons, explosion sprites, glass, monitors, radar, sky/water, MP icons. Measured: the crosshair's {w=0x20,h=0x20,level=0,fmt=RGBA,depth=32b} read back as {w=0,h=0,level=0x20,fmt=0x20,depth=0}, so texSelect took its level!=0 mipmap branch with lod=32 and emitted 32 settile/settilesize pairs with zero line stride and uls==lrs - a zero-area tile. The texrect itself was byte-identical before and after the fix, because gunfire.c:6263 passes 0x20,0x20 literally; only the binding was broken, which is why the square was the right size in the right place with no art. The bank is two regions, not one: the first 0xAC8 bytes are the seventeen globalDL_* lists (words - texLoadFromDisplayList's native branch needs them native), and from s_genericimage to the end it is nothing but declarations. Swap them separately. General lesson worth more than the bug: \"structured data, so word-swap it\" is not a valid inference - swapping at a load choke point still requires knowing the field widths there. Also: segment symbols carry the 0x02000000 segment VMA, so a bank-relative offset needs the same +0xFE000000 image_bank.c's pointer fixups already use.\n  2026-08-25, B-034 - the note \"Texture application (Rooms).txt\" describes ROOM AND OBJECT BINARIES, and two of its rules do NOT carry over to display lists the game builds at runtime. (a) \"BB000001 = on, level 0 = untextured\" is a room-file convention only: measured over whole recursed Facility frames, ZERO triangles are drawn under a combiner naming no texel, and the BB.on=1/level=0 triangles carry FC121824 FF33FFFF = (TEXEL0-0)*SHADE+0. BB's level field is not a texture gate for runtime lists - do not use it as one. (b) \"only four combiner settings GE ever uses\" is likewise room-only; runtime lists emit at least FC121824 FF33FFFF (G_CC_MODULATEIA), FC26A004 1F1093FF / 1FFC93FC / 1F1493FF (G_CC_TRILERP + G_CC_MODULATEIA2, the 2-cycle mip path) and FC159804 5FFEDBF8 = (TEXEL0-ENV)*SHADE_A+ENV, model.c's Type3 \"GunLighting\" branch. Also measured the same day: the C0 image-recall pseudo-command the declarations note documents never reaches a submitted list - the game expands it into real FD/F5/F3/F0 first - so a DL interpreter needs no C0 case. And the first-person viewmodel is ~100% paletted CI with 6-level mip chains (18/18 render tiles fmt=2, 56 F0 loadtluts per frame) while the surrounding Facility world is mostly IA/I with zero TLUT loads, which is the discriminator whenever the arm and hand look wrong and the world does not. 2026-08-25, B-041: 'huffman compression types.txt' carries the SEVEN VALUE TABLES indexed by img_type 0-C, and two of them must not be confused. #4 is the BITCOUNT IN THE COMPRESSED STREAM (type 0=0x20, type 2=0x18, type 3=0x0F); #6 is the N64 PIXEL SIZE of the DECOMPRESSED buffer (type 0=32bit, type 2=32bit, type 3=16bit). So type 2 is 24 bits per pixel compressed and 32bpp once expanded 'forced to 32bit fixed alpha', and type 3 is 15 bits compressed and 16bpp expanded. src/gfx/sl_gfx_tex.h's 'stored 32bpp' for RGB24 describes the DECOMPRESSED form and is right; reading #4 as the stored size would make it look wrong. #5 gives the N64 image type per code and #7 'imageflip values for indexed types' (nonzero only for codes 9-C) is not modelled anywhere in this tree. 2026-09-04, B-090 - texSelect (src/game/othermodemicrocode.c) had NO mapped area at all, so an investigation into the gun-barrel shadow reached for the decomp first; it picks format/depth/combiner/render mode for EVERY textured draw and is now mapped here. A METHOD correction worth more than the mapping: gedocs.py 'search' matches FILENAMES ONLY, so 'search shadow' and 'search imgdecl' both returned no matches while 'image declarations.txt' and 'imageTypes.txt' - already listed in this very area - answered both at once. Reading those absences as corpus silence would have been another instance of the error rule 7 warns about; use 'for <file>' or grep the corpus before claiming silence. WHAT THEY SETTLED: 'image declarations.txt' confirms the 0xC-byte record field-for-field (0x7 format, 0x8 bitdepth), so the decomp struct is right; and 'imageTypes.txt', a per-image-ID inventory, gives 07BC - the shadow blob under Bond in the gun-barrel walk - as Type 460B Paletted with BD colours [W20 H20] 8-Bit coloured Paletted Transparent, i.e. CI8 32x32 with alpha, matching the measured 32x32 exactly. The declaration nevertheless carries format=0 (RGBA) with bitdepth=1 (8b), an illegal RDP pair, because the authoritative format lives in the texture POOL (tex->gbiformat) and texSelect's texFindInPool MISSES here: Bond's intro textures load into a STACK-LOCAL texpool (title.c:475) while texSelect searches the global one. That is Rare's own code with no ifdef, so the cartridge emits RGBA/8b too and never loads a TLUT (texSelect loads a palette only when format==2). Measured consequence natively: gbi_to_sl_fmt returns -1 for RGBA/8b, tile_texture reports TR_FMT, tex_apply disables GL_TEXTURE_2D, and the quad paints the combiner's white shade at vertex alpha 0x50 over G_RM_CLD_SURF2 - which is the light patch under Bond. NOT ESTABLISHED, left open: what real RDP hardware does with an RGBA/8b tile (corpus silent - see not_covered), so neither I8 nor IA8 could be justified as the decode, and no repair shipped."
+    },
+    "fonts-text": {
+      "why": "font tables, glyph format, and the DL the text engine builds per character",
+      "files": [
+        [
+          "images text and font/Fonts/ASCII Font table entries.txt",
+          "the two small/large font table pairs and their ROM addresses (small 2E63F0, large 2E88A0), plus the 0x18-byte entry layout: +0x4 vertical offset, +0x8 height, +0xC width, +0x14 offset to image"
+        ],
+        [
+          "images text and font/Fonts/7F0AD0F8 - font microcode generator.txt",
+          "authority for the glyph FORMAT. The ASCII path loads through tile 7 as i/16bit and RENDERS from tile 0 as 'i 8bit' with line = ceil(width)/8, and settilesize gives lrs = (width rounded to 8) - 1 - i.e. I8, rows padded to 8 bytes. Also carries the separate JSHFT (Japanese) ci4/ia16 path"
+        ],
+        [
+          "images text and font/Fonts/7F0ACBAC - allocate and initialize font tables.txt",
+          "how the tables reach RDRAM: a raw ROM read, then a pass that expands each entry's +0x14 offset into a pointer. Nothing decompresses or reorders the glyph pixels"
+        ]
+      ],
+      "governs": [
+        "src/game/textrelated.c",
+        "src/gfx/sl_gfx_dl.c"
+      ],
+      "learned": "2026-08-25 (B-020): glyphs rendered as blocky half-formed shapes while layout was perfect. Format, depth, stride and word order were all already correct - the fault was that the DL call site passed SL_TEX_FLAG_ROWSWAPPED to every texture. The odd-row swizzle belongs only to assets Rare pre-compensated with texSwapAltRowBytes (image.c:2168); font glyphs are romCopy'd raw and never touch image.c. The discriminator is the F3 loadblock's dxt: tex.c:514/:530 pass a literal 0 (net swap, asset pre-compensated), textrelated.c:243 goes through gDPLoadTextureBlock which gbi_extension.h:252 expands with CALC_DXT (never 0, load and fetch cancel, data plain). Settled in one step by dumping the 0x5E glyphs from ROM 0x2E63F0 as I8 both ways and looking: unswizzled they are letters, swizzled they are the exact reported shapes. || 2026-09-04 (B-099): the cast credits and the level-title HUD text drew extra pixels around otherwise-legible glyphs - a vertical bar folded onto the left of J, A, O, B and 0, and the 7 crossbar repeated as a rule beneath it. The glyph bytes, the I8 decode, the padded stride and the texrect were all already correct; the fault was the tile ADDRESS MODE. This area file 7F0AD0F8 writes the render tile whole F5 LOWER word from register zero at its [ASCII] settile (7F0AD378), so clamp s/t AND mask s/t are all 0, and a tile with mask 0 has no bit position to wrap at - the RDP holds the coordinate inside the tile and the axis behaves as clamped. Sightline read only the clamp bit and installed GL_REPEAT. Per-GLYPH rather than per-card because the row is padded to 8 texels: a letter narrower than its padding wraps in blank columns, one whose width is already a multiple of 8 wraps in its own last column."
+    },
+    "watch-menu": {
+      "why": "the solo (pause) watch menu: its page set, the per-page navigation interfaces, and the equipment page's item list",
+      "files": [
+        [
+          "Main Menus/Ingame menus/solo watch menu/solo watch menu.txt",
+          "the authority on the watch's GLOBAL STATE BLOCK. It walks the stage-load initialiser and names every word at 0x800409xx: 0x994 selected page, 0x9B0 current position in scrolling lists, 0x9B4 final position, 0x9B8 highlighted inventory selection, 0x9BC position of entry in scrolling list, 0x9C0 0=scroll list to entry. Checked against build/u/ge007.u.map: watch_screen_index 0x80040994, watch_inventory_text_y 0x800409b0, watch_inventory_text_target_y 0x800409b4, g_curWatchItemIndex 0x800409b8, watch_inventory_cursor_pos 0x800409bc, watch_inventory_text_is_settled 0x800409c0 - symbol for symbol"
+        ],
+        [
+          "Main Menus/Ingame menus/solo watch menu/7F0A53D8 - solo watch inventory page advance.txt",
+          "the equipment page's left/right interface: LEFT goes to page 0 (mission status), RIGHT to page 2 (controls). Matches watch_screen1_navigation (options.c:748)"
+        ],
+        [
+          "Main Menus/Ingame menus/solo watch menu/7F0A526C - solo watch main page advance.txt",
+          "the mission-status page's interface - RIGHT is what reaches the equipment page. Matches watch_screen0_navigation (options.c:688)"
+        ],
+        [
+          "Main Menus/Ingame menus/solo watch menu/7F0A6A80 - solo watch menu interface.txt",
+          "the per-frame driver above the individual page interfaces"
+        ],
+        [
+          "Main Menus/Ingame menus/solo watch menu/7F0ACA28 - display current solo watch page text.txt",
+          "the page dispatch - draw_watch_current_page (options.c:4121) is the same switch"
+        ],
+        [
+          "Objects and Attributes/weapons/watch equipment.txt",
+          "the 0x800490F0 weapon-set table, 90 models. Per item: +0x10/+0x12 main-page text, +0x2A inventory text, and the watch placement floats - +0x2C horizontal offset on the INVENTORY page, +0x30 vertical, +0x34 depth (main page uses +0x14/+0x18/+0x1C, rotations +0x20/+0x24). These are what bondinvGet*ForIndex read. The note warns the model-zoom feature MUTATES this table in place"
+        ]
+      ],
+      "governs": [
+        "src/game/options.c"
+      ],
+      "learned": "2026-08-26 (B-044): the equipment list briefly showing a column of one repeated item is NOT a list-build fault - the list string is correct on every frame (measured: bondinvCountTotalItemsInInv and the strcat loop at options.c:2341 produced 'unarmed|pp7 (silenced)|remote mine|detonator' on all 1185 drawn frames of a facility capture). It is a RENDERER fault, one layer down: textRenderGlyph's bottom-clip branch emits a texrect with lry < uly, and the native backend was sorting the corners instead of rejecting it. See the display-lists learned entry."
+    },
+    "mp-ingame-menu": {
+      "why": "the multiplayer IN-GAME (pause) menu - the scoreboard/awards pages, not the solo watch",
+      "files": [
+        [
+          "Main Menus/Ingame menus/MP menu/7F0C4024 - display pages.txt",
+          "the page renderer itself - the disassembly of what the decomp calls mp_watch_menu_display (mpmenu.c:1052)"
+        ],
+        [
+          "Main Menus/Ingame menus/MP menu/7F0C2E80 - interface.txt",
+          "the per-frame input handler above it: current player, player count, stick left/right, game-over gating"
+        ],
+        [
+          "Main Menus/Ingame menus/MP menu/advance MP menu pages.txt",
+          "which pages allow left/right; the current page lives at BONDdata+0x29C8 and dispatches through a jump table at 0x8005BC40"
+        ],
+        [
+          "Main Menus/Ingame menus/MP menu/7F0C35A0 - display value.txt",
+          "the per-player data cell used by those pages, with its display-type codes"
+        ]
+      ],
+      "governs": [
+        "src/game/mpmenu.c"
+      ],
+      "learned": "2026-08-26 (B-044): a task that says 'the pause menu equipment page' must NOT start here. This area is the multiplayer scoreboard; the SOLO watch's equipment page is draw_watch_inventory_page (options.c:2205) under the watch-menu area, and the two share no code. Checked by reading mp_watch_menu_display: it returns immediately when getPlayerCount() == 1."
+    },
+    "audio-music-sfx": {
+      "why": "sound-effect IDs, the music table and per-level track selection, the ROM placement of the four instrument/sfx bank segments, and the sound-off flag. NOT the mixer: for ACMD/microcode and for sequence bodies, bank field layouts, reverb and thread scheduling, see the four not_covered entries below.",
+      "files": [
+        [
+          "rom-address-table.txt",
+          "lines 64-67, the ROM placement of sfx.ctl / sfx.tbl / instruments.ctl / instruments.tbl, then the music table. CONFIRMED against this tree 2026-08-28: 0x2EBDE0 / 0x2F19A0 / 0x3B4450 / 0x3B87F0 tile exactly with the extracted file sizes (23488, 797360, 17312, 397216) and end precisely on 0x419790, the music table - and scripts/filelist.u.csv lines 27-31 list the same five offsets in decimal. This is how the banks are extracted from the user's own ROM; nothing audio is committed."
+        ],
+        [
+          "Music and Sound Effects/Music table format.txt",
+          "the music table's CONTAINER: 8-byte entries, 0x44 offset to data. Explicitly does NOT parse the sequence body - see not_covered."
+        ],
+        [
+          "Music and Sound Effects/sound effects.txt",
+          "SE ID list 0001-0105 with descriptions. Flagged in its own first line as an old list ripped from a third-party site, so treat it as a naming aid and not as disassembly. Its DACrate/Bitrate columns are declared and left blank throughout."
+        ],
+        [
+          "GameShark - GE specific/GE music.txt",
+          "THE per-level audio setup authority. Solo table at 8004EB10 and multiplayer at 8004EBD0, records shaped 00SS MMMM BBBB XXXX = stage, main theme, background, X-track."
+        ],
+        [
+          "Music and Sound Effects/Play, load, a unload music.txt",
+          "the music load path and the 800243F8 sound-off gate."
+        ],
+        [
+          "address ranges.txt",
+          "line 1437, '8005E530 thread: sound manager' - the audio thread's RAM address, alongside the main loop (8005D640) and video manager (80060C90). That one line is the whole of the thread's coverage."
+        ],
+        [
+          "Setup File Microcodes and Paths/Action block microcode/Action Block Types.txt",
+          "the setup-file audio action opcodes - how a level triggers sound. Lines 347-352 give C4 set sfx in slot, C5/C6 audible range from object or preset, C7/C8 crescendo/fade over milliseconds, C9 shut off sound (max 8); line 421 gives F5 turn off music in slot 0-3 or all (FF); line 130 gives the 25 sound-alarm action."
+        ]
+      ],
+      "governs": [
+        "src/audi.c",
+        "src/snd.c",
+        "src/music.c",
+        "src/platform/sl_audio.c",
+        "tools/native/audiocap.py",
+        "tools/native/audiopair.py"
+      ],
+      "learned": "2026-08-28, building the audio oracle (B-022): the cartridge is a usable AUDIO reference, not just a video one - tools/trace/sltrace/emu_libretro.py already routed retro_set_audio_sample_batch to an _on_audio_capture hook, so romshot.py --audio-out only had to write what came out of it. Measured over 900 frames of the facility stream: 320312 stereo frames, peak 14540, 72.96% non-zero, onset at 3.842s, PCM sha1 stable across runs. Two rate facts, both measured and both counter-intuitive. (1) parallel_n64 declares 32040Hz through frame 33 and revises itself to 22047Hz at frame 34, the point GoldenEye configures the AI - so the declared rate is a stock default early and CORRECT later (audi.c OUTPUT_RATE is 22050), and anything sampling it before frame 34 gets the wrong number. (2) The rate measured from samples-per-video-frame is ~21360Hz, about 3% under both declarations, and that gap is NOT explained - do not treat it as settled. Sequence bodies, bank field layouts, reverb and thread scheduling are all not_covered; the decomp is authority for those."
+    },
+    "rsp-vector-isa": {
+      "why": "RSP vector unit ISA: element specifiers, effective-address rules, load/store boundary behaviour, accumulator contribution and result extraction. NOT the ACMD command set - that is GE-specific and still uncovered (see not_covered).",
+      "document": "SGI, Nintendo 64 RSP Programmer's Guide, Revision 1.0. Source: ultra64.ca/files/documentation/silicon-graphics/. Held at reference/ which is GITIGNORED - never committed, and its text is never copied into the repository. Cite document + page.",
+      "structure": [
+        "Ch.1 p15 Introduction",
+        "Ch.2 p23 RSP Architecture - register file, DMEM, coprocessor interface",
+        "Ch.3 p47 Vector Unit Instructions - incl. Figure 3-2 p51, 'Long, Quad, and Rest Loads and Stores' (the boundary-behaviour figure)",
+        "Ch.4 p81 RSP Coprocessor 0 - DMA and status registers",
+        "Ch.5 p105 RSP Assembly Language",
+        "Ch.6 p125 Advanced Information",
+        "p177+ per-instruction reference, alphabetical"
+      ],
+      "pages": {
+        "vector loads": "LBV 179, LDV 180, LFV 181, LHV 185, LLV 187, LPV 188, LQV 189, LRV 190, LSV 191, LTV 192, LUV 194",
+        "vector stores": "SBV 206, SDV 207, SFV 208, SHV 210, SLV 217, SPV 218, SQV 219, SRV 224, SSV 225, STV 226, SUV 229",
+        "multiply-accumulate": "VMADH 264, VMADL 266, VMADM 268, VMADN 270, VMUDH 275, VMUDL 277, VMUDM 279, VMUDN 281, VMULF 283, VMACF 258",
+        "other ALU": "VADD 234, VAND 238, VSAR 315, VSUB 317, VXOR 321"
+      },
+      "answers": {
+        "element specifier": "p180/p207 state it is the BYTE element of the vector register, not the ordinal element index used by the computational ops - the two conventions differ and mixing them is an easy error",
+        "effective address": "per-instruction; the encoded offset is scaled by the access width (LDV p180: source offset must be a multiple of 8 and is stored shifted right by 3). Address is masked to 12 bits (DMEM size)",
+        "boundary behaviour": "LQV p189 / SQV p219 transfer only from the address up to the enclosing 16-byte boundary, with LRV p190 / SRV p224 covering the remainder; Figure 3-2 p51 is the picture. LDV p180 / SDV p207 are plain 64-bit transfers with no such truncation described",
+        "load delay": "vector loads have three delay slots; hardware interlocks if the target is used sooner (p180, p189)"
+      },
+      "governs": [
+        "src/platform/sl_acmd.c",
+        "tools/native/envlit.h",
+        "tools/native/acmdenvfull.c"
+      ],
+      "learned": "2026-08-30: located the RESAMPLE handler at blob 0x07fc via the dispatch table (blob = entry - 0x1080) and derived its 32-byte writeback store map from it. The documented LDV/SDV/SQV semantics do NOT explain the remaining one-byte displacement at state +0x10..11 - see backlog."
+    },
+    "intro-boot-sequence": {
+      "why": "the boot menu chain (legal, Nintendo, Rareware, gun barrel, GoldenEye logo), and which CLOCK each screen's timer and each screen's animation consumes",
+      "files": [
+        [
+          "GE Documentation/Main Menus/Intro/Menu 01 - Nintendo Logo/7F00ACC8 - menu 01 interface - Nintendo logo.txt",
+          "AUTHORITY for how a boot screen times out. The interface loads 80048374 - g_ClockTimer, annotated in the notes as 'advance timer using CPU clock' - adds it to the menu timer at 8002A8CC and compares against 501. The transition timers therefore accumulate ELAPSED VIs and are frame-rate INVARIANT, which is why they stay correct under an update-rate fault while the animation does not."
+        ],
+        [
+          "GE Documentation/Main Menus/Intro/Menu 00 - Legal Screen/Legal Screen.txt",
+          "legal screen text table at 8002A9CC-8002AABC and the object init block at 8002AABC: x, y, alignment, line offset, text ID"
+        ],
+        [
+          "GE Documentation/Main Menus/Intro/Menu 00 - Legal Screen/7F00A8E0 - menu 00 constructor - legal screen.txt",
+          "the legal screen constructor, line by line"
+        ],
+        [
+          "GE Documentation/Main Menus/Main and Misc/menu 17 - switch screens/7F00AB00 - menu 17 interface - switch screens.txt",
+          "the inter-screen transition. Its counter is a bare per-FRAME increment against 4, NOT a g_ClockTimer accumulation - the two cadences sit side by side in the same boot chain"
+        ],
+        [
+          "GE Documentation/Main Menus/Intro/Menu 16 - No Controller Warning/controller detection on boot.txt",
+          "the joyGetControllerCount branch out of the legal screen"
+        ],
+        [
+          "GE Documentation/Main Menus/Intro/Menu 04 - GoldenEye Splash Screen/7F00B330 - menu 04 interface - GoldenEye splash screen.txt",
+          "GoldenEye logo interface"
+        ],
+        [
+          "GE Documentation/Main Menus/7F01A61C - menu initialization and interface handler.txt",
+          "the update / init / interface / constructor dispatch that front.c's menu_init and menu_jump_constructor_handler mirror"
+        ]
+      ],
+      "governs": [
+        "src/game/front.c",
+        "src/game/title.c",
+        "src/game/title2.c"
+      ],
+      "learned": "2026-09-04 (B-090, File Select background): `for src/game/title2.c` returned \"no mapped area governs\" - the fifth time the table has missed a file an investigation needed - so title2.c is now mapped here alongside front.c and title.c. It holds titleRenderFolderMenuBackgroundLines, the ONE routine that draws the folder-menu background for BOTH the Eye Intro and File Select. WHAT THE CORPUS SETTLED, and what reading the decomp alone would have got wrong: the background is not a layer stack and the defect was never in the image. ucode05_old.txt's \"FC rdp_setcombine\" table (:1062) gives each cycle as (a - b) * c + d over a FIVE-bit c mux, and File Select spells that combiner as (TEXEL0 - PRIMITIVE) * ENV_ALPHA + PRIMITIVE (front.c:2566) with PRIMITIVE ramping 141414 -> 323232 down the screen (front.c:471) and ENV alpha 0x14. So the cartridge's dark background is ONE draw whose combiner lerps 7.8% of the way from a dark register toward a BRIGHT intensity texel - the 440x299 I8 image really is near-white, and darkening it would have been the wrong repair. The Eye Intro shares the same routine but sets G_CC_MODULATEI_PRIM instead (title.c:170), whose b and d are the constant ZERO, which is what keeps the two screens visually unrelated through one function. GENERAL RULE the same table gives: b's 8..15 and d's 7 are the constant zero, so 'b and d NAME the same register' is the signature of a constant-factor lerp and is distinguishable from an ordinary modulate by inspection of the muxes alone. 2026-09-03 (B-091): the front end ran its update at 30 Hz behind a correctly paced 60 Hz VI. Rare drives TWO clocks here and the routing table pointed at neither. Menu TIMERS accumulate g_ClockTimer (elapsed VIs, frame-rate invariant); logo ANIMATION advances a fixed step per CONSTRUCTOR call (frame-rate dependent). Halving the update rate therefore left every screen's DURATION right and halved every rotation - the exact pair of symptoms reported. Corroboration is in the decomp's own PAL/NTSC constant pairs rather than the notes: legal 201/241, NINTENDO_TIMER_MAX 417/501, RAREWARE_LOGO_EYE_COUNT2 241/290, every one of them exactly 50:60, so the per-frame counters are designed for one frame per VI. `for src/game/front.c` returned only objectives+cheats+multiplayer; a direct corpus grep for 'nintendo logo|legal screen|menu timer' surfaced this whole Intro directory at once. Fourth recorded time the table missed what a grep found."
+    },
+    "path-tables": {
+      "why": "waypoint/waygroup/path tables in the setup file, and the LOC-error trap that validates them",
+      "files": [
+        [
+          "Setup File Microcodes and Paths/Paths/path dissection.txt",
+          "the three path tables, their record layouts and terminators, and the \"error handling\" infinite loop taken on invalid data"
+        ],
+        [
+          "Setup File Microcodes and Paths/Paths/path load routine.txt",
+          "how the path tables are read in and their offsets expanded"
+        ]
+      ],
+      "governs": [
+        "src/game/initpathtablelinks.c",
+        "src/game/padhalllv.c"
+      ],
+      "learned": "2026-09-06 (B-087, campaign stage load hung on 5 of 6 levels): `for src/game/initpathtablelinks.c` returned \"no mapped area governs\", and `search waypoint` returned nothing because gedocs search matches FILENAMES, not content - a direct corpus grep for 'waygroup|path table' found this Paths directory immediately. Sixth recorded time the table missed what a grep found. WHAT THE NOTES SETTLED: 'path dissection.txt' gives the three tables the setup file's first words point at - PathPreset (4 longs: Preset, Offset, Link, Filler; table ends at Preset == -1), PathLinkage (3 longs: SetNumberOffset, PresetOffset, Terminator; ends at NULL offsets) and PathTable (long Offset then FOUR u8s, so that record is NOT uniformly word-shaped and must not be blanket-swapped). Those are exactly the decomp's waypoint, waygroup and PathRecord, and the note confirms every ID array is a long list ending in -1. It also documents the failure mode by name: on invalid data the routine 'creates a vastly worse' error - an infinite loop - which is the `while (1) {}` LOC-error trap at the end of init_path_table_links. THE NOTES WERE RIGHT AND THE DATA WAS FINE. Dumping the live post-swap tables for dam (205 waypoints, 23 waygroups) and replaying all eight validations over them in Python showed ZERO violations, at load time and again immediately before the check. B-087 was not a format, offset or byte-order defect at all - it was `validationGroupCursors[-3]`, a decomp stack-slot artifact that aliases the second outgoing-argument slot under gcc. Recorded here so the next reader does not re-search the corpus for a swapping bug that never existed."
+    }
+  },
+  "not_covered": [
+    [
+      "alarm system",
+      "'Alarm' appears only incidentally (addresses, sound effects, object templates). There is no alarm-system document. The alarm information graph is ORIGINAL work, not a port.",
+      "2026-08-23"
+    ],
+    [
+      "AI command lists / opcodes",
+      "The guard AI script DSL is not documented. chraidata.c IS the reference - it is the disassembled lists transcribed with names.",
+      "2026-08-24"
+    ],
+    [
+      "chr 'argh' hit counter",
+      "The string 'argh' appears in ZERO of the 617 files. numarghs semantics come from the decomp only.",
+      "2026-08-23"
+    ],
+    [
+      "CHRFLAG bit meanings",
+      "The guard-init doc does not describe the flag word. The one 'invincible' hit in the corpus is the PLAYER record (0x12B6), not a guard flag.",
+      "2026-08-23"
+    ],
+    [
+      "setup pad list / PadRecord layout",
+      "The setup file's pads array - which Bond's spawn position is read from - is not described. The Paths notes cover pad references inside PATH data and state those are unused; that is a different thing. Searched by filename and content; the setup docs folder has no pads section. Use the decomp's PadRecord struct, and note pads are NOT byte-swapped by sl_swap_setup.c.",
+      "2026-08-24"
+    ],
+    [
+      "N64 texel swizzle / odd-row word interleave",
+      "gedocs 'swizzle' returns no filename matches, and a content grep of the whole corpus for interleav|swizzl|odd row|word.?swap finds nothing about textures - the corpus documents GoldenEye's structures, not RDP TMEM addressing. Use the decomp: texSwapAltRowBytes (src/game/image.c:2168) IS the rule, and texAlignIndices (image.c:317) is the row-padding rule. Rows pad to 8 bytes (16 for 32bpp); on ODD rows word w trades with w^1, or w^2 for the 32bpp formats; the permutation is its own inverse. The nearest the notes come is value table #7 'imageflip values for indexed types' in huffman compression types.txt.",
+      "2026-08-25"
+    ],
+    [
+      "Mtx interior (fixed-point layout of a matrix)",
+      "ucode05.txt names the 01 command and calls its operand 'a 4x4 veiwing matrix' but never describes the 16 words. gedocs search matrix and search mtx both return nothing. Authority is include/PR/gbi.h (first 8 words integer, last 8 fraction) with guMtxF2L in src/libultra/gu/mtxutil.c showing the packing.",
+      "2026-08-25"
+    ],
+    [
+      "audio microcode / ACMD command set",
+      "The RSP audio microcode (aspMain) and its 16-opcode ACMD command set are not described anywhere in the corpus. gedocs search 'audio acmd microcode mixer' returns only GRAPHICS microcode notes, and a content grep of all 465 notes for acmd|aspMain|ADPCM|envmixer|A_RESAMPLE|aResample|'audio microcode' matches ZERO files (the 3 hits for a looser pattern were the term DMEM in graphics notes). 'Music and Sound Effects/' documents the music TABLE format, which sound plays when, and the 800243F8 sound-off flag - not the mixing pipeline. Authority for ACMD is include/PR/abi.h (opcodes A_SPNOOP..A_SETLOOP, ACMD_SIZE 32) plus the emitters in src/libultra/audio/. Nothing in the tree EXECUTES an ACMD list: the RSP did that on hardware.  AMENDED 2026-08-30: the GE-specific ACMD command set remains uncovered by the notes corpus, but RSP VECTOR ISA semantics are no longer absent - see the 'rsp-vector-isa' area, backed by SGI's Nintendo 64 RSP Programmer's Guide. Do not re-search the notes corpus for element/addressing rules; use that document instead.",
+      "2026-08-25 (amended 2026-08-30)"
+    ],
+    [
+      "watch skeleton template / the arm attached to it",
+      "'object templates.txt' is the authority on which node type positions which part, and it covers 14 prop classes (Pchr, Phat, PcctvZ, PtankZ, PwalletbondZ, the consoles and doors). The WATCH is not among them - grep -i 'watch' over the file returns nothing. So the note cannot say which node positions Bond's arm, which is what B-031 needs. Use the model's own Switches[] at runtime instead.",
+      "2026-08-25"
+    ],
+    [
+      "health/armour gauge ring rendering (glass2.c)",
+      "gedocs 'for src/game/glass2.c' returns no governing area, and the notes do not cover it. Searched 'watch health gauge armour' (returns solo-watch MENU PAGE notes only - 7F0A526C et al, which are the inventory/objectives/options interfaces, not the ring), 'glass break shatter' (top score 1, all matching the word 'break' in unrelated prose) and 'damage segments bar display health' (returns 'Damage and Kill Attributement.txt', which is the damage MODEL and is already routed under damage-hits). So hudMakeDamageSegments and buildGaugeBarDL are undocumented: the decomp is the only reference for the ring's geometry and colour ramp. See B-035.",
+      "2026-08-25"
+    ],
+    [
+      "thrown-projectile launch velocity and gravity",
+      "The corpus documents the thrown item's MODEL ID only (Objects and Attributes/weapons/7F005710 - Thrown Item Object Model.txt: item# -> model ID, e.g. remote mine 0x1D -> 0xC7). Searches for 'mine throw projectile grenade', 'throw velocity', 'thrown object physics', 'grenade arc' and 'projectile velocity gravity' return nothing else; the only other hit, Operation MonkeyWrench Documention/Remote Mine Timer Fix.txt, is a ROM hack and never authority (see the Rand++ caution). Launch speed, the +5 vertical kicker and gravity come from the decomp only: base_velocity 16.666666f for thrown objects and grenades / 25.0f for the knife (gun.c, the three generate_player_thrown_* functions), and PROP_PROJECTILE_GRAVITY_MODIFIER 0.27777779f per tick (propobj.c:198), integrated trapezoidally at propobj.c:4620. See B-047.",
+      "2026-08-26"
+    ],
+    [
+      "TEXEL1 names the render tile + 1",
+      "The combiner mux tables (ucode05_old.txt 'FC rdp_setcombine', and the PD copy) list '2  texel1' as a source but never say which TILE fills that slot - the mux names a slot, not a tile. A tree-wide `grep -rn -i 'texel1|tile+1|second tile'` over all 617 notes returns only those mux tables' own rows. The rule is the RDP's: in 2-cycle the second cycle samples the render tile + 1. GoldenEye's own lists are the corroboration - assets/oddtextures.c loads explosion smoke into G_TX_RENDERTILE (0, gbi.h:388) and the fire frame into tile 1, and no command anywhere in the list names '1' as a texel source.",
+      "2026-08-26"
+    ],
+    [
+      "room level-of-detail / distance-based geometry selection",
+      "A corpus search for level-of-detail / distance / display-list-per-room returns NO filename matches across all 617 notes; the background-stan topic covers stan, portal and global-visibility FORMATS only. Answered from the decomp instead, and measured: there is NO distance-based detail selection in the room path. bgRenderRoomPrimary/Secondary draw whatever the visibility pass marks (measured marked-visible == want == drew, 347 of 349 frames), the g_RoomLoadBudget=3 streaming throttle never bit, and the (D_8004485C != 0 || D_80044858 == room_index%10) round-robin is dead code because D_8004485C is a constant 1 with no writer tree-wide. The distance culls that DO exist act on PROPS and CHARACTERS, via posIsOnScreen -> fogPositionIsVisibleThroughFog against g_ScaledFarFogIntensity (5000 normally, 1000 during the facility gas). See B-051.",
+      "2026-08-26"
+    ],
+    [
+      "RSP fog factor formula and clamp",
+      "ucode05_old.txt 'BC rsp_uc05_moveword' gives the fog moveword (type 00080000) and states 'if fog, fog depth values (2 16bit integers)', but stops there: the corpus nowhere gives the fog FACTOR formula or its clamp. Authority is gbi.h's own comment above gSPFogFactor - alpha(fog) = (eyespace z) * fm + fo, clamped 0..255, with that z running -1 to 1, i.e. the perspective-divided z and NOT a distance - plus gbi.h:2777 gSPFogPosition for how fm/fo derive from a 0..1000 min/max pair. Note also that the moveword's TYPE field sits at bits 0-7 in this build's plain-F3D gMoveWd, not at bits 16-23 as the note's F3DEX-style table shows; measured, since reading bits 0-7 yields gSPFogPosition(990,1000) exactly. Same shape as the B-021 vtx correction - Rare's uc05 is not F3DEX. See B-045.",
+      "2026-08-26"
+    ],
+    [
+      "gas cloud RENDERING (facility tanks)",
+      "'Setup File Microcodes and Paths/Action block microcode/Gas go on, Gas go off.txt' covers the gas TIMER and DAMAGE only - which addresses hold the activate flag, the counter, the endpoint (~1 minute) and the damage-player flag, per region. It says NOTHING about how the gas is DRAWN. A search for gas/cloud/vapour/billboard/sprite returns only that note. So the decomp is the sole reference for the visual. RESOLVED 2026-08-26, and the billboard reading this entry used to carry was WRONG: there are no gas sprites anywhere (`grep -rn -i gas src/game/` finds timer, damage, sound and AI opcodes only). The gas is RDP FOG - init_trigger_toxic_gas_effect makes handle_gas_damage call fogSwitchToSolosky2, which lerps the level's environment toward its ALT row, turning the fog colour and the backdrop fill green and pulling the far clip plane from 5000 to 1000. See B-045.",
+      "2026-08-26"
+    ],
+    [
+      "RSP G_TEXTURE_GEN / reflection-mapping formula",
+      "SEARCHED AND SILENT. gedocs.py search 'texture gen reflect lookat environment map' returns nothing, and a corpus-wide grep -rli 'lookat|texture_gen|reflection map' over notes/ hits ONE file - the GoldenEye splash-screen constructor - which only records the two movemem commands going out (';T9->DL+18: movemem - lookatx', ';T6->SP+20: movemem - lookaty'), not what the RSP does with them. The notes are disassembly of the GAME, and texture generation happens inside the MICROCODE, so this is a gap by construction rather than an omission. Authority used instead, in order: include/PR/gbi.h (plain-F3D branch this build compiles) for G_TEXTURE_GEN 0x40000, G_TEXTURE_GEN_LINEAR 0x80000, G_MV_LOOKATX 0x84 / G_MV_LOOKATY 0x82, gSPLookAt sending l[0] then (char*)la+16, and Light_t's signed char dir[3] at offset 8; and src/libultra/gu/lookatref.c - the decomp's own SGI source - for guLookAtReflect writing l[0].dir = Right and l[1].dir = Up through FTOFRAC8. The remaining unknown, the dot-product-to-ST mapping, is pinned by ARITHMETIC rather than by a document: the facility pane declares gSPTexture scale 3456 over a 54x54 map and 32768 * 3456 / 65536 / 32 = 54.0 exactly, so the pre-scale domain is 0..32768 and a full -1..+1 sweep lands exactly on the image. Treat that as measured-and-consistent, not as documented.",
+      "2026-08-28"
+    ],
+    [
+      "which LOOKAT SLOT feeds which GENERATED TEXTURE AXIS (S vs T)",
+      "SEARCHED AND SILENT, and this is a NARROWER gap than the G_TEXTURE_GEN entry above - that one records that the corpus says nothing about the generator at all; this one records that the ONE fact people assume is sourced is not. What IS sourced is slot -> VECTOR: gbi.h:1271-1272 gives G_MV_LOOKATY 0x82 / G_MV_LOOKATX 0x84, gSPLookAt (:2738) sends l[0] at `la` and l[1] at `la+16`, and src/libultra/gu/lookatref.c - the decomp's own SGI source - writes l[0].dir = Right and l[1].dir = Up. What is NOT sourced anywhere is slot -> AXIS. gedocs.py search for 'lookat slot texture axis', 'reflection map S T coordinate' and 'environment map generate coordinate' all return nothing. A corpus-wide grep finds 'look at x' / 'look at y' at ucode05.txt:167-168, which is the movemem TYPE TABLE and nothing more, and one GoldenEye splash-screen note that only records the two movemem commands going out. Neither says what the RSP does with them. 'S is the Right dot' was inferred from the naming and should be labelled INFERRED wherever it appears. SL_TEXGEN_SWAP (default OFF, src/gfx/sl_gfx_dl.c) is the arm that would settle it against the cartridge; as of 2026-08-28 it CANNOT be settled, because no view-matched cartridge frame of the facility pane exists - see the B-051 measurements.",
+      "2026-08-28"
+    ],
+    [
+      "intro type 6 word 6 (record offset 0x18)",
+      "'Setup File Microcodes and Paths/Intro Block/Intro Block Commands.txt' prints offset 0x18 of the type-6 fixed-camera record as '--------', i.e. unlabelled, and no other note names it. It is a PAD INDEX: bondview2.c:1265 does &g_CurrentSetup.pads[ptr_random06cam_entry->unk18] and takes that pad's stan as the camera's stan. Measured on facility - cameras 0/1/3 carry 104 and camera 2 carries 2, and pads 104 (9582,-510,-3623) and 2 (468,-470,571) sit in the two rooms those cameras are actually in.",
+      "2026-08-28"
+    ],
+    [
+      "RDP alpha compare (G_AC_DITHER) and B9 SetOtherMode_L data masking",
+      "Searched 'setothermode alpha compare dither', 'noise dither' and the display-lists topic: the corpus documents B9's shift/length segments (ucode05_old.txt) but says NOTHING about the alpha-compare field's SEMANTICS, nor whether the RSP masks the command's data word to the named segment. Load-bearing: gDPSetRenderMode passes shift=3 length=29 (gbi.h:3090), so masking the data would strip bits 0-1 - and gbi.h:851 RM_AA_PCL_SURF carries G_AC_DITHER (=3) in exactly those bits. SETTLED BY MEASUREMENT, not by reading: (1) a census of every B9 the game emits over 7300 frames finds only two shapes, and the ONLY word carrying ac=3 is the render-mode word 0050004b - explicit gDPSetAlphaCompare is called 8 times, always G_AC_NONE - so field-wise masking would make dither unreachable, yet the cartridge plainly dithers; (2) OR-ing the data in unmasked is refuted too, because dither would then persist onto the page-select rectangles that draw straight after under G_RM_XLU_SURF (options.c:1786, ac=0), and with a bar mask taken from a quiet frame those bars measure 0.38-0.68x the face's frame-to-frame difference, never >=1 - they are translucent and show the dithered face through, not cut out themselves. Conclusion: the render-mode-shaped B9 (shift 3, length 29) carries a COMPLETE othermode_l value; every other shape stays field-wise. The microcode-level reason is NOT established - only the behaviour.",
+      "2026-08-28"
+    ],
+    [
+      "music sequence / event body format",
+      "SEARCHED AND SILENT on the event stream itself, and this is a DIFFERENT gap from the audio-microcode entry below: that one records that nothing describes the MIXER, this one that nothing describes the SCORE. 'Music and Sound Effects/Music table format.txt' documents the CONTAINER only - the 8-byte table entries, the 0x44 offset to music data, a table of longs at 0x4 the note itself hedges as 'probably indicating loop points or other data', and a 0x180 word it calls 'Unsure usage' - and then states outright 'Once music data can be parsed these can be identified more clearly', i.e. the body is unparsed by the author's own admission. A corpus-wide `grep -rliE 'midi|note on|pitch bend|program change'` over all 617 notes returns TWO files, BOTH GRAPHICS ('Display Lists and Object Generation/ucode05.txt' and '.../Objects/Texture application (Rooms).txt') - zero audio hits. So there is no note-on/note-off encoding, no delta-time encoding, no controller, tempo or program-change event layout anywhere in the corpus. Authority is the decomp's own SGI sources: src/libultra/audio/cseq.c and csplayer.c for the COMPRESSED sequence the game actually plays, seq.c/seqplayer.c for the uncompressed form. Those files are byte-identical to the upstream decomp's copy (43/43 md5 match, measured 2026-08-28), so there is nothing to rebase in and nothing better to read. See B-022.",
+      "2026-08-28"
+    ],
+    [
+      "instrument bank record layout / ADPCM codebook",
+      "SEARCHED AND SILENT. A corpus-wide `grep -rliE 'ALBank|ALInstrument|ALSound|ALWaveTable|ALKeyMap'` over all 617 notes returns ZERO files, and `grep -rliE 'codebook|predictor|adpcm'` returns ZERO files. What the notes DO give is placement, not layout: 'rom-address-table.txt' lines 64-67 name the four segments, and those offsets are CONFIRMED against this tree - 0x2EBDE0 sfx.ctl (23488), 0x2F19A0 sfx.tbl (797360), 0x3B4450 instruments.ctl (17312), 0x3B87F0 instruments.tbl (397216) tile the range exactly and end precisely on 0x419790, which the same note independently names as the music table; scripts/filelist.u.csv:27-31 lists the identical five offsets in decimal. But no note gives a FIELD MAP for a bank, instrument, sound, keymap or wavetable record, no ADPCM predictor codebook layout, no loop-point structure, and no per-sample rate. 'Music and Sound Effects/sound effects.txt' makes the gap explicit rather than merely leaving it: its table at line 268 declares the columns 'baseaddy: address: len: DACrate: Bitrate:' and every row fills only the first three, leaving DACrate and Bitrate blank throughout. Authority is include/PR/libaudio.h for the structs and src/libultra/audio/bnkf.c for the relocation walk. TRAP, recorded in B-022: alBnkfNew RELOCATES offsets to pointers but does NOT byte-swap, and the banks are big-endian - a native reader needs its own swap pass (`grep -rn 'ALBankFile|ALWaveTable' src/ --include=*.c` outside libultra finds only declarations).",
+      "2026-08-28"
+    ],
+    [
+      "audio reverb / FX configuration / room acoustics",
+      "SEARCHED AND SILENT, and this one is a TOTAL silence rather than a partial one: `grep -rliE 'reverb|room acoustic'` over all 617 notes returns ZERO files. Nothing in the corpus describes an FX preset, a delay line, a per-room or per-level acoustic parameter, or which of libultra's AL_FX_* types GoldenEye selects. The decomp answers what the notes do not, and the answer is the non-obvious one: the game does NOT use a stock preset. src/music.c:733 sets synconfig.fxType = AL_FX_CUSTOM (include/PR/libaudio.h:156, value 6), and src/audi.c:360-366 then hands alInit a CUSTOM parameter array - CUSTOM_FX_PARAMS_N, 6 sections x 8 words + 2 = 50 words (audi.c:161-166) - which src/libultrare/audio/drvrNew.c:130 passes through as c->params. So the reverb is a hand-tuned 50-word configuration living in audi.c, and any native mixer has to honour it rather than substitute a preset. Authority: audi.c, music.c, src/libultra/audio/synthesizer.c and auxbus.c. See B-022.",
+      "2026-08-28"
+    ],
+    [
+      "audio thread per-frame scheduling discipline",
+      "PARTIALLY COVERED, and the covered part is a single line. 'address ranges.txt' line 1437 names the thread - '8005E530  thread: sound manager' - alongside the main game loop (8005D640) and video manager (80060C90) in the same table, and that naming is the entire coverage. A corpus-wide `grep -rliE 'audio thread|sound thread|audio scheduler'` returns ZERO files, and '70006060 - main program loop.txt' does not mention audio at all. So the notes give the thread's RAM address but never its priority, its message-queue protocol, how many audio buffers are in flight, how the per-frame sample count is negotiated against DAC drain, or how it interleaves with the video thread. Authority is src/audi.c, and the negotiation is the part that matters natively: amCreateAudioMgr sizes g_FrameSize from the rate osAiSetFrequency RETURNS (audi.c:340, OUTPUT_RATE 22050) rather than the rate it asked for; amHandleFrameMessage recomputes frameSamples EVERY frame from osAiGetLength (audi.c:529) to stay locked to video; and three AudioInfo buffers rotate via g_AudioFrameCount % 3 (audi.c:448). A host DAC has to satisfy that same contract - which is why sl_audio_get_length must return a plausible STABLE value even with no device open (src/platform/sl_audio.c). Measured 2026-08-28: the cartridge emits ~367 stereo frames per audio batch, i.e. ~22050Hz, matching OUTPUT_RATE to 0.05%. See B-022 and tools/native/audiopair.py.",
+      "2026-08-28"
+    ],
+    [
+      "ENVMIX_STATE / envmixer voice-state lifetime",
+      "Searched the whole corpus (excluding the Rand++ hack directory, which also returns nothing) for ENVMIX_STATE, ALEnvMixer, envmixer, 'envelope state', 'physical voice', 'voice reuse', 'voice reset' and 'audio state': ZERO files each. The corpus says nothing about the audio mixer's 80-byte persistent state, its allocation, its reset, or voice reuse. Authority is the decomp source plus the microcode.",
+      "2026-08-30"
+    ],
+    [
+      "AI registers / audio DAC timing",
+      "SEARCHED AND SILENT. gedocs.py search for 'AI_LEN_REG audio interface register', 'audio interface DMA length status' and 'AI status fifo full' all return nothing. The corpus describes no AI register, no DAC rate programming and no audio DMA timing. Authority is the tree's own libultra and headers, which DO settle most of it: include/PR/rcp.h:607-609 states the address/length registers are double buffered and writable twice before full; rcp.h:622-626,649 give ai_full/ai_busy; src/libultra/io/ai.c tests bit 31; src/libultrare/io/aisetnextbuf.c:30 returns -1 without enqueueing when busy; src/libultra/io/aigetlen.c reads AI_LEN_REG; and src/audi.c:984-1010 shows a zero length means 'ai out of samples', an underrun. ONE THING NEITHER THE CORPUS NOR THE TREE SETTLES: what a READ of AI_LEN_REG returns - the in-progress transfer's remainder, or the total still queued. rcp.h documents only the WRITE field layout. That choice was settled by cartridge command-stream parity, not by assumption; see docs/backlog.md 2026-08-31.",
+      "2026-08-31"
+    ],
+    [
+      "RSP vector-ALU / accumulator semantics at the exact-operation level",
+      "NARROWED 2026-08-31. The entry this replaces claimed the RSP vector ISA was absent from corpus and tree. THAT WAS WRONG and contradicted landed project knowledge: commit 9f8948c1 indexed the SGI RSP Programmer's Guide as the 'rsp-vector-isa' AREA, with mnemonic-to-page tables. Load/store semantics are COVERED and already did their job - the element field is a BYTE element (p180/p207), LDV/SDV are plain 64-bit transfers with no truncation, LQV/SQV truncate at the enclosing 16-byte boundary with LRV/SRV covering the rest (p189/p219, Figure 3-2 p51). Those documented semantics PREDICT the current implementation and rule out the obvious truncation explanation, while not explaining the RESAMPLE state +0x10..11 first-halfword residual. Do not re-derive that closed load/store result. What may still be missing must be named at the EXACT vector-ALU or accumulator operation - e.g. a specific VMADx/VMULx accumulator contribution or a specific VSAR extraction lane - and the guide's per-instruction reference (p234-p321) is the place to look before claiming anything is uncovered.",
+      "2026-08-31"
+    ],
+    [
+      "front-end menu state machine / boot sequence",
+      "Searched `for src/front.c` (returns cheats + multiplayer only) and `search \"front end menu mission select difficulty\"` - no filename matches. The MENU enum, current_menu and the LEGAL->NINTENDO->RAREWARE->EYE_INTRO->GOLDENEYE_LOGO->FILE_SELECT chain are decomp-only: bondconstants.h:1876 and front.c:260/8525.",
+      "2026-09-03"
+    ],
+    [
+      "RSP resident LOOKAT basis when no gSPLookAt has been issued",
+      "SEARCHED AND SILENT, and NARROWER than the two texgen entries above: those record that the corpus describes neither the generator nor the slot->axis mapping. This one records that nothing states what the reflectance basis CONTAINS before any list uploads one. gedocs search 'lookat reflect environment map' and 'texgen normal' both return no filename matches. It matters because the basis is RESIDENT DMEM state that persists across lists: front.c:1688 (the Nintendo logo) sets G_TEXTURE_GEN and issues NO gSPLookAt, so it generates against whatever is already there, and a renderer that starts it at zero has a DEGENERATE basis - both dots are identically 0, every generated coordinate collapses to the midpoint, and the whole surface samples ONE texel. Answered by MEASUREMENT, not by the corpus: front.c:1964 builds the sibling screen's basis with guLookAtReflect over the IDENTICAL camera (eye 0,0,4000, target 0,0,0, up 0,1,0), and it was measured live uploading lookR=(+127,+0,+0) lookU=(+0,+127,+0) - the identity, which is what B-085 seeds. The claim is the narrow one about these logo screens; that F3D boots with an identity lookat IN GENERAL is NOT established.",
+      "2026-09-03"
+    ],
+    [
+      "settilesize versus mask: which one bounds a tile's sampled extent",
+      "SEARCHED AND SILENT ON THE SEMANTICS, though NOT on the layout - the distinction matters, so both halves are recorded. COVERED: the mask field positions are in ucode05_old.txt's F5 lower-word table ('0003C000 mask t', '000000F0 mask s', :972/:976), matching include/PR/gbi.h:3415 gsDPSetTile. NOT COVERED: nothing in the corpus says what the mask DOES relative to settilesize. The F2 entry (:901) calls lrs/lrt the 'size of image to be mapped', which actively invites the wrong reading, and no entry states that settilesize is the clamp rectangle while a repeating axis wraps at 2^mask. gedocs `topic display-lists`, `topic textures` and search 'settilesize clamp rectangle mask exponent tile extent' return no filename matches; a direct corpus grep for settilesize finds ucode05.txt, ucode05_old.txt and the ImgDecl generator, none of which relate the two. The rule the renderer now implements is taken from gbi.h plus the consequence measured on the Rareware logo - see the display-lists 'learned' B-088 entry - and is deliberately narrow: an axis is resized only when it repeats AND names a non-zero mask.",
+      "2026-09-03"
+    ],
+    [
+      "EYE_INTRO gun-barrel intro sequence",
+      "SEARCHED AND SILENT. A direct corpus grep for 'gunbarrel' / 'gun barrel' / 'gun-barrel' returns exactly two files and NEITHER is about the intro: 'Display Lists and Object Generation/Objects/GE Object Offsets.txt' has a gunfire toggle at 0x4, and 'rom-address-table.txt' names a WEAPON called Gun Barrel (object 0x36F). gedocs 'for src/game/title.c' returned 'no mapped area governs' before this round. So the sequence's own machinery is documented nowhere and comes from the decomp only: gunbarrel_mode's nine states (title.c:580), createGunbarrelRenderHole's 30-vertex radius-64 semicircle pair (title3.c:15), and the 440x299 RLE-expanded barrel backdrop drawn as 299 one-pixel-tall texrects (title2.c:24). What IS covered is the layer underneath, and it is what the round actually needed - ucode05.txt's 04 vertex entry. Route title.c to display-lists; do not go looking for a screen-specific note, there is not one.",
+      "2026-09-03"
+    ],
+    [
+      "front-end / main-loop frame cadence: VI retraces per completed update",
+      "SEARCHED AND SILENT. How many VI retraces the console spends per completed front-end or game update is not documented anywhere in the corpus. Main Menus/Intro/Menu 00..04 holds disassembly listings of each interface and constructor, not timing; 'retrace'/'scheduler'/'VI interrupt' hit only 'address ranges.txt', a PD note and StyleGuide.txt, and 'frame rate'/'fps' hit nothing relevant. The authority is Rare's own source instead: __scHandleRetrace's client loop (sched.c) tests the word osScAddClient stores from its FOURTH argument - init.c registers the graphics client with NULL, so it gets a retrace EVERY VI, while audi.c passes 1, so the audio manager gets one every SECOND VI. The cadence actually achieved is workload-determined and must be MEASURED, never read off a constant.",
+      "2026-09-03"
+    ],
+    [
+      "RDP behaviour for an illegal format/size pair, specifically RGBA at 8bpp",
+      "SEARCHED AND SILENT. The corpus documents GoldenEye's own structures, not the RDP's response to combinations the SDK never emits. 'image declarations.txt' enumerates the format nibble (0 rgba .. 4 i) and the bitdepth nibble (0 4bit .. 3 32bit) as independent fields and says nothing about which pairings are legal; 'huffman compression types.txt' value tables #5/#6 give a per-image-ID type and pixel size but never a format/size product; ucode05_old.txt's F5 settile entry lists fmt and siz as plain bit fields with no validity rule. Content greps over the whole corpus for rgba.*8.?bit, invalid format, illegal format and unsupported format return nothing on this point. THIS MATTERS because GoldenEye really does emit the pair: texSelect falls back to the image declaration's format/depth whenever texFindInPool misses, and image 07BC - the gun-barrel shadow - declares format=0 (rgba) with bitdepth=1 (8b) while 'imageTypes.txt' records the image itself as 8-bit paletted. Sightline's gbi_to_sl_fmt currently returns -1 for that pair, which DROPS THE TEXTURE and paints the combiner's untextured term instead - a brighter result than any texel could give. Establishing the correct behaviour needs hardware or a reference emulator, not the notes; do not infer it from the decomp, which only shows what was requested and not what the RDP did with it. SETTLED 2026-09-04 BY MEASUREMENT, not by the notes - see B-095. A reference-emulator frame (parallel_n64, gunbarrelTimer=90) puts the floor beneath the shadow 10-19 levels DARKER than the same rows outside it, and decoding the pair as I8 - the byte replicated across R, G, B and alpha - reproduces that sign and magnitude natively (-7..-15) where returning -1 produced +11..+12. The corpus is still silent and remains not authority here; the entry stays so nobody re-searches it. Note also that SETTILE.HTM, which ucode05.txt's F5 entry defers to, is NOT PRESENT in the corpus (find . -iname 'settile*' returns nothing). RGBA/4b is still undetermined and is deliberately left returning -1.",
+      "2026-09-04"
+    ],
+    [
+      "RDP address unit: mask == 0 means clamp",
+      "The corpus gives the F5 settile field split (ucode05_old.txt 'F5 rdp_settile' lower word: clamp s 0x00000200, mask s 0x000000F0, clamp t 0x00080000, mask t 0x0003C000) and shows two DL generators filling those fields, but never states what the address unit DOES with them. A tree-wide content grep of notes/ for mask.{0,40}(clamp|wrap) and clamp.{0,40}mask returns only those field tables and the generators' own comments - nothing about wrapping behaviour. B-099 took the rule from the header field split plus a measured A/B on MENU_DISPLAY_CAST. Same gap B-088 hit from the other side, for tile SIZING.",
+      "2026-09-04"
+    ],
+    [
+      "per-model LOD switch distances (ModelRoData_LODRecord Min/MaxDistance)",
+      "SEARCHED AND SILENT. The corpus documents room/portal/stan visibility but never the MODEL node record that hides PART of a model by distance. 'background-stan' is the wrong area for it and 'Display Lists and Object Generation' covers the geometry, not the node header. Authority is the decomp instead: src/bondtypes.h:1047 for the layout (f32 MinDistance, f32 MaxDistance, ModelNode *Affects, u16 RwDataIndex, u16 reserved), src/game/model.c:1794 modelUpdateDistanceRelations for the rule (distance = -mtx->m[3][2] * getPlayer_c_lodscalez(), compared against Min/MaxDistance * model->scale), and src/native/sl_swap_model.c:262 for the native byte swap. MEASURED 2026-09-07 on a Dam boot with SL_LOD_DBG=1: the pairs read correctly - a near node [0, 1278] against a far node [1278, 4.26e7] at model scale 0.1, the two sharing one switch point, and lodscalez 1.0909 exactly as a 220-line letterbox at fovy 60 predicts. So the LOD record is NOT mis-decoded on this build; do not re-open it without new evidence.",
+      "2026-09-07"
+    ],
+    [
+      "per-prop distance fade / the near-fog visibility triple",
+      "SUPERSEDED 2026-09-08 - this entry was WRONG and is kept as a correction rather than deleted. 'Fog Water and Sky/NTSC fog and sky.txt' DOES cover this: it carries the full disassembly of both 7F0BA758 (fogLoadCurrentEnvironment) and 7F054B80 (chrobjFogVisRangeRelated), which is the formula and the record layout together. The earlier claim that the folder documents only colours and the far-fog band came from reading the folder NAME and the first page, not the file - the listing runs 604 lines and the visrange routine is at line 440. See the background-stan files entry for what it establishes. What remains genuinely uncovered is narrower and is filed separately: what the level visibility scale MEANS. Still true and still worth knowing: the mechanism is inert on any level whose row has NearFog == 0, because fogLoadCurrentEnvironment then leaves g_NearFogValuesP NULL (bgfog.c:351); Facility's row is 0/0/0 and Dam's is 3333/4444/600, so Facility structurally cannot witness this and is never a control for it.",
+      "2026-09-07"
+    ],
+    [
+      "level visibility scale - what it MEANS (levelinfotable .visibility; 0.2 on DAM, SURFACE, SURFACE2, 1.0 on the other seventeen)",
+      "SEARCHED AND SILENT. The corpus shows WHERE the ROM applies the scale - 7F0BA758 divides pervasiveness and far fog by it, matrix_4x4_7F058C4C folds it into the f32->Mtx fixed-point factor, and bgIsRoomOnScreen divides viGetZRange()[1] by it - but no note says what it is FOR, nor why two of the five Visibility distances are scaled and the other three are not. Searched the corpus for \"visibility\", 800413FC and 7F0B4878. The decomp plus those disassemblies is the whole available authority, so any claim about intent here is inference and must be labelled as such.",
+      "2026-09-08"
+    ],
+    "RDP scissor as an IMAGE-CORRECTNESS question. ucode05.txt \"ED rdp_setscissor\" is the authority for the REGISTER (10.2 fixed corners) and is complete. Nothing in the corpus states what the scissor is FOR beyond clipping the RDP's own rasteriser, and a corpus-wide search for scissor/setscissor/clip rectangle finds no discussion of room portal boxes relying on it. So whether a port may ignore it is not a documented question - it has to be measured, and B-101 measured it. Do not re-search the notes for this.",
+    [
+      "RSP near-z clipping / clip codes",
+      "The corpus documents only the PROGRAMMABLE clip planes: G_MW_CLIP's four offsets 'clip -x'/'clip -y'/'clip +x'/'clip +y' (ucode05.txt:567-570, ucode05_old.txt:483-486). It is SILENT on whether the microcode compiles a fixed near-z test in, and reading the absence of a z moveword as 'the RSP does not near-clip' is an overclaim that cost two rounds. The AUTHORITY is the cartridge's own microcode, D:\\Projects\\007\\rsp\\graphics\\gmain.s: :512-524 computes the clip codes (vch/vcl against the unscaled w, masks 0x703/0x7030 - five planes, near included, no far test), and :784-794 both REJECTS (mask 0x7030) and RETESSELLATES (mask 0x4343, bit 14 = the unscaled near bit) against z = -w. The RSP and OpenGL near-clip at the SAME plane. See docs/backlog.md B-100 (2026-09-09) and the nearwit_note block in src/gfx/sl_gfx_dl.c.",
+      "2026-09-09"
+    ],
+    [
+      "F2 settilesize ULS/ULT as a per-pixel sampling ORIGIN, and the clamp window on a wrapping axis",
+      "ucode05.txt l.888-905 gives the F2 field layout and the width=(lrs-uls)/4+1 derivation, and ucode05_old.txt's F5 table gives the masks - but the corpus nowhere states that the RDP SUBTRACTS the tile's upper-left from the shifted per-pixel s/t before mask/mirror/clamp, nor what an inside-out window (lrs < uls) means on a wrapping axis. Searched settilesize/scroll/tile origin corpus-wide. The working authority is the game's own water writer (src/game/unk_092E50.c MipMap2C_* lists animate uls/ult 0..255 over lrs=lrt=0 wrap-mask-5 tiles as the scroll, measured live in B-107) plus the cartridge's visibly flowing water. See docs/backlog.md B-107.",
+      "2026-09-09"
+    ],
+    "How does Rare's ucode05 RSP evaluate the geometry-mode cull bits per triangle (winding/sign convention, screen-space area, negative-w handling)? -- 2026-09-10, grep -rn -i 'cull|winding|backface' over ucode05.txt and ucode05_old.txt: both name only the mode BITS (0x1000 cull front / 0x2000 cull back, plus BE rsp_uc05_culldl volume culling); neither describes the per-triangle test. Needed by B-113/B-114: Dam's room-1 mountain renders whole on hardware under G_CULL_BACK while BOTH constant screen-winding senses natively cull complementary subsets of it (measured at owner marks 20260910-230901 and 20260910-234448), so the microcode's actual rule must differ from a constant-sense screen-area sign and remains unknown. CORRECTED 2026-09-15 (#25): the premise was never measured - the cartridge (parallel_n64 at the same room-121 poses, scratchpad dam\\romtele.py) does NOT render the mountain whole; it culls exactly the faces sense 1 culls, and likewise the Surface dome's right half and the Surface 2 tower underside. The RSP rule IS the constant-sense screen-area sign (gmain.s:784-888, y-down screen coordinates in command order, sign flipped per y-sort swap); the corpus stays silent on it but the cartridge has answered. See docs/backlog.md 2026-09-15 (#25).",
+    [
+      "RDP depth-compare equality / dzpix tolerance",
+      "Searched: depth compare z buffer dz tolerance decal; zbuffer depth; coplanar decal zmode. Nothing in the corpus describes whether the RDP depth test passes on EQUAL z (or within the delta-z tolerance). B-122 rests on measurement instead: Surface dome DL 20017050 draws the same coplanar quads twice (dark then white); the cartridge shows the SECOND pass winning; GL_LESS makes it lose, GL_LEQUAL reproduces the cartridge outcome. Re-searched 2026-09-13 for B-125 (z-buffer depth compare dz tolerance coplanar zmode; zbuffer 18 bit mantissa exponent; othermode decal; grep Z_CMP/ZMODE/Z_UPD/zbuf corpus-wide): the corpus documents only the triangle command's z-coefficient block (ucode05_old.txt l.709-720: 'zbuf', 'change zbuf over x/z/y') and G_MAXZ (gbi.h:1219). The tolerant compare emulated in sl_gfx_dl.c (pass when sz - 8*max(dzpix,dzmem) <= oz, with the dzmem floor by stored-z range) is the RDP reference behaviour, not a corpus fact; the dome measurement it explains is in docs/backlog.md B-125.",
+      "2026-09-12"
+    ],
+    [
+      "RDP coverage bits: ALPHA_CVG_SEL / CVG_X_ALPHA and the AA opaque-surface blend",
+      "Searched 2026-09-13 for B-129 (grep -rni 'cvg|coverage|alpha_cvg' over the whole notes tree): nothing. The corpus never describes the blender's coverage path, so what ALPHA_CVG_SEL means in G_RM_AA_OPA_SURF / G_RM_AA_ZB_OPA_SURF (include/PR/gbi.h:725-733 names the bit in every opaque mode) is taken from the measurement: the cartridge (tools/native/romweapon.py, Surface, sniper rifle) draws an I4 lens whose alpha is its intensity fully OPAQUE over bright snow, so in these modes the pixel alpha is the COVERAGE, not the texel alpha - the texel alpha never reaches the blender. A native path that alpha-tests such a draw (B-121's family-wide override) cuts what the RDP would fill. See docs/backlog.md B-129.",
+      "2026-09-13"
+    ],
+    [
+      "RDP texture LUT applied to a 16-bit tile (which byte indexes the palette)",
+      "SEARCHED AND SILENT. The corpus gives the LUT FIELD - ucode05_old.txt:364 lists '2 texture LUT' among the setothermode_h segments, ucode05.txt:856 names it, and the F0 loadtlut entries describe the palette LOAD - and nothing about the texture unit's FETCH under it: a corpus-wide `grep -rni 'tlut|textlut|texture lut|lookup table'` over the notes returns only those field tables, the generators' own loadtlut/setothermode emissions and the Spectrum-emulation disassembly, none of which says what happens when the LUT is enabled and the tile is NOT declared CI. GoldenEye reaches exactly that on the sky.c sea: othermodemicrocode.c:378-499 loads IMAGE_WATER_BLUE as the CI8 chain the texpool holds and enables G_TT_RGBA16, then unk_092E50.c:381-384 re-declares tiles 0/1 as RGBA/16b line 4. Settled by MEASUREMENT (B-130, 2026-09-14): the cartridge (romintro.py stage 26) draws blue water; a literal 5551 read of the same bytes is green noise whose channel maxima are exactly index pairs read as 5551; palettising the HIGH byte of each 16-bit texel reproduces the cartridge's sea-region mean to within 1 unit per channel. The rule in src/gfx/sl_gfx_dl.c gbi_to_sl_fmt is deliberately the one measured pair (RGBA/16b under a LUT), with SL_TLUT16=0 as the kill switch; IA/16b under a LUT is NOT claimed - nothing in the tree was measured reaching it.",
+      "2026-09-14"
+    ],
+    [
+      "RDP shade / fog-alpha interpolation rule (screen-linear vs perspective-correct)",
+      "The notes name the rule only by its name: ucode05.txt:400 'shade smooth (uses Gourand interpolation ...)' and the othermode 'Texture Perspective' bit at ucode05.txt:853 / ucode05_old.txt:413-415, which is a control for TEXTURE only. Nothing states outright that the RDP's shade coefficients (RGBA, and the fog value the RSP put in shade alpha) are interpolated linearly in SCREEN space with no perspective correction. A corpus grep -rn -i 'DrDx|shade coef|perspective' over notes/ hits only those lines and the microcode constructors' texture-perspective bit. Settled by measurement against the cartridge instead (Surface 2 spawn valley, owner marks 20260914-234420, B-131): GL's perspective-correct interpolation of the per-vertex fog and shade bows each floor triangle and creases at every shared edge where the cartridge draws a smooth Gouraud field; screen-linear (noperspective) interpolation reproduces the cartridge's gradient shape. Also measured: the fog value of a CLIPPED vertex is its own z/w, not a lerp of the endpoints' z/w (same investigation).",
+      "2026-09-15"
+    ],
+    [
+      "RDP texture LUT fetch for a CI index past the F0-loaded entry count",
+      "SEARCHED AND SILENT. ucode05.txt:870-886 (F0 rdp_loadtlut) and ucode05_old.txt describe the palette LOAD - tile, count, start - and nothing about the texture unit's FETCH when a texel's index exceeds the entries loaded: a corpus grep -rni 'tlut|palette' over notes/ hits only those field tables, the generators' own loadtlut emissions and the Spectrum-emulation disassembly. GoldenEye authors exactly that case on the type-1 detail command (tex.c:731 texHandleType1 + texWriteTileFromDefinition): TARDETAIL and GRAVELDETAIL (assets/images.def:22-23, flags 0x3/0x8/0xD/0x2 - the 'Detailflag1 ... 0x38D2' of image.h) set tile 0 at tmem word 19 with mask s 7 / t 2, a 128x4 window over a 16x16 CI8 whose 53-entry LUT the indices overrun. On hardware the LUT is the upper half of TMEM and such an index reads whatever stale entry sits there. Settled by measurement (B-141, 2026-09-16): the cartridge (romtele.py stage 30 at the Depot yard mark) draws the floor as dark tarmac; the native decoder had rejected the whole tile (SL_TEX_ERR_SHORT_PAL) and left the draw untextured. The production rule in src/gfx/sl_gfx_tex.c is SL_TEX_FLAG_PAL_WRAP - the index wraps into the loaded entries - chosen because it keeps every texel in the texture's own palette (the cartridge's tone, 36/32/24 vs 35/35/36 floor means); the stale entry's actual bytes are NOT claimed, and a TMEM byte model would be needed to reproduce them.",
+      "2026-09-16"
+    ]
+  ]
+}

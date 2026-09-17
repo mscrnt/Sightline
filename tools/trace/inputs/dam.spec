@@ -1,0 +1,1 @@
+LEVEL=dam DIFFICULTY=agent TOUGH=

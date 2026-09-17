@@ -1,0 +1,1 @@
+LEVEL=aztec DIFFICULTY=secret TOUGH=10 S007=///

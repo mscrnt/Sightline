@@ -1,0 +1,176 @@
+{
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "asset": {
+  "version": "2.0",
+  "generator": "https://github.com/mikedh/trimesh"
+ },
+ "accessors": [
+  {
+   "componentType": 5125,
+   "type": "SCALAR",
+   "bufferView": 0,
+   "count": 515952,
+   "max": [
+    85999
+   ],
+   "min": [
+    0
+   ]
+  },
+  {
+   "componentType": 5126,
+   "type": "VEC3",
+   "byteOffset": 0,
+   "bufferView": 1,
+   "count": 86000,
+   "max": [
+    1853.0,
+    299.7906799316406,
+    183.47189331054688
+   ],
+   "min": [
+    -1853.0,
+    -299.7906799316406,
+    -183.47189331054688
+   ]
+  },
+  {
+   "componentType": 5126,
+   "type": "VEC2",
+   "byteOffset": 0,
+   "bufferView": 2,
+   "count": 86000,
+   "max": [
+    0.9992703795433044,
+    0.9992377161979675
+   ],
+   "min": [
+    0.0007462757057510316,
+    0.0007622838020324707
+   ]
+  },
+  {
+   "componentType": 5126,
+   "count": 86000,
+   "type": "VEC3",
+   "byteOffset": 0,
+   "bufferView": 3,
+   "max": [
+    0.9985397458076477,
+    0.9984755516052246,
+    0.9998186230659485
+   ],
+   "min": [
+    -0.9985063076019287,
+    -0.9984754920005798,
+    -0.9998190402984619
+   ]
+  }
+ ],
+ "meshes": [
+  {
+   "name": "geometry_0",
+   "extras": {
+    "units": "meters",
+    "from_gltf_primitive": false,
+    "name": "geometry_0",
+    "node": "geometry_0"
+   },
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 1,
+      "TEXCOORD_0": 2,
+      "NORMAL": 3
+     },
+     "indices": 0,
+     "mode": 4,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "images": [
+  {
+   "uri": "textures/chrome_authored.png",
+   "extras": {
+    "sl_authored": true,
+    "sl_authored_provenance": "64x64 chrome environment ramp authored by the project owner from colour stops with the owner's own tooling. Not resampled from, traced from, or derived from any ROM texture."
+   }
+  }
+ ],
+ "textures": [
+  {
+   "source": 0
+  }
+ ],
+ "materials": [
+  {
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "baseColorFactor": [
+     1,
+     1,
+     1,
+     1
+    ],
+    "roughnessFactor": 0.6,
+    "metallicFactor": 0.0
+   },
+   "name": "N64-nintendo-env",
+   "doubleSided": false,
+   "extensions": {
+    "KHR_materials_unlit": {}
+   },
+   "extras": {
+    "sl_texgen": true
+   }
+  }
+ ],
+ "nodes": [
+  {
+   "name": "geometry_0",
+   "mesh": 0
+  }
+ ],
+ "buffers": [
+  {
+   "uri": "loadbearing.bin",
+   "byteLength": 4815808
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 2063808
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 2063808,
+   "byteLength": 1032000
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 3095808,
+   "byteLength": 688000
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 3783808,
+   "byteLength": 1032000
+  }
+ ],
+ "extensionsUsed": [
+  "KHR_materials_unlit"
+ ]
+}

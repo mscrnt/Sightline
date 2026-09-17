@@ -1,0 +1,1 @@
+LEVEL=dam DIFFICULTY=secret TOUGH=10

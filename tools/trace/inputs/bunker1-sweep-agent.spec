@@ -1,0 +1,1 @@
+LEVEL=bunker1 DIFFICULTY=agent TOUGH=10 S007=///

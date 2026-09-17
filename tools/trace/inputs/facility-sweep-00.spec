@@ -1,0 +1,1 @@
+LEVEL=facility DIFFICULTY=00 TOUGH=10 S007=///

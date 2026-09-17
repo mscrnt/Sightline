@@ -1,0 +1,1 @@
+LEVEL=depot DIFFICULTY=secret TOUGH=10 S007=///

@@ -1,0 +1,1 @@
+LEVEL=statue DIFFICULTY=agent TOUGH=

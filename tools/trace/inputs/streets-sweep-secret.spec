@@ -1,0 +1,1 @@
+LEVEL=streets DIFFICULTY=secret TOUGH=10 S007=///

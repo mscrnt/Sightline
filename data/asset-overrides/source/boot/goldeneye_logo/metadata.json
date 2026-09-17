@@ -1,0 +1,35 @@
+{
+ "logo": "sightline",
+ "asset_id": "boot.goldeneye_logo",
+ "scale": 1.0,
+ "provenance": "AUTHORED, NOT EXTRACTED.",
+ "provenance_detail": "Letterforms authored by the project owner from the owner's OWN custom font; outlines extracted from that font with fontTools. The font is the owner's own work - not Nintendo's, not Rare's, not a third party's, and not ROM-derived. Crosshair generated procedurally. Colour ramp authored from seven colour stops, NOT resampled from any ROM texture. No ROM vertex, pixel or display-list data is present. Metrics below were MEASURED from the original prop; they are proportions, not asset data.",
+ "metrics_measured_from_original": {
+  "baseline": -119,
+  "cap_height": 172,
+  "envelope_x": [
+   -1284,
+   1284
+  ]
+ },
+ "normals": "AUTHORED. Flat geometry at z=0 with ny ramped linearly with height (-0.290..+0.290) so G_TEXTURE_GEN samples the ramp vertically. Reproduces the original mechanism, measured at corr(ny,height)=+0.948, ny -0.287..+0.289.",
+ "materials": [
+  {
+   "material": "SightLine-gold",
+   "texgen": true,
+   "texture": "textures/ramp_gold.png",
+   "note": "unlit; colour comes from the ramp sampled by the vertex normal"
+  },
+  {
+   "material": "SightLine-crosshair-red",
+   "texgen": false,
+   "baseColorFactor": [
+    214,
+    46,
+    42,
+    255
+   ],
+   "note": "unlit, untextured, flat red"
+  }
+ ]
+}

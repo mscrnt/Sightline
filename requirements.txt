@@ -1,0 +1,28 @@
+# Sightline — Python tooling, pinned.
+#
+# Install:  .venv/bin/python3 -m pip install -r requirements.txt
+# Created by: make venv
+#
+# Scope note: the MATCHING BUILD ITSELF NEEDS NONE OF THESE. The four scripts
+# the Makefile invokes (scripts/make/sync_imagelist_with_def.py,
+# scripts/generate_{prop_model,chr,gun}_c.py) import only the Python standard
+# library. Everything below exists for tools/diff.py, the vendored asm-differ
+# used via scripts/asmdiff.sh, which is the core decomp comparison workflow.
+#
+# Deliberately NOT included (see docs/toolchain.md):
+#   splat     — this decomp uses its own extractor (tools/extractor), not splat.
+#   capstone  — replaced by the vendored rabbitizer in tools/ido5.3_recomp.
+#   permuter  — not vendored and not referenced by any build path.
+# Add them only when something actually imports them.
+
+# --- tools/diff.py hard requirements (module-level import; absence is fatal) ---
+colorama==0.4.6
+watchdog==6.0.0
+
+# --- tools/diff.py lazy requirements (default diff algorithm + --source) ---
+Levenshtein==0.27.4
+cxxfilt==0.3.0
+argcomplete==3.7.2
+
+# --- transitive, pinned for reproducibility ---
+RapidFuzz==3.14.5
