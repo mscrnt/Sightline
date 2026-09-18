@@ -215,6 +215,11 @@ as a single publication commit. The private development history is not
 published. GitHub Issues, Discussions and pull requests are not used as
 this project's workflow, and contributions are not accepted through them.
 
+Follow development on the
+[project board](https://github.com/users/mscrnt/projects/7) and read the
+[wiki](https://github.com/mscrnt/Sightline/wiki) for setup, controls and
+feature documentation.
+
 ## Credits and acknowledgements
 
 - **The GoldenEye 007 decompilation project and its contributors** —
