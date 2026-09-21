@@ -13809,6 +13809,35 @@ bool sub_GAME_7F054C58(coord3d *coord, f32 arg1)
 }
 
 
+#ifndef __sgi
+/* #45. The AI command list's IF-I'M-ON-SCREEN (chrai.c) reads the 4:3 view,
+ * not the widened draw set: PROPFLAG_ONSCREEN (set from the wide traversal
+ * at :5958 / chr.c:2528) AND the prop's room aperture clamped to the 4:3
+ * rectangle still contains the position - the same box test posIsOnScreen
+ * makes, over the box the 4:3 traversal would have produced. Without an
+ * aperture the game's own frustum planes (bondview.c, 4:3 at every aspect)
+ * decide. See bg.c, the block on sl_view43. */
+bool sl_propIsOnScreen43(PropRecord *prop)
+{
+    bbox2d bbox;
+    f32 margin = 0.0f;
+
+    if (!(prop->flags & PROPFLAG_ONSCREEN))
+        return FALSE;
+    /* the margin the flag was set with: a character's model size (chr.c
+     * :2436-2506 posIsOnScreen(prop, pos, getinstsize(model), 1)) */
+    if (prop->type == PROP_TYPE_CHR && prop->chr != NULL && prop->chr->model != NULL)
+        margin = getinstsize(prop->chr->model);
+    if (getPropCombinedRoomsBBox2D(prop, &bbox) != 0)
+    {
+        if (!sl_clampBoxToView43(&bbox))
+            return FALSE;
+        return camIsPosInScreenBox(&prop->pos, margin, &bbox);
+    }
+    return camIsPosInScreen(&prop->pos, margin);
+}
+#endif
+
 /**
  * Address: 7F054D6C
  */

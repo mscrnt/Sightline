@@ -1273,6 +1273,18 @@ void fileSaveSettingsForFolder(save_data *save)
 
     temp = ((u16) (cur_player_get_control_type() << 8)) & OPTION_CONTROLTYPE;
     save->options = bits | temp;
+#ifndef __sgi
+    /* NATIVE ONLY (#41): this is the cartridge's own "commit the options"
+     * point - every solo watch close and every abort: confirm come through
+     * here - so the native settings store mirrors the control style, Look
+     * Up/Down and Aim Control from the same getters read above. The save
+     * block is written exactly as before; nothing here changes it. A no-op
+     * when the store is inactive (src/native/sl_settings_apply.c). */
+    {
+        extern void sl_settings_sync_from_game(void);
+        sl_settings_sync_from_game();
+    }
+#endif
 }
 
 /**

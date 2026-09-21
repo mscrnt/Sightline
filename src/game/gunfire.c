@@ -6347,6 +6347,25 @@ void gunDrawSight(s32 *gdl) {
 #ifdef VERSION_EU
         halfedxy[1] = halfedxy[1] * g_GunSightAspectRatio;
 #endif
+#ifndef __sgi
+        /* #45 FIELD OF VIEW: the native renderer zooms the world projection
+         * out by s about the view centre (src/platform/sl_display.c, applied
+         * in src/gfx/sl_gfx_dl.c); the sight is a 2D image the game places in
+         * its own 60-degree screen space, so its DRAWN position follows the
+         * same zoom about the same centre and stays over the aim ray. The
+         * aim itself (crosshair_angle, the ray, auto-aim, spread) is
+         * untouched. s is 1 at the default setting. */
+        {
+            extern float sl_view_scale_y(void);
+            f32 s = 1.0f / sl_view_scale_y();
+            if (s != 1.0f) {
+                f32 cx = getPlayer_c_screenleft() + getPlayer_c_screenwidth() * 0.5f;
+                f32 cy = getPlayer_c_screentop() + getPlayer_c_screenheight() * 0.5f;
+                xypos[0] = cx + (xypos[0] - cx) * s;
+                xypos[1] = cy + (xypos[1] - cy) * s;
+            }
+        }
+#endif
         display_image_at_position(&sp54, &xypos, &halfedxy, 0x20, 0x20, 0, 0, 1, 0xFF, 0xFF, 0xFF, 0x6E, (crosshairimage->level > 0), 0);
         *gdl = sp54;
     }

@@ -140,6 +140,35 @@ def texture_refs_of(pkg: Path):
     return refs
 
 
+def parts_of(pkg: Path):
+    """Optional per-package part mapping: package label -> canonical part.
+
+    The same shape and the same reasoning as texture_refs_of: the importer
+    already has --part LABEL=CANONICAL, this reads the package's own
+    declaration ("parts" in metadata.json) and hands it to that option, so a
+    device model built here and one imported by hand go through one check.
+    Absent or empty is silent; malformed is an error.
+    """
+    meta = pkg / "metadata.json"
+    if not meta.is_file():
+        return {}
+    try:
+        doc = json.loads(meta.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise SystemExit("error: %s is not valid JSON: %s" % (meta, exc))
+    parts = doc.get("parts", {})
+    if not parts:
+        return {}
+    if not isinstance(parts, dict):
+        raise SystemExit("error: %s: parts must be an object mapping "
+                         "node label -> canonical part" % meta)
+    for k, v in parts.items():
+        if not isinstance(k, str) or not isinstance(v, str) or not k or not v:
+            raise SystemExit("error: %s: parts entries must be non-empty "
+                             "strings, got %r: %r" % (meta, k, v))
+    return parts
+
+
 def packages():
     """(asset_id, package_dir) for every source package, sorted by id."""
     out = []
@@ -176,8 +205,11 @@ def main(argv=None) -> int:
             return 1
 
         out = out_root / gi.ASSET_IDS[asset]
+        # The importer itself is an input: a format change (the part table,
+        # 2026-09-19) must rebuild a model whose package did not move.
         if not force and out.is_file() and \
-                out.stat().st_mtime_ns >= newest(inputs_of(pkg)):
+                out.stat().st_mtime_ns >= newest(inputs_of(pkg)
+                                                 + [Path(gi.__file__)]):
             print("asset overrides: %s is up to date" % asset)
             skipped += 1
             continue
@@ -190,6 +222,8 @@ def main(argv=None) -> int:
                 "--output", str(out)]
         for image, ident in sorted(texture_refs_of(pkg).items()):
             argv += ["--texture-ref", "%s=%s" % (image, ident)]
+        for label, canon in sorted(parts_of(pkg).items()):
+            argv += ["--part", "%s=%s" % (label, canon)]
         rc = gi.main(argv)
         if rc != 0:
             print("error: building %s from %s failed (rc %d)"

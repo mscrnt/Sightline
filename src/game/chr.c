@@ -2526,7 +2526,15 @@ after_position_update:
         if (get_debug_chrnum_flag()) {}
 
         prop->flags |= PROPFLAG_ONSCREEN;
+#ifndef __sgi
+        /* #45: "has been seen" feeds a script test (AI_IFIveNotBeenSeen) and
+         * a spawn rule (chrSpawnAtChr), so it is the 4:3 view that sets it -
+         * PROPFLAG_ONSCREEN above stays the draw set's (bg.c, sl_view43). */
+        if (sl_propIsOnScreen43(prop))
+            chr->chrflags |= CHRFLAG_HAS_BEEN_ON_SCREEN;
+#else
         chr->chrflags |= CHRFLAG_HAS_BEEN_ON_SCREEN;
+#endif
 
 #ifdef BUGFIX_R1
     if (cheatIsActive(12))

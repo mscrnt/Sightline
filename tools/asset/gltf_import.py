@@ -46,7 +46,56 @@ ASSET_IDS = {
     "boot.rareware_logo": "boot/rareware_logo.slmodel",
     "boot.goldeneye_logo": "boot/goldeneye_logo.slmodel",
     "boot.legal_page": "boot/legal_page.slmodel",
+    # The watch's device-matched controller models (#63). Drawn in place of
+    # the N64 pad on the watch's controller page under the MODERN profile;
+    # each carries a PART TABLE so the runtime can move its sticks, buttons
+    # and triggers individually - see PARTS below.
+    "controllers.xbox": "controllers/xbox.slmodel",
+    "controllers.dualsense": "controllers/dualsense.slmodel",
 }
+
+# --------------------------------------------------------------------------
+# CANONICAL PHYSICAL CONTROLLER PARTS. The runtime addresses a model's parts
+# by these ids and by nothing else - never by node order, node name or brand
+# naming. A package maps its own node names onto them (metadata.json
+# "parts", or --part NAME=CANONICAL), so "btn_a" on an Xbox pad and
+# "btn_cross" on a DualSense both become FACE_SOUTH, and the runtime asks
+# for "the south face button" without knowing which pad it is looking at.
+#
+# The asset represents PHYSICAL CONTROLS ONLY. Nothing here says what a
+# part does - "A = interact" is the binding registry's business, never the
+# model's. Kept in step with SL_PART_* in src/sl_asset_override.h by hand;
+# the test suite asserts the two tables agree.
+# --------------------------------------------------------------------------
+
+PARTS = {
+    "BODY": 1,
+    "LEFT_STICK": 2,
+    "RIGHT_STICK": 3,
+    "DPAD": 4,
+    "FACE_SOUTH": 5,
+    "FACE_EAST": 6,
+    "FACE_WEST": 7,
+    "FACE_NORTH": 8,
+    "LEFT_SHOULDER": 9,
+    "RIGHT_SHOULDER": 10,
+    "LEFT_TRIGGER": 11,
+    "RIGHT_TRIGGER": 12,
+    "MENU": 13,
+    "BACK": 14,
+    "GUIDE": 15,
+    "MUTE": 16,
+    "TOUCHPAD": 17,
+    "DPAD_UP": 18,
+    "DPAD_DOWN": 19,
+    "DPAD_LEFT": 20,
+    "DPAD_RIGHT": 21,
+}
+PART_NONE = 0xFFFFFFFF      # a primitive outside every part: static geometry
+MAX_PARTS = 32
+PART_KEY = "sl_part"        # glTF node extras: the package's own part label
+PART_F_AUTHORED = 1         # part flag: geometry authored for Sightline, not
+                            # the third party's (extras.sl_authored_part)
 
 # --------------------------------------------------------------------------
 # Limits. THESE ARE THE SAME NUMBERS THE RUNTIME ENFORCES
@@ -80,6 +129,14 @@ VERSION = 2
 HEADER_SIZE = 128
 
 F_NORMALS, F_UV, F_COLOR = 1, 2, 4
+# F_PARTS: the file carries a PART TABLE (header +72 offset, +76 count) and
+# every primitive's fourth word is a part index into it (or PART_NONE). A
+# reader without the flag sees the two header words as the zero padding they
+# always were and the prim word as the reserved zero it always was, so this is
+# NOT a version bump: version 2 files without the flag read exactly as before
+# and a version-2 reader that predates parts draws a parts model whole, in
+# its rest pose - a static controller rather than a corrupt one.
+F_PARTS = 8
 TEX_EMBEDDED, TEX_REF = 0, 1
 MAX_TEXNAME = 63
 M_DOUBLESIDED, M_ALPHA_BLEND, M_ALPHA_MASK, M_UNLIT = 1, 2, 4, 8
@@ -191,6 +248,90 @@ def authored_marker(*objs):
                 "reads instead of re-running this tool."
                 % (AUTHORED_KEY, AUTHORED_PROVENANCE_KEY))
         return True, prov.strip()
+    return False, None
+
+
+# ==========================================================================
+# THIRD-PARTY TEXTURES - the second, SEPARATE way pixels may be committed
+#
+# sl_authored says "the author of this package made these pixels", and the
+# CC0 grant in data/asset-overrides/LICENSE.md attaches to exactly that claim.
+# A texture taken from someone else's CC-BY model is NOT that, and marking it
+# sl_authored to satisfy the importer would put a false claim in the file and
+# a false grant in the licence. So third-party work gets its own marker, which
+# carries what an attribution licence actually requires - who made it, where
+# it came from, under what licence, and the credit line to reproduce:
+#
+#     "extras": {
+#         "sl_third_party": {
+#             "title":       "Xbox Controller",
+#             "author":      "umkhero",
+#             "author_url":  "https://sketchfab.com/umkhero",
+#             "source_url":  "https://sketchfab.com/3d-models/...",
+#             "license":     "CC-BY-4.0",
+#             "attribution": "This work is based on ... licensed under ...",
+#             "changes":     "what Sightline did to it"
+#         }
+#     }
+#
+# Only licences that permit redistribution with attribution are accepted
+# (THIRD_PARTY_LICENSES); anything else is refused by name rather than
+# guessed at. A texture may carry sl_authored OR sl_third_party, never both -
+# a file that claims the same pixels are the author's own AND someone else's
+# is refused outright. The same ordering rule as the authored marker applies:
+# content-addressed game-texture detection runs FIRST, so this cannot launder
+# ROM pixels either. Printed at import; the credit line is what a release
+# packages (see docs/asset-overrides.md and LICENSES/README.md).
+# ==========================================================================
+
+THIRD_PARTY_KEY = "sl_third_party"
+THIRD_PARTY_FIELDS = ("title", "author", "author_url", "source_url",
+                      "license", "attribution")
+THIRD_PARTY_LICENSES = {"CC-BY-4.0"}
+
+
+def third_party_marker(*objs):
+    """Read the third-party marker off the first glTF object carrying it.
+
+    Returns (present, info-dict). Raises when the marker is present but
+    malformed, for the same reason authored_marker does: a declaration the
+    tool cannot read must not be silently treated as no declaration.
+    """
+    for o in objs:
+        if not isinstance(o, dict):
+            continue
+        ex = o.get("extras")
+        if not isinstance(ex, dict) or THIRD_PARTY_KEY not in ex:
+            continue
+        v = ex[THIRD_PARTY_KEY]
+        if not isinstance(v, dict):
+            raise ImportError_("extras.%s must be an object with %s"
+                               % (THIRD_PARTY_KEY,
+                                  ", ".join(THIRD_PARTY_FIELDS)))
+        info = {}
+        for f in THIRD_PARTY_FIELDS:
+            s = v.get(f)
+            if not isinstance(s, str) or not s.strip():
+                raise ImportError_(
+                    "extras.%s.%s is missing or empty; a third-party texture "
+                    "must carry %s" % (THIRD_PARTY_KEY, f,
+                                       ", ".join(THIRD_PARTY_FIELDS)))
+            info[f] = s.strip()
+        if info["license"] not in THIRD_PARTY_LICENSES:
+            raise ImportError_(
+                "extras.%s.license is %r; only %s may be committed (a licence "
+                "that permits redistribution with attribution). Anything else "
+                "is refused rather than guessed at."
+                % (THIRD_PARTY_KEY, info["license"],
+                   ", ".join(sorted(THIRD_PARTY_LICENSES))))
+        ch = v.get("changes")
+        info["changes"] = ch.strip() if isinstance(ch, str) else ""
+        if ex.get(AUTHORED_KEY) is True:
+            raise ImportError_(
+                "a texture carries both extras.%s = true and extras.%s; the "
+                "same pixels cannot be the package author's own work AND a "
+                "third party's - remove one" % (AUTHORED_KEY, THIRD_PARTY_KEY))
+        return True, info
     return False, None
 
 
@@ -438,6 +579,19 @@ REFERENCE = {
     "boot.legal_page": {
         "size": (5201.0, 2117.0, 0.0),
         "note": "PlegalpageZ, the ROM prop, via tools/export/logo_models.py",
+    },
+    # The N64 pad's body as the watch draws it (GjoypadZ, matrix slot 0), the
+    # frame a device model is fitted to: +x = player's right, +y = up toward
+    # the watch camera, -z = the top edge. The figures are the controller
+    # package builder's measurement of GjoypadZ (recorded in each package's
+    # README.txt) and are not re-measured here.
+    "controllers.xbox": {
+        "size": (788.0, 253.0, 836.0),
+        "note": "GjoypadZ body, the N64 pad the watch's controller page draws",
+    },
+    "controllers.dualsense": {
+        "size": (788.0, 253.0, 836.0),
+        "note": "GjoypadZ body, the N64 pad the watch's controller page draws",
     },
 }
 
@@ -868,6 +1022,249 @@ def xform_normal(b, n):
 
 
 # ==========================================================================
+# Normals against the winding - the frame check (#63, defect round 2)
+# ==========================================================================
+#
+# MEASURED 2026-09-20 on the two committed controller packages: their
+# POSITION data had been re-based into the N64 pad's frame by the package
+# builder, their NORMAL data had not. The stored normals were the source
+# file's, in the source file's axes - for the DualSense stored (x, y, z) sat
+# where the geometry said (-x, -z, -y), for the Xbox pad where it said
+# (x, -z, y) - so every polygon the watch camera looks at carried a normal
+# pointing sideways or away from the rig's light, took the ambient term
+# alone (0.30) and drew as a dark silhouette: the white DualSense at RGB 69
+# on the dark green face, read by the owner as nothing drawn at all. The
+# earlier witness had been captured at 4x exposure, which hid it.
+#
+# The importer cannot know a source's intended frame, but it can MEASURE
+# whether the normals it was given agree with the geometry it was given:
+# glTF's front face is counter-clockwise (the same rule the renderer culls
+# by), so the winding of every triangle yields the outward normal the
+# artist's smooth normal must lean toward. Three outcomes, all reported:
+#
+#   agree      mean dot >= NORMAL_AGREE: untouched (every boot logo is here,
+#              and their files stay byte-identical);
+#   re-based   a signed axis permutation of the stored normals - the shape
+#              of a builder that rotated positions and forgot normals, or
+#              mirrored one and not the other - brings the agreement back:
+#              it is applied, preserving the artist's smoothing;
+#   rebuilt    nothing so simple explains them: area-weighted normals from
+#              the winding replace them, the only normals the geometry can
+#              vouch for.
+#
+# This is a deriver (project rules, rule 3): the correction is computed from
+# the data, never hand-authored per model, and a package that arrives
+# correct passes through unchanged.
+#
+# The two thresholds, MEASURED: the four boot logos agree at 0.877..1.000
+# (smooth normals against coarse faces never reach 1), the two mis-framed
+# controllers at -0.237 and +0.253, and after the re-base at 0.990 and
+# 0.976. A model is trusted as it is above NORMAL_AGREE; a re-base is applied
+# only when it reaches NORMAL_FIT, the level a correct model sits at.
+NORMAL_AGREE = 0.5
+NORMAL_FIT = 0.8
+
+
+def _tri_normal(positions, a, b, c):
+    ax, ay, az = positions[a]
+    bx, by, bz = positions[b]
+    cx, cy, cz = positions[c]
+    ux, uy, uz = bx - ax, by - ay, bz - az
+    vx, vy, vz = cx - ax, cy - ay, cz - az
+    return (uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx)
+
+
+def normal_agreement(positions, normals, indices, perm=None):
+    """Mean over triangles of dot(unit winding normal, unit mean stored
+    normal), optionally with the signed permutation `perm` ((axis, sign) per
+    output component) applied to the stored normals first. Degenerate
+    triangles and zero normals are skipped."""
+    total = 0.0
+    n = 0
+    for k in range(0, len(indices), 3):
+        a, b, c = indices[k], indices[k + 1], indices[k + 2]
+        gx, gy, gz = _tri_normal(positions, a, b, c)
+        gl = (gx * gx + gy * gy + gz * gz) ** 0.5
+        if gl < 1e-12:
+            continue
+        s = [normals[a][j] + normals[b][j] + normals[c][j] for j in range(3)]
+        if perm is not None:
+            s = [perm[j][1] * s[perm[j][0]] for j in range(3)]
+        sl = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) ** 0.5
+        if sl < 1e-12:
+            continue
+        total += (gx * s[0] + gy * s[1] + gz * s[2]) / (gl * sl)
+        n += 1
+    return (total / n) if n else 1.0
+
+
+def normal_frame_fit(positions, normals, indices):
+    """The signed axis permutation that best maps the stored normals onto
+    the winding normals: correlate each geometric axis with each stored
+    axis over the triangles and take the strongest partner per axis. None
+    when the strongest partners do not form a permutation."""
+    corr = [[0.0] * 3 for _ in range(3)]
+    for k in range(0, len(indices), 3):
+        a, b, c = indices[k], indices[k + 1], indices[k + 2]
+        g = _tri_normal(positions, a, b, c)
+        gl = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) ** 0.5
+        if gl < 1e-12:
+            continue
+        s = [normals[a][j] + normals[b][j] + normals[c][j] for j in range(3)]
+        sl = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) ** 0.5
+        if sl < 1e-12:
+            continue
+        for i in range(3):
+            for j in range(3):
+                corr[i][j] += g[i] * s[j] / (gl * sl)
+    perm = []
+    for i in range(3):
+        j = max(range(3), key=lambda jj: abs(corr[i][jj]))
+        if corr[i][j] == 0.0:
+            return None
+        perm.append((j, 1.0 if corr[i][j] > 0.0 else -1.0))
+    if len(set(p[0] for p in perm)) != 3:
+        return None
+    return perm
+
+
+def normals_from_winding(positions, indices):
+    """Area-weighted vertex normals accumulated from the triangle winding,
+    normalised; a vertex no triangle references keeps (0, 0, 1)."""
+    acc = [[0.0, 0.0, 0.0] for _ in positions]
+    for k in range(0, len(indices), 3):
+        a, b, c = indices[k], indices[k + 1], indices[k + 2]
+        g = _tri_normal(positions, a, b, c)
+        for v in (a, b, c):
+            acc[v][0] += g[0]
+            acc[v][1] += g[1]
+            acc[v][2] += g[2]
+    out = []
+    for x, y, z in acc:
+        ln = (x * x + y * y + z * z) ** 0.5
+        out.append((x / ln, y / ln, z / ln) if ln > 1e-12 else (0.0, 0.0, 1.0))
+    return out
+
+
+def rebase_normals(positions, normals, indices):
+    """Returns (normals, what, before, after). what is 'agree' (untouched),
+    're-based <perm>' or 'rebuilt'; before / after are the agreement
+    measurements the decision was made on."""
+    before = normal_agreement(positions, normals, indices)
+    if before >= NORMAL_AGREE:
+        return normals, "agree", before, before
+    perm = normal_frame_fit(positions, normals, indices)
+    if perm is not None:
+        after = normal_agreement(positions, normals, indices, perm)
+        if after >= NORMAL_FIT:
+            # + 0.0 squashes a negative zero: a re-based normal must pack to
+            # the same bytes a correctly-framed one would.
+            fixed = [tuple(perm[j][1] * n[perm[j][0]] + 0.0 for j in range(3))
+                     for n in normals]
+            what = "re-based (stored %s -> geometry x y z)" % " ".join(
+                "%s%s" % ("-" if s < 0 else "+", "xyz"[a]) for a, s in perm)
+            return fixed, what, before, after
+    rebuilt = normals_from_winding(positions, indices)
+    after = normal_agreement(positions, rebuilt, indices)
+    return rebuilt, "rebuilt from the winding", before, after
+
+
+# ==========================================================================
+# The face against the frame - the orientation check (#63, defect round 4)
+# ==========================================================================
+#
+# MEASURED 2026-09-20 on the two committed controller packages, in the
+# watch's frame (+y toward the camera, -z the top edge): the DualSense's
+# face-level parts sit on one plane - the four face buttons, the d-pad and
+# the two small buttons at y 58..64 whatever their z - while the Xbox pad's
+# rise toward the player, y 1.0 at z -187 (the Y button) to 55 at z -14 (the
+# d-pad), a 17-degree pitch about x with the top edge down. The builder
+# re-based positions into the frame's box but not its orientation: drawn on
+# the page (which already tilts the frame 45 degrees away from the camera)
+# the Xbox face lay 62 degrees from the eye, foreshortened, its top edge
+# toward the viewer - the owner's "it doesn't face the right way".
+#
+# The importer cannot know a source's intended orientation, but it can
+# MEASURE the face: the canonical face-level parts (FACE_*, DPAD, MENU,
+# BACK - the controls that sit on the top surface of every pad) have pivots
+# on the face, and in the frame the face is the plane y = const. A least
+# squares plane y = a + b x + c z through those pivots gives the pitch
+# (atan c, about x) and the roll (atan b, about z); a pad whose face is
+# within FACE_LEVEL_DEG of level passes through unchanged, one beyond it is
+# rotated as a whole - pivots, part-relative positions and normals alike -
+# so the face lies flat in the frame. The pivots' own layout (which button
+# sits where) is untouched; only the whole model turns.
+#
+# This is a deriver (project rules, rule 3), the same shape as the normals
+# check above: computed from the data, never hand-authored per model, and a
+# package that arrives level passes through unchanged. Two face-level parts
+# are too few to fit a plane; the check needs three not on a line, which
+# both packages have (seven).
+FACE_LEVEL_DEG = 3.0
+FACE_LEVEL_PARTS = ("FACE_SOUTH", "FACE_EAST", "FACE_WEST", "FACE_NORTH",
+                    "DPAD", "MENU", "BACK")
+
+
+def face_level_fit(parts):
+    """The face plane through the face-level parts' pivots, as (pitch_deg,
+    roll_deg, count): pitch is the plane's slope along z (about x, positive
+    = the top edge down), roll its slope along x (about z). None when fewer
+    than three such parts exist or they are collinear."""
+    ids = {PARTS[n] for n in FACE_LEVEL_PARTS}
+    pts = [p[1] for p in parts if p[0] in ids]
+    if len(pts) < 3:
+        return None
+    # least squares y = a + b x + c z: the 3x3 normal equations
+    sx = sz = sy = sxx = sxz = szz = sxy = szy = 0.0
+    for x, y, z in pts:
+        sx += x; sz += z; sy += y
+        sxx += x * x; sxz += x * z; szz += z * z
+        sxy += x * y; szy += z * y
+    n = float(len(pts))
+    m = [[n, sx, sz], [sx, sxx, sxz], [sz, sxz, szz]]
+    r = [sy, sxy, szy]
+    det = (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+           - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+           + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+    if abs(det) < 1e-9:
+        return None
+
+    def solve(col):
+        mm = [row[:] for row in m]
+        for i in range(3):
+            mm[i][col] = r[i]
+        return (mm[0][0] * (mm[1][1] * mm[2][2] - mm[1][2] * mm[2][1])
+                - mm[0][1] * (mm[1][0] * mm[2][2] - mm[1][2] * mm[2][0])
+                + mm[0][2] * (mm[1][0] * mm[2][1] - mm[1][1] * mm[2][0])) / det
+    b = solve(1)
+    c = solve(2)
+    return (math.degrees(math.atan(c)), math.degrees(math.atan(b)), len(pts))
+
+
+def level_model(positions, normals, parts, pitch_deg, roll_deg):
+    """Rotate the whole model about x by pitch_deg and about z by roll_deg
+    (the angles that flatten the fitted plane): every pivot, every stored
+    position (part-relative or absolute - the same rotation about the origin
+    applies to both halves of pivot + relative) and every normal. Returns
+    (positions, normals, parts)."""
+    cp, sp = math.cos(math.radians(pitch_deg)), math.sin(math.radians(pitch_deg))
+    cr, sr = math.cos(math.radians(-roll_deg)), math.sin(math.radians(-roll_deg))
+
+    def rot(v):
+        x, y, z = v
+        # about x: y' = y cos - z sin, z' = y sin + z cos
+        y, z = y * cp - z * sp, y * sp + z * cp
+        # about z: x' = x cos - y sin, y' = x sin + y cos
+        x, y = x * cr - y * sr, x * sr + y * cr
+        return (x + 0.0, y + 0.0, z + 0.0)
+    positions = [rot(p) for p in positions]
+    if normals is not None:
+        normals = [rot(nv) for nv in normals]
+    parts = [(p[0], rot(p[1])) + tuple(p[2:]) for p in parts]
+    return positions, normals, parts
+
+
+# ==========================================================================
 # Rejections - the unsupported glTF features, named
 # ==========================================================================
 
@@ -943,7 +1340,8 @@ def check_unsupported(g: Gltf) -> list:
 
 
 def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
-            asset=None, texture_refs=None, repo_safe: bool = False) -> bytes:
+            asset=None, texture_refs=None, repo_safe: bool = False,
+            part_map=None) -> bytes:
     d = g.doc
     notes = check_unsupported(g)
     if verbose:
@@ -961,12 +1359,24 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
     uvs = []
     colours = []
     indices = []
-    prims = []     # (first, count, material)
+    prims = []     # (first, count, material, part)
     mats = []
     images = {}    # glTF image index -> our texture index
     textures = []  # dicts: EMBEDDED {kind,w,h,px} or REF {kind,w,h,name,fnv}
     refs = {k.lower(): v for k, v in (texture_refs or {}).items()}
     refs_used = set()
+    # PARTS. part_map: package label (extras.sl_part, else the node name) ->
+    # canonical name from PARTS. A node whose label is in the map opens a
+    # part: its pivot is the node origin in the baked frame and every
+    # primitive under it is stored RELATIVE to that pivot, so the runtime
+    # moves the part with one small matrix about its own origin. A label
+    # that is already a canonical name maps to itself. Nothing is inferred
+    # from names: an unmapped sl_part label is an ERROR, because a controller
+    # with a button the runtime cannot address is exactly the file this
+    # feature must not produce silently.
+    pmap = {k: v for k, v in (part_map or {}).items()}
+    parts = []      # (canonical id, pivot xyz, flags, label)
+    parts_seen = {}  # canonical name -> label, for the exactly-once rule
 
     have_nrm = [False]
     have_uv = [False]
@@ -1057,13 +1467,15 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
         # texture returned above as a REFERENCE never reaches this line, so
         # the marker cannot apply to one and cannot launder it.
         authored, provenance = authored_marker(tex, img)
+        third, tp_info = third_party_marker(tex, img)
         images[src] = len(textures)
         textures.append({"kind": TEX_EMBEDDED, "w": w, "h": h, "px": px,
                          "label": label, "authored": authored,
-                         "provenance": provenance})
+                         "provenance": provenance,
+                         "third_party": tp_info if third else None})
         return images[src]
 
-    def emit_primitive(p: dict, m):
+    def emit_primitive(p: dict, m, part=PART_NONE, pivot=(0.0, 0.0, 0.0)):
         attrs = p["attributes"]
         if "POSITION" not in attrs:
             raise ImportError_("a primitive has no POSITION attribute")
@@ -1148,8 +1560,13 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
         nb = normal_basis(m)
         first = len(indices)
         vbase = len(positions)
+        px_, py_, pz_ = pivot
         for k in range(n):
-            positions.append(xform_point(m, pos[k][:3]))
+            wx, wy, wz = xform_point(m, pos[k][:3])
+            # Part-relative: the runtime's part matrix translates by the
+            # pivot, so what is stored is the vertex about its own origin.
+            # With no part the pivot is the origin and this is the identity.
+            positions.append((wx - px_, wy - py_, wz - pz_))
             if nrm is not None:
                 normals.append(xform_normal(nb, nrm[k][:3]))
             else:
@@ -1175,7 +1592,7 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
         if len(mats) >= MAX_MATS:
             raise ImportError_("more than %d materials" % MAX_MATS)
         mats.append(mat)
-        prims.append((first, len(idx), len(mats) - 1))
+        prims.append((first, len(idx), len(mats) - 1, part))
 
     # A uniform pre-scale, baked in exactly the way a node transform is. It
     # lives here rather than in the renderer deliberately: the runtime contract
@@ -1184,28 +1601,145 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
     # file they installed.
     root_xform = (scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, 1.0)
 
-    def walk(ni: int, parent):
+    def part_label(node: dict):
+        ex = node.get("extras")
+        if isinstance(ex, dict) and PART_KEY in ex:
+            v = ex[PART_KEY]
+            if not isinstance(v, str) or not v.strip():
+                raise ImportError_("node %r has extras.%s = %r; it must be a "
+                                   "non-empty string"
+                                   % (node.get("name", "?"), PART_KEY, v))
+            return v.strip(), True
+        nm = node.get("name")
+        return (nm if isinstance(nm, str) else None), False
+
+    def open_part(node: dict, m):
+        """Returns (part index, pivot) for a node that opens a part, or None."""
+        label, declared = part_label(node)
+        if label is None:
+            return None
+        canon = pmap.get(label)
+        if canon is None and label in PARTS:
+            canon = label
+        if canon is None:
+            if declared:
+                raise ImportError_(
+                    "node %r declares extras.%s = %r, which maps to no "
+                    "canonical part. Give it one with --part %s=<CANONICAL> "
+                    "(metadata.json \"parts\") or use a canonical name "
+                    "directly. Canonical parts: %s"
+                    % (node.get("name", "?"), PART_KEY, label, label,
+                       ", ".join(sorted(PARTS))))
+            return None
+        if canon not in PARTS:
+            raise ImportError_("part %r maps to %r, which is not a canonical "
+                               "part. Canonical parts: %s"
+                               % (label, canon, ", ".join(sorted(PARTS))))
+        if canon in parts_seen:
+            raise ImportError_(
+                "canonical part %s is claimed twice (by %r and %r); each "
+                "physical control resolves to exactly one part"
+                % (canon, parts_seen[canon], label))
+        if len(parts) >= MAX_PARTS:
+            raise ImportError_("more than %d parts" % MAX_PARTS)
+        ex = node.get("extras") or {}
+        flags = 0
+        # The owner's replacement geometry (the de-branded Guide / PS
+        # buttons) is flagged on the node so the file, and the provenance
+        # record derived from it, say which parts are Sightline-authored
+        # and which are the third party's. Preserved, never inferred.
+        ap = ex.get("sl_authored_part") if isinstance(ex, dict) else None
+        if ap is not None:
+            if not isinstance(ap, str) or not ap.strip():
+                raise ImportError_("node %r: extras.sl_authored_part must be "
+                                   "a non-empty string saying what was "
+                                   "replaced" % node.get("name", "?"))
+            flags |= PART_F_AUTHORED
+        parts_seen[canon] = label
+        pivot = xform_point(m, (0.0, 0.0, 0.0))
+        parts.append((PARTS[canon], pivot, flags, label, canon,
+                      ap.strip() if isinstance(ap, str) else None))
+        return len(parts) - 1, pivot
+
+    def walk(ni: int, parent, part=PART_NONE, pivot=(0.0, 0.0, 0.0)):
         if ni >= len(nodes):
             return
         node = nodes[ni]
         # BAKED. The runtime holds one modelview - the boot screen's own - so a
         # node hierarchy has nowhere to live at draw time. Composing it here
         # also means the file the game reads carries no transform semantics to
-        # get wrong.
+        # get wrong. The one exception is a PART node: its origin becomes the
+        # pivot the runtime rotates and translates about, and its geometry
+        # (children included) is stored relative to that pivot.
         m = mat_mul(node_matrix(node), parent)
+        opened = open_part(node, m)
+        if opened is not None:
+            part, pivot = opened
         if "mesh" in node:
             for p in d["meshes"][node["mesh"]].get("primitives", []):
                 if len(prims) >= MAX_PRIMS:
                     raise ImportError_("more than %d primitives" % MAX_PRIMS)
-                emit_primitive(p, m)
+                emit_primitive(p, m, part, pivot)
         for c in node.get("children", []) or []:
-            walk(c, m)
+            walk(c, m, part, pivot)
 
     for r in roots:
         walk(r, root_xform)
 
+    if pmap:
+        unused = sorted(set(pmap) - set(p[3] for p in parts))
+        if unused:
+            raise ImportError_(
+                "--part named %s, but no node in this model carries that "
+                "label (extras.%s or node name). Labels present: %s"
+                % (", ".join("'%s'" % u for u in unused), PART_KEY,
+                   ", ".join(sorted(set(p[3] for p in parts))) or "none"))
+
     if not prims:
         raise ImportError_("the file contains no triangle geometry")
+
+    # THE NORMALS AGAINST THE WINDING (the frame check above). Measured on
+    # every import; a model whose normals agree with its geometry is
+    # untouched and its file unchanged. Said out loud whenever the data is
+    # changed, verbose or not: a silently corrected file is the same class
+    # of thing as the silently wrong one it replaces.
+    normal_note = None
+    if have_nrm[0]:
+        normals, what, before, after = rebase_normals(positions, normals,
+                                                      indices)
+        normal_note = ("  normals    %s  (agreement with the winding %.3f"
+                       " -> %.3f over %d triangles)"
+                       % (what, before, after, len(indices) // 3))
+        if what != "agree":
+            print(normal_note)
+            print("             the file's NORMAL data did not describe its "
+                  "own geometry; the lit draw would have taken the ambient "
+                  "term alone")
+        elif verbose:
+            print(normal_note)
+    # THE FACE AGAINST THE FRAME (the orientation check above): a parts model
+    # whose face-level pivots lie on a plane pitched or rolled past
+    # FACE_LEVEL_DEG is turned level as a whole. Said out loud whenever the
+    # data is changed, verbose or not, like the normals.
+    if parts:
+        fit = face_level_fit(parts)
+        if fit is not None:
+            pitch, roll, npts = fit
+            if abs(pitch) > FACE_LEVEL_DEG or abs(roll) > FACE_LEVEL_DEG:
+                positions, normals, parts = level_model(
+                    positions, normals if have_nrm[0] else None, parts,
+                    pitch, roll)
+                after = face_level_fit(parts)
+                print("  face       levelled: the face plane through %d parts "
+                      "was pitched %.1f deg (about x) and rolled %.1f deg "
+                      "(about z); now %.1f / %.1f"
+                      % (npts, pitch, roll, after[0], after[1]))
+                print("             the file's geometry did not lie flat in "
+                      "the frame; the page would have shown its top edge")
+            elif verbose:
+                print("  face       level: the face plane through %d parts is "
+                      "pitched %.1f deg and rolled %.1f deg (within %.0f)"
+                      % (npts, pitch, roll, FACE_LEVEL_DEG))
     if len(positions) > MAX_VERTS:
         raise ImportError_(
             "%d vertices exceeds the limit of %d - decimate the mesh"
@@ -1230,6 +1764,8 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
         flags |= F_UV
     if have_col[0]:
         flags |= F_COLOR
+    if parts:
+        flags |= F_PARTS
 
     # ---- the repository-safety gate ----------------------------------
     #
@@ -1247,9 +1783,12 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
     # had its say, so it cannot apply to a texture the registry recognises.
     if repo_safe:
         bad = [t for t in textures
-               if t["kind"] != TEX_REF and not t.get("authored")]
+               if t["kind"] != TEX_REF and not t.get("authored")
+               and not t.get("third_party")]
         ok_authored = [t for t in textures
                        if t["kind"] != TEX_REF and t.get("authored")]
+        ok_third = [t for t in textures
+                    if t["kind"] != TEX_REF and t.get("third_party")]
         if bad:
             raise ImportError_(
                 "this model cannot be committed: %d of its %d textures "
@@ -1280,10 +1819,23 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
                 print("             provenance: %s" % t["provenance"])
                 print("             (declared in extras.%s; not recognised "
                       "as any game texture)" % AUTHORED_KEY)
-            if ok_authored:
-                print("  repo-safe  %d reference(s), %d declared-authored "
-                      "texture(s); no game pixels are in this file"
-                      % (nref, len(ok_authored)))
+            for t in ok_third:
+                tp = t["third_party"]
+                print("  third-party %s is embedded as THIRD-PARTY work, "
+                      "%s" % (t["label"], tp["license"]))
+                print("             \"%s\" by %s (%s)"
+                      % (tp["title"], tp["author"], tp["author_url"]))
+                print("             source: %s" % tp["source_url"])
+                print("             credit: %s" % tp["attribution"])
+                if tp["changes"]:
+                    print("             changes: %s" % tp["changes"])
+                print("             (declared in extras.%s; not the CC0 "
+                      "grant - see LICENSES/README.md)" % THIRD_PARTY_KEY)
+            if ok_authored or ok_third:
+                print("  repo-safe  %d reference(s), %d declared-authored, "
+                      "%d declared third-party texture(s); no game pixels "
+                      "are in this file"
+                      % (nref, len(ok_authored), len(ok_third)))
             else:
                 print("  repo-safe  every texture slot is a reference; no "
                       "game pixels are in this file")
@@ -1323,8 +1875,13 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
     else:
         offs["col"] = 0
     place("idx", struct.pack("<%dI" % len(indices), *indices))
-    place("prim", b"".join(struct.pack("<IIII", f, c, mi, 0)
-                           for f, c, mi in prims))
+    # The fourth prim word is the PART index when F_PARTS is set and the
+    # reserved zero it has always been otherwise (a partless model writes
+    # PART_NONE nowhere: without the flag every prim carries 0, so a file
+    # with no parts is byte-identical to one written before parts existed).
+    place("prim", b"".join(
+        struct.pack("<IIII", f, c, mi, (pt if parts else 0))
+        for f, c, mi, pt in prims))
     place("mat", b"".join(
         struct.pack("<ffffiIfI",
                     m["base"][0], m["base"][1], m["base"][2], m["base"][3],
@@ -1364,6 +1921,16 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
     else:
         offs["tex"] = 0
 
+    # The PART TABLE, after the textures so a partless file's layout is
+    # untouched. 32 bytes per part: canonical id, pivot x y z, flags, three
+    # reserved words - laid out exactly as src/sl_asset_override.h documents.
+    if parts:
+        place("part", b"".join(
+            struct.pack("<IfffIIII", pid, pv[0], pv[1], pv[2], pf, 0, 0, 0)
+            for pid, pv, pf, _lbl, _canon, _ap in parts))
+    else:
+        offs["part"] = 0
+
     total = HEADER_SIZE + len(body)
     if total > MAX_FILE:
         raise ImportError_("the converted model is %d bytes, over the %d limit"
@@ -1376,6 +1943,19 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
         nvert, len(indices), len(prims), len(mats), len(textures),
         offs["pos"], offs["nrm"], offs["uv"], offs["col"], offs["idx"],
         offs["prim"], offs["mat"], offs["tex"], total)
+    # +72 part table offset, +76 part count: the first two words of what was
+    # zero padding. Both stay 0 without F_PARTS.
+    struct.pack_into("<II", header, 72, offs["part"], len(parts))
+
+    if verbose and parts:
+        print("  parts      %d (F_PARTS; primitives outside a part: %d)"
+              % (len(parts),
+                 sum(1 for p in prims if p[3] == PART_NONE)))
+        for i, (pid, pv, pf, lbl, canon, ap) in enumerate(parts):
+            ntri = sum(p[1] for p in prims if p[3] == i) // 3
+            print("    %-15s <- %-14s pivot (%8.1f %8.1f %8.1f) %6d tris%s"
+                  % (canon, lbl, pv[0], pv[1], pv[2], ntri,
+                     "  [sightline-authored: %s]" % ap if ap else ""))
 
     if verbose:
         lo = [min(p[j] for p in positions) for j in range(3)]
@@ -1580,6 +2160,31 @@ ASSET IDS
                           at runtime from the language bank, so replacing the
                           model changes no text. Flat, so it has no depth.
                           5201 x 2117 x 0 model units
+    controllers.xbox      the Xbox-family controller the watch's controller
+    controllers.dualsense page draws under the MODERN profile (#63), in the
+                          N64 pad's own frame (GjoypadZ: +x right, +y toward
+                          the watch camera, -z the top edge; body 788 x 253 x
+                          836). These carry a PART TABLE (--part, or the
+                          package's metadata.json "parts") so sticks, buttons
+                          and triggers move individually.
+
+PARTS
+    A node whose extras.sl_part (or name) maps to a canonical part becomes a
+    PART: its origin is the pivot, its geometry is stored about that pivot,
+    and the runtime moves it with one matrix. Canonical parts are physical
+    controls only - BODY, LEFT_STICK, RIGHT_STICK, DPAD, FACE_SOUTH / EAST /
+    WEST / NORTH, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_TRIGGER, RIGHT_TRIGGER,
+    MENU, BACK, GUIDE, MUTE, TOUCHPAD, DPAD_UP / DOWN / LEFT / RIGHT - never
+    actions. Each resolves at most once per model; an sl_part label with no
+    mapping is an error. extras.sl_authored_part on a node marks geometry
+    authored for Sightline inside a third-party model.
+
+THIRD-PARTY TEXTURES
+    Pixels from someone else's CC-BY-4.0 model are committed under
+    extras.sl_third_party {title, author, author_url, source_url, license,
+    attribution, changes} on the image - NOT under sl_authored, whose CC0
+    grant cannot cover them. The credit line is printed at import and is
+    what a release must reproduce.
 
 WHERE FILES GO
     $SL_ASSET_OVERRIDE_DIR, else %LOCALAPPDATA%\\sightline\\assets, else
@@ -1707,6 +2312,13 @@ def main(argv=None) -> int:
     ap.add_argument("--game-textures", action="store_true",
                     help="list the game textures a model may reference, "
                          "and exit")
+    ap.add_argument("--part", action="append", default=[],
+                    metavar="LABEL=CANONICAL",
+                    help="map a node's extras.sl_part label (or node name) "
+                         "onto a canonical physical part - e.g. "
+                         "btn_a=FACE_SOUTH - so the runtime can move it. "
+                         "May be repeated. Canonical parts: %s"
+                         % ", ".join(sorted(PARTS)))
     args = ap.parse_args(argv)
 
     texture_refs = {}
@@ -1717,6 +2329,14 @@ def main(argv=None) -> int:
             return 2
         k, v = spec.split("=", 1)
         texture_refs[k.strip()] = v.strip()
+    part_map = {}
+    for spec in args.part:
+        if "=" not in spec:
+            print("error: --part wants LABEL=CANONICAL, got %r" % spec,
+                  file=sys.stderr)
+            return 2
+        k, v = spec.split("=", 1)
+        part_map[k.strip()] = v.strip()
 
     root = override_root()
 
@@ -1810,7 +2430,8 @@ def main(argv=None) -> int:
     print("importing %s" % src)
     try:
         blob = convert(Gltf(src), scale=args.scale, asset=args.asset,
-                       texture_refs=texture_refs, repo_safe=args.repo)
+                       texture_refs=texture_refs, repo_safe=args.repo,
+                       part_map=part_map)
     except ImportError_ as e:
         print("error: %s" % e, file=sys.stderr)
         return 1

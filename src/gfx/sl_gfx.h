@@ -45,5 +45,9 @@ int  sl_gfx_active(void);             /* 1 when a real window is up */
  * origin. Defined in sl_gfx_dl.c beside the viewport it is derived from; see
  * the comment there. Returns 0 when it is not established yet. */
 int  sl_gfx_present_rect(int win_h, int *x, int *y, int *w, int *h);
+/* The content rect (#45) the same way: the selected aspect fitted in the
+ * window, which the presented (safe) rect sits centred inside. The drawn
+ * pointer cursor may cross all of it; the hit tests keep the safe rect. */
+int  sl_gfx_content_rect(int win_h, int *x, int *y, int *w, int *h);
 
 #endif /* SL_GFX_H */

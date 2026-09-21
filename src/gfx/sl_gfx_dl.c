@@ -260,6 +260,9 @@ extern void glFogCoordf(GLfloat coord);
 #ifndef GL_SOURCE0_RGB
 #define GL_SOURCE0_RGB     0x8580
 #endif
+#ifndef GL_RGB_SCALE
+#define GL_RGB_SCALE       0x8573      /* the combine stage's RGB scale (1, 2 or 4) - #63 exposure */
+#endif
 
 /* ---- B-078: GL_CLAMP_TO_EDGE, the third instance of the same defect -----
  *
@@ -425,6 +428,7 @@ static void sl_glFogCoordf(GLfloat c)
 #include "sl_gfx.h"
 #include "sl_gfx_tex.h"
 #include "../sl_asset_override.h"
+#include "../platform/sl_display.h"     /* #45: the aspect selection and the one viewport fit */
 
 /* B-110. THE PREPROCESSOR IS POSITIONAL, AND THIS DEFINITION USED TO SIT
  * NEXT TO texenv_set - five thousand lines below its first user. Every
@@ -817,7 +821,8 @@ static unsigned g_depth_cmds[10], g_end_stops, g_guard_stops, g_zero_runs;
  * and no transpose is needed. */
 static float    g_mv[MTX_STACK_MAX][16];   /* modelview stack, top at g_mv_sp */
 static int      g_mv_sp;
-static float    g_proj[16];
+static float    g_proj[16];        /* the projection IN FORCE: g_proj_game with the #45 aspect applied */
+static float    g_proj_game[16];   /* the projection exactly as the list loaded / multiplied it */
 static unsigned g_mtx_cmds, g_mtx_proj, g_mtx_mv, g_mtx_load, g_mtx_mul;
 static unsigned g_mtx_push, g_mtx_pop, g_mtx_bad;
 
@@ -8183,6 +8188,35 @@ static unsigned g_tr_inverted;          /* lry < uly - draws nothing on the RDP 
 static unsigned g_fr_cmds, g_fr_drawn, g_fr_zskip, g_fr_degen;
 static unsigned g_fr_tintskip;
 static unsigned g_fr_filled, g_fr_combined;
+static unsigned g_fr_extended, g_rh_extended;   /* #45: backdrops widened to the content rect */
+
+/* THE POINTER CURSOR'S PLACEMENT TAG (acceptance repair, the widescreen
+ * cursor). A texrect cannot name a position left of logical 0 - E4's corner
+ * words are unsigned 10.2 - and the game's own draw_textured_rectangle clips
+ * xl < 0 to 0 (bondwalk2.c:43), so the front end's cursor and the watch's
+ * crosshair, both ordinary texrects in logical space, could never be drawn in
+ * the bands a wider aspect adds beside the 4:3 safe rect. The native pointer
+ * layers therefore precede the cursor's texrect with ONE tagged no-op,
+ *
+ *     w0 = C0 'SLC' (the opcode byte over the 24-bit marker 0x534C43)
+ *     w1 = s16 xl4 << 16 | s16 yl4     the rect's TOP-LEFT in 1/4 logical px
+ *
+ * and this walker places the NEXT texrect's top-left there, keeping its size,
+ * texture and s/t - the same quad, translated. Signed, so the left band is
+ * reachable; the 2D ortho already spans the content rect (mode2d_begin), so
+ * nothing else changes. The tag is emitted only when the native layer wants
+ * the cursor somewhere other than where the game encoded it (the mouse owns
+ * the front end's cursor; the watch's crosshair always), and it names the
+ * very value the game's own arithmetic produces when the two agree - so at
+ * 4:3, and everywhere inside the safe rect, the pixels are the ones the
+ * untagged draw would have made. Consumed by the next texrect; cleared by a
+ * fillrect and at the frame reset so a tag without its texrect cannot leak
+ * onto a later one. The placed quad alone is drawn with the scissor lifted
+ * (see draw_texrect): the level's [0,10]-[320,230] scissor would otherwise
+ * clip a cursor at the top or bottom edge of the window. */
+static int      g_cur_ovr;                       /* a placement is waiting */
+static int      g_cur_x4, g_cur_y4;              /* the top-left, 1/4 logical px */
+static unsigned g_cur_applied, g_cur_tags;       /* per frame: applied / seen */
 static unsigned g_half_orphan;          /* B3/B4 with no texrect pending */
 static double   g_2d_cover;             /* summed rect area / screen area */
 static float    g_2d_bbox[4];
@@ -9021,8 +9055,71 @@ static unsigned g_2d_enters;
  * fillrect coordinates are framebuffer coordinates, not viewport ones - so
  * the viewport is switched on every 2D/3D transition alongside the ortho.
  *
- * SL_VP=0 restores the pre-B-046 behaviour from the same binary. */
-static int      g_win_vp[4];             /* the window, as GL was handed it */
+ * SL_VP=0 restores the pre-B-046 behaviour from the same binary.
+ *
+ * ---- #45: the three rectangles -------------------------------------------
+ *
+ * Since #45 the window is no longer the rectangle the logical framebuffer is
+ * stretched across. Three rectangles, all in GL window coordinates
+ * (bottom-left origin), all derived by ONE helper (src/platform/sl_display.c,
+ * sl_display_rects) from the window size, the logical framebuffer size the
+ * list declares (g_scr_w x g_scr_h) and the selected aspect:
+ *
+ *   g_window_vp   the whole window, as GL reported it at the frame reset.
+ *   g_content_vp  the selected aspect (4:3 / 16:9 / 32:9) fitted inside the
+ *                 window, centred - pillarbox or letterbox bars outside it,
+ *                 never a stretch. The 3D view fills THIS.
+ *   g_win_vp      the SAFE rect: the logical 4:3 image fitted inside the
+ *                 content rect, centred. This keeps its old name and its old
+ *                 meaning - "the rectangle the logical framebuffer maps onto"
+ *                 - so every formula below that scales logical coordinates
+ *                 by g_win_vp[2] / g_scr_w keeps meaning exactly what it did.
+ *                 At the 4:3 selection all three are the same rectangle and
+ *                 nothing here changes by a pixel (the negative control).
+ *   g_aspect_k    content width / safe width, >= 1 (1, 4/3, 8/3).
+ *
+ * How they are applied, and why the game does not need to know:
+ *
+ *   3D   the projection matrix the list loads gets its clip-space x divided
+ *        by k (do_matrix), and the RSP viewport the list sets is mapped onto
+ *        the safe rect and then widened by k about its own centre
+ *        (vp_derive). The two cancel exactly over the safe rect - the image
+ *        there is the 4:3 image, pixel for pixel - and the bands to either
+ *        side receive the world the 4:3 frustum edge used to cut off. The
+ *        vertical extent (fovy 60 over the same height) is untouched: this
+ *        is a horizontal-plus widening, tan(hfov/2) = tan(30) * 4/3 * k.
+ *   2D   the ortho spans the CONTENT rect but is scaled so that logical
+ *        [0, g_scr_w] lands on the safe rect (mode2d_begin): every texrect,
+ *        every HUD element, the watch face, the front end's text and the
+ *        crosshair keep the 4:3 composition, centred and unstretched. The
+ *        crosshair therefore stays over the aim ray without any game change,
+ *        because the aim ray is a 4:3 screen-space fact and so is its image.
+ *        A 2D primitive that spans the whole logical width - a fade, the
+ *        letterbox strips, the sky's band (sky.c pins its edges to the
+ *        viewport, :1300) - is a BACKDROP and is extended to the content
+ *        edges (ext2d_*): the same plane, evaluated further out.
+ *   scissor  mapped onto the safe rect like everything logical, with an edge
+ *        that sits ON a framebuffer edge extended to the content edge, so
+ *        the full-screen scissor never clips the bands and a per-room
+ *        aperture (B-143) that reaches the screen edge stays conservative.
+ *   pointer  sl_gfx_present_rect reports the SAFE rect, so the menu and
+ *        watch pointers map window pixels into the same 4:3 image.
+ *
+ * The game's own projection, frustum planes, "on screen" flags, aim,
+ * auto-aim and every script test stay at 4:3 at every aspect: src/game reads
+ * none of this (tree-wide `grep -rn "sl_aspect\|sl_display" src/game` is
+ * empty). What that costs - geometry the 4:3 traversal never submits cannot
+ * appear in the bands - is measured and recorded on #45, not hidden. */
+static int      g_win_vp[4];             /* the SAFE rect (see above) */
+static int      g_window_vp[4];          /* the whole window, as GL was handed it */
+static int      g_content_vp[4];         /* the selected aspect fitted in the window */
+static double   g_aspect_k = 1.0;        /* content width / safe width */
+static int      g_aspect_id;             /* the selection in force this frame */
+static unsigned g_world_proj_addr;        /* #45 FOV: the world projection's address fr.c named, 0 = none */
+static unsigned g_world_proj_addr2;       /* ... and the view-folded one bondview2.c named */
+static int      g_proj_is_world;          /* the projection in force is the world's */
+static int      g_viewmodel;              /* inside the first-person weapon's bracket ('SVM1'..'SVM0') */
+static double   g_fov_s = 1.0;            /* the frame's FOV scale (sl_display_fov_scale) */
 static int      g_vp_rect[4], g_vp_have; /* the game's viewport, in GL coords */
 static int      g_vp_cur = -1;           /* 0 = window, 1 = game, -1 = unset */
 static unsigned g_vp_applies;
@@ -9034,20 +9131,91 @@ static int vp_on(void)
     return on;
 }
 
+/* #45. Derive the content and safe rects from the window, the logical size
+ * and the selection. Called at the frame reset (once the window viewport is
+ * known) and again whenever g_scr_w / g_scr_h change mid-list, so the fit
+ * always describes the framebuffer the list is drawing into. The selection
+ * is read once per frame here - a change in the Settings page lands on the
+ * next frame drawn, and a frame never mixes two shapes. */
+static void rects_update(void)
+{
+    struct sl_display_rects r;
+    int aspect;
+
+    aspect = sl_aspect_active() ? sl_aspect_ratio() : SL_ASPECT_4_3;
+    g_fov_s = sl_display_fov_scale();        /* #45 FOV: 1.0 at the default */
+    if (g_window_vp[2] <= 0 || g_window_vp[3] <= 0 || g_scr_w == 0 || g_scr_h == 0
+        || !sl_display_rects(g_window_vp[2], g_window_vp[3], (int) g_scr_w, (int) g_scr_h, aspect, &r)) {
+        memcpy(g_content_vp, g_window_vp, sizeof g_content_vp);
+        memcpy(g_win_vp, g_window_vp, sizeof g_win_vp);
+        g_aspect_k = 1.0;
+        g_aspect_id = SL_ASPECT_4_3;
+        return;
+    }
+    /* The helper speaks top-left origin (the pointer convention); GL's y
+     * grows up, so the top edge becomes the distance from the bottom. */
+    g_content_vp[0] = g_window_vp[0] + r.content[0];
+    g_content_vp[1] = g_window_vp[1] + (g_window_vp[3] - (r.content[1] + r.content[3]));
+    g_content_vp[2] = r.content[2];
+    g_content_vp[3] = r.content[3];
+    g_win_vp[0] = g_window_vp[0] + r.safe[0];
+    g_win_vp[1] = g_window_vp[1] + (g_window_vp[3] - (r.safe[1] + r.safe[3]));
+    g_win_vp[2] = r.safe[2];
+    g_win_vp[3] = r.safe[3];
+    g_aspect_k = r.k;
+    g_aspect_id = aspect;
+}
+
+/* #45. The bars outside the content rect are painted black once per frame,
+ * so a letterboxed or pillarboxed window shows black borders rather than the
+ * backend's diagnostic clear tint (which stays INSIDE the content rect, where
+ * "nothing drew here" is still worth seeing). Nothing to do when the content
+ * rect is the window - the 4:3 window case, the negative control. */
+static void bars_clear(void)
+{
+    int wx = g_window_vp[0], wy = g_window_vp[1], ww = g_window_vp[2], wh = g_window_vp[3];
+    int cx = g_content_vp[0], cy = g_content_vp[1], cw = g_content_vp[2], ch = g_content_vp[3];
+    if (cw <= 0 || ch <= 0 || (cx == wx && cy == wy && cw == ww && ch == wh))
+        return;
+    glEnable(GL_SCISSOR_TEST);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    if (cx > wx)               { glScissor(wx, wy, cx - wx, wh);                       glClear(GL_COLOR_BUFFER_BIT); }
+    if (cx + cw < wx + ww)     { glScissor(cx + cw, wy, (wx + ww) - (cx + cw), wh);    glClear(GL_COLOR_BUFFER_BIT); }
+    if (cy > wy)               { glScissor(wx, wy, ww, cy - wy);                       glClear(GL_COLOR_BUFFER_BIT); }
+    if (cy + ch < wy + wh)     { glScissor(wx, cy + ch, ww, (wy + wh) - (cy + ch));    glClear(GL_COLOR_BUFFER_BIT); }
+    glDisable(GL_SCISSOR_TEST);
+}
+
+/* The logical x range the CONTENT rect spans, given that logical [0, scr_w]
+ * spans the safe rect: the safe rect is centred in the content rect, so the
+ * bands add (k - 1) * scr_w / 2 on each side. Used by the 2D ortho and by the
+ * backdrop extension. */
+static double ext2d_left(void)  { return (double) g_scr_w * 0.5 * (1.0 - g_aspect_k); }
+static double ext2d_right(void) { return (double) g_scr_w * 0.5 * (1.0 + g_aspect_k); }
+
 /* GL's y grows UP and the N64's grows DOWN, so the top edge becomes the
- * distance from the BOTTOM. Scaled by the window/framebuffer ratio because the
- * window is not 320x240. */
+ * distance from the BOTTOM. Scaled by the safe-rect/framebuffer ratio because
+ * the window is not 320x240 - and then, #45, widened by k about the
+ * viewport's own centre, which is what puts the 1/k-scaled projection's
+ * [-1/k, 1/k] back onto the safe rect and its outer band onto the content
+ * rect. For the full-width viewport GoldenEye sets (x[0,320]) the result IS
+ * the content rect's width. */
+static int g_vp_log[4];                  /* the game's viewport, logical l,t,r,b (#45 FOV) */
+
 static void vp_derive(int l, int t, int r, int b)
 {
-    double sx, sy;
+    double sx, sy, cx, w;
     if (g_scr_w == 0 || g_scr_h == 0 || g_win_vp[2] <= 0 || g_win_vp[3] <= 0)
         return;
     sx = (double) g_win_vp[2] / (double) g_scr_w;
     sy = (double) g_win_vp[3] / (double) g_scr_h;
     if (r <= l || b <= t) return;
-    g_vp_rect[0] = g_win_vp[0] + (int) (l * sx + 0.5);
+    g_vp_log[0] = l; g_vp_log[1] = t; g_vp_log[2] = r; g_vp_log[3] = b;
+    cx = (double) g_win_vp[0] + ((double) l + (double) r) * 0.5 * sx;
+    w  = (double) (r - l) * sx * g_aspect_k;
+    g_vp_rect[0] = (int) (cx - w * 0.5 + 0.5);
     g_vp_rect[1] = g_win_vp[1] + (int) ((double) g_win_vp[3] - b * sy + 0.5);
-    g_vp_rect[2] = (int) ((r - l) * sx + 0.5);
+    g_vp_rect[2] = (int) (w + 0.5);
     g_vp_rect[3] = (int) ((b - t) * sy + 0.5);
     g_vp_have = 1;
 }
@@ -9080,6 +9248,28 @@ static void sciss_gl_apply(int l, int t, int r, int b)
     y = g_win_vp[1] + (int) ((double) g_win_vp[3] - b * sy + 0.5);
     w = (int) ((r - l) * sx + 0.5);
     h = (int) ((b - t) * sy + 0.5);
+    /* #45. An edge that sits on the framebuffer's edge extends to the content
+     * rect's edge: the full-screen scissor must not clip the bands, and a
+     * per-room aperture that reaches the screen edge can only be conservative
+     * there. "On the edge" allows the one-pixel inset the room traversal's
+     * root rectangle carries - bgUpdateCurrentPlayerScreenMinMax clamps the
+     * screen box by bgViewRelated {1, 1, -1, -1} (bg.c:191, :5211-5262), so
+     * the apertures of everything in view arrive as [1,10]-[319,230] of
+     * 320x240 (measured, SL_SCISSOR_DBG). Interior edges stay where the
+     * logical mapping puts them. At k == 1 both rects coincide and this
+     * changes nothing. */
+    if (g_aspect_k > 1.0) {
+        int right = x + w;
+        if (l <= 1) x = g_content_vp[0];
+        if (r >= (int) g_scr_w - 1) right = g_content_vp[0] + g_content_vp[2];
+        w = right - x;
+        if (w <= 0) return;
+    }
+    if (getenv("SL_SCISSOR_DBG") != NULL) {
+        static int left = 40;
+        if (left > 0) { left--; fprintf(stderr, "sl_sciss_dbg: logical [%d,%d]-[%d,%d] of %ux%u -> gl %d,%d %dx%d (k=%.3f content x %d..%d)\n",
+                                        l, t, r, b, g_scr_w, g_scr_h, x, y, w, h, g_aspect_k, g_content_vp[0], g_content_vp[0] + g_content_vp[2]); }
+    }
     batch_end();               /* glEnable/glScissor are illegal in glBegin */
     glScissor(x, y, w, h);
     glEnable(GL_SCISSOR_TEST);
@@ -9096,7 +9286,10 @@ static void vp_use(int want)
     if (want)
         glViewport(g_vp_rect[0], g_vp_rect[1], g_vp_rect[2], g_vp_rect[3]);
     else
-        glViewport(g_win_vp[0], g_win_vp[1], g_win_vp[2], g_win_vp[3]);
+        /* #45: the 2D layer's viewport is the CONTENT rect; the ortho in
+         * mode2d_begin is what maps logical [0, scr_w] onto the safe rect
+         * inside it. Identical to the safe rect at k == 1. */
+        glViewport(g_content_vp[0], g_content_vp[1], g_content_vp[2], g_content_vp[3]);
 }
 
 /* WHERE THE GAME IMAGE ACTUALLY LANDS IN THE WINDOW, in window pixels with the
@@ -9108,7 +9301,11 @@ static void vp_use(int want)
  * glGetIntegerv(GL_VIEWPORT) reported at the frame reset, i.e. the viewport the
  * 2D ortho is stretched across (glOrtho 0..g_scr_w, g_scr_h..0 at mode2d_begin).
  * If the presentation ever gains a letterbox or a pillarbox it gains it here,
- * and the pointer follows with no second edit.
+ * and the pointer follows with no second edit. (#45 did exactly that: g_win_vp
+ * is now the SAFE rect - the 4:3 image inside the selected-aspect content
+ * rect - and this function needed no change. A pointer in a side band maps to
+ * a fraction outside [0,1], which the callers already treat as "not over the
+ * image".)
  *
  * GL's viewport origin is the BOTTOM-left, so the top edge is the distance from
  * the bottom subtracted from the window height - which is why the caller has to
@@ -9131,6 +9328,23 @@ int sl_gfx_present_rect(int win_h, int *x, int *y, int *w, int *h)
     *y = win_h - (g_win_vp[1] + g_win_vp[3]);
     *w = g_win_vp[2];
     *h = g_win_vp[3];
+    return 1;
+}
+
+/* THE CONTENT RECT the same way (#45: the selected aspect fitted in the
+ * window; the safe rect above sits centred inside it, and the 2D ortho spans
+ * it). The pointer layers confine the DRAWN cursor to this rectangle - the
+ * cursor may cross the whole content rect, bands included - while the hit
+ * tests keep the safe rect above. Identical to sl_gfx_present_rect at 4:3. */
+int sl_gfx_content_rect(int win_h, int *x, int *y, int *w, int *h);
+int sl_gfx_content_rect(int win_h, int *x, int *y, int *w, int *h)
+{
+    if (g_content_vp[2] <= 0 || g_content_vp[3] <= 0 || win_h <= 0)
+        return 0;
+    *x = g_content_vp[0];
+    *y = win_h - (g_content_vp[1] + g_content_vp[3]);
+    *w = g_content_vp[2];
+    *h = g_content_vp[3];
     return 1;
 }
 
@@ -9205,8 +9419,14 @@ static void mode2d_begin(void)
     glLoadIdentity();
     /* N64 screen space has its origin top-left with y growing DOWN. Passing
      * bottom > top to glOrtho is what flips it, and it is the only place that
-     * flip happens - the 3D path keeps the DL's own matrices untouched. */
-    glOrtho(0.0, (double) g_scr_w, (double) g_scr_h, 0.0, -1.0, 1.0);
+     * flip happens - the 3D path keeps the DL's own matrices untouched.
+     *
+     * #45: the viewport is the content rect, and the x range is widened
+     * about the centre by k so that logical [0, scr_w] lands on the SAFE
+     * rect - the 4:3 composition, centred, unstretched - while coordinates
+     * outside it (the extended backdrops) reach the bands without being
+     * clipped. At k == 1 this is glOrtho(0, scr_w, ...) exactly. */
+    glOrtho(ext2d_left(), ext2d_right(), (double) g_scr_h, 0.0, -1.0, 1.0);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glDisable(GL_DEPTH_TEST);
@@ -9352,6 +9572,66 @@ static void depth_clamp_init(void)
     fprintf(stderr, "sl_near: GL_DEPTH_CLAMP enabled%s - no near/far geometry"
                     " clip, matching the RSP's four side planes\n",
             ext != NULL ? " (ARB_depth_clamp advertised)" : " (core)");
+}
+
+/* #45. THE PROJECTION SEAM. g_proj = g_proj_game with clip-space x divided
+ * by k - the four entries that feed clip x under v' = v * M are column 0,
+ * i.e. linear indices 0, 4, 8, 12 (see ndc_account). Dividing them is a
+ * post-scale S = diag(1/k, 1, 1, 1) on the OUTPUT, so it survives a later
+ * G_MTX multiply on the projection stack (m * P * S) and it is exact: for
+ * guPerspective(fovy, aspect) this is precisely what guPerspective(fovy,
+ * aspect * k) would have produced (its x scale is cot(fovy/2) / aspect), and
+ * for an orthographic load it is a centred x squeeze the widened viewport
+ * undoes. Every mirror of GL's transform in this file reads g_proj, so the
+ * NDC census, the clipper, the near-plane guard and the fog depth all see the
+ * projection GL sees. At k == 1 g_proj is a copy of g_proj_game. */
+/* #45 FIELD OF VIEW. The game names the player's WORLD projection to the
+ * renderer (fr.c viSetupCurrentPlayerView, native arm: the physical address
+ * gSPMatrix will carry), and only a load of THAT matrix gets the vertical
+ * FOV scale s = tan(30) / tan(v_eff / 2) on clip x and y - a uniform
+ * zoom-out that puts more world in the same viewport; the watch, the front
+ * end and the title (their own matrices, other addresses) keep their
+ * authored projection, so their pointer mirrors and their 2D text stay put.
+ * s is 1.0 at the default setting, in the front end and in split-screen
+ * (sl_display_fov_scale), so the default is exactly the pre-#45 arithmetic. */
+void sl_gfx_note_world_projection(unsigned addr);
+void sl_gfx_note_world_projection(unsigned addr)
+{
+    g_world_proj_addr = addr;
+}
+
+/* The second world projection: the view folded in (bondview2.c:8785, the
+ * player's field_10E0), loaded by props, explosions and glass. */
+void sl_gfx_note_world_projection2(unsigned addr);
+void sl_gfx_note_world_projection2(unsigned addr)
+{
+    g_world_proj_addr2 = addr;
+}
+
+static void proj_apply_aspect(void)
+{
+    double sx = 1.0, sy = 1.0;
+    memcpy(g_proj, g_proj_game, sizeof g_proj);
+    if (g_aspect_k > 1.0)
+        sx = 1.0 / g_aspect_k;
+    if (g_proj_is_world && !g_viewmodel && g_fov_s != 1.0) {
+        sx *= g_fov_s;
+        sy  = g_fov_s;
+    }
+    if (sx != 1.0) {
+        float f = (float) sx;
+        g_proj[0]  *= f;
+        g_proj[4]  *= f;
+        g_proj[8]  *= f;
+        g_proj[12] *= f;
+    }
+    if (sy != 1.0) {
+        float f = (float) sy;
+        g_proj[1]  *= f;
+        g_proj[5]  *= f;
+        g_proj[9]  *= f;
+        g_proj[13] *= f;
+    }
 }
 
 static void gl_load_projection(void)
@@ -9808,6 +10088,7 @@ static void draw_texrect(void)
     unsigned char col[4];
     GLuint name;
     int why = TR_OK, constant;
+    int cursor = 0, sciss_was = 0;
 
     g_tr_pending = 0;
 
@@ -9865,6 +10146,19 @@ static void draw_texrect(void)
     y1 = (float) ((g_tr_ay > g_tr_by ? g_tr_ay : g_tr_by) + 1) / 4.0f;
 
     if (x1 <= x0 || y1 <= y0) { g_tr_reject[TR_DEGEN]++; return; }
+    /* The pointer cursor's placement (see g_cur_ovr): the same rect, its
+     * top-left moved to where the native layer put the pointer. The width
+     * and height - and so the s/t sweep below - are the encoded ones. */
+    if (g_cur_ovr) {
+        float w = x1 - x0, h = y1 - y0;
+        x0 = (float) g_cur_x4 / 4.0f;
+        y0 = (float) g_cur_y4 / 4.0f;
+        x1 = x0 + w;
+        y1 = y0 + h;
+        g_cur_ovr = 0;
+        g_cur_applied++;
+        cursor = 1;
+    }
     if (x1 <= 0.0f || y1 <= 0.0f ||
         x0 >= (float) g_scr_w || y0 >= (float) g_scr_h)
         g_tr_offscreen++;
@@ -9911,6 +10205,15 @@ static void draw_texrect(void)
 
     memcpy(g_2d_cur_col, col, 4);
     glColor4ub(col[0], col[1], col[2], col[3]);
+    /* The placed cursor is drawn over the WHOLE content rect: the game's
+     * scissor in force - in a level, [0,10]-[320,230] of 320x240 (measured,
+     * SL_SCISSOR_DBG: gl 0,30 1280x660 on a 1280x720 window), so the top
+     * and bottom 30 window pixels are outside it - is lifted for this ONE
+     * quad and put back. Nothing else is drawn any differently. */
+    if (cursor) {
+        sciss_was = glIsEnabled(GL_SCISSOR_TEST) ? 1 : 0;
+        if (sciss_was) glDisable(GL_SCISSOR_TEST);
+    }
     glBegin(GL_QUADS);
     if (g_tr_flip) {
         glTexCoord2f(u0, v0); glVertex2f(x0, y0);
@@ -9925,6 +10228,7 @@ static void draw_texrect(void)
         glTexCoord2f(u0, v1); glVertex2f(x0, y1);
     }
     glEnd();
+    if (cursor && sciss_was) glEnable(GL_SCISSOR_TEST);
     ccx_note(1);
     g_tr_drawn++;
     if (g_tris > 0) g_2d_post_geom_tr++; else g_2d_pre_geom_tr++;
@@ -9936,6 +10240,7 @@ static void draw_fillrect(int ix0, int iy0, int ix1, int iy1)
     float x0, y0, x1, y1;
 
     if (ix1 < ix0 || iy1 < iy0) { g_fr_degen++; return; }
+    g_cur_ovr = 0;                          /* a cursor tag names a texrect, never a fill */
     /* zbufClearCurrentPlayer points the colour image at the z buffer and
      * fills it. Drawing that would paint the whole screen with a depth
      * pattern, so it is skipped rather than merely mis-coloured. */
@@ -9943,6 +10248,16 @@ static void draw_fillrect(int ix0, int iy0, int ix1, int iy1)
 
     x0 = (float) ix0; y0 = (float) iy0;
     x1 = (float) (ix1 + 1); y1 = (float) (iy1 + 1);
+    /* #45. A fill that spans the whole logical width is a backdrop - the
+     * full-screen clear, a fade, the letterbox strips, the fog-colour sky
+     * fill (sky.c:326) - and covers the content rect's bands too. A fill
+     * that reaches only one edge is left alone: it may be a HUD element
+     * anchored to that edge, and the safe rect is where the HUD lives. */
+    if (g_aspect_k > 1.0 && ix0 <= 0 && ix1 >= (int) g_scr_w - 1) {
+        x0 = (float) ext2d_left();
+        x1 = (float) ext2d_right();
+        g_fr_extended++;
+    }
 
     mode2d_begin();
     if (g_tex_gl_on) { glDisable(GL_TEXTURE_2D); g_tex_gl_on = 0; }
@@ -10120,7 +10435,7 @@ static void draw_rdp_tri(void)
      *      P5 -- ... -- P2/P3     P3,P4 on minor L   (YM..YL)
      *             P4
      */
-    float vx[6], vy[6];
+    float vx[6], vy[6], ex[6], ey[6];
     float col[6][4], st[6][3];
     unsigned cmd  = g_rh_w[0] >> 24;
     unsigned tile = (g_rh_w[0] >> 16) & 7u;
@@ -10165,16 +10480,78 @@ static void draw_rdp_tri(void)
     vx[4] = XL    + DxLDy * (yL - yM);   vy[4] = yL;
     vx[5] = xTop  + DxHDy * (yL - yH);   vy[5] = yL;
 
+    /* #45. The sky and sea bands are BACKDROPS pinned to the viewport's
+     * edges: sky.c clamps every x into [viewleft, viewleft + width) (:819,
+     * :1300) and skyRenderFull sets XH to the left edge and XM to the right
+     * (:2209, :2212). A corner that sits on a framebuffer edge is moved out
+     * to the content rect's edge BEFORE the attributes are evaluated, so the
+     * same planes - colour, and the RDP's per-pixel s/w, t/w, 1/w - are
+     * simply evaluated further along: a plane's perspective projection is
+     * affine in screen space, so this is the sky plane continued, not a
+     * stretch. An interior corner is never moved. Nothing happens at k == 1. */
+    /* ex/ey: where each corner's ATTRIBUTES are evaluated - the game's own
+     * screen space, in which the planes below are stated. vx/vy: where the
+     * corner is DRAWN. They differ only under #45 (below). */
+    for (i = 0; i < NV; i++) { ex[i] = vx[i]; ey[i] = vy[i]; }
+    if (g_aspect_k > 1.0 || (g_proj_is_world && g_fov_s != 1.0)) {
+        int moved = 0;
+        int edge[6];
+        float cx, cy, t_vp, b_vp, s = 1.0f;
+        /* the edges are judged BEFORE the FOV scale moves the corners */
+        t_vp = (g_vp_log[3] > g_vp_log[1]) ? (float) g_vp_log[1] : 0.0f;
+        b_vp = (g_vp_log[3] > g_vp_log[1]) ? (float) g_vp_log[3] : (float) g_scr_h;
+        cx = (g_vp_log[2] > g_vp_log[0]) ? ((float) g_vp_log[0] + (float) g_vp_log[2]) * 0.5f : (float) g_scr_w * 0.5f;
+        cy = (g_vp_log[3] > g_vp_log[1]) ? (t_vp + b_vp) * 0.5f : (float) g_scr_h * 0.5f;
+        for (i = 0; i < NV; i++) {
+            edge[i] = 0;
+            if (vx[i] <= 0.5f)                        edge[i] |= 1;
+            else if (vx[i] >= (float) g_scr_w - 1.0f) edge[i] |= 2;
+            if (vy[i] <= t_vp + 0.5f)                 edge[i] |= 4;
+            else if (vy[i] >= b_vp - 0.5f)            edge[i] |= 8;
+        }
+        /* #45 FIELD OF VIEW: the sky is built in the game's 60-degree screen
+         * space; the world projection is zoomed out by s about the viewport
+         * centre, so the sky's corners are DRAWN through the same zoom - and
+         * a corner that sat on an edge is then pushed back out to the edge
+         * (the sky continues past it), exactly as the aspect bands are
+         * covered. The attributes are evaluated at the corner's position in
+         * the game's space (the zoom undone), so an extended corner samples
+         * the same plane further out and a zoomed one samples what it had. */
+        if (g_proj_is_world && g_fov_s != 1.0) {
+            s = (float) g_fov_s;
+            for (i = 0; i < NV; i++) {
+                vx[i] = cx + (vx[i] - cx) * s;
+                vy[i] = cy + (vy[i] - cy) * s;
+            }
+        }
+        /* Vertically the edge is the VIEWPORT's, never the framebuffer's:
+         * GoldenEye draws its one player into y[10,230] of 240 and paints
+         * the ten rows above and below black itself (B-046), and that
+         * letterbox is part of the accepted 4:3 image. Pushing a sky corner
+         * to row 0 painted the sky over the top strip at every aspect but
+         * 4:3 (owner replay 2026-09-18: "a light strip across the top"). */
+        for (i = 0; i < NV; i++) {
+            if (edge[i] & 1)      { vx[i] = (float) ext2d_left();  moved = 1; }
+            else if (edge[i] & 2) { vx[i] = (float) ext2d_right(); moved = 1; }
+            if (edge[i] & 4)      { vy[i] = t_vp;                  moved = 1; }
+            else if (edge[i] & 8) { vy[i] = b_vp;                  moved = 1; }
+            ex[i] = cx + (vx[i] - cx) / s;
+            ey[i] = cy + (vy[i] - cy) / s;
+        }
+        if (moved) g_rh_extended++;
+    }
+
     for (i = 0; i < NV; i++) {
         col[i][0] = col[i][1] = col[i][2] = col[i][3] = 255.0f;
         st[i][0] = st[i][1] = 0.0f; st[i][2] = 1.0f;
     }
 
     /* A(x,y) = A + DaDe*(y-yH) + DaDx*(x - xEdge(y)), xEdge(y) walking the
-     * major edge from the top vertex. */
+     * major edge from the top vertex - at the corner's position in the
+     * game's own screen space (ex/ey). */
 #define RH_EVAL(A, DADX, DADE, VI) \
-    ((A) + (DADE) * (vy[VI] - yH) \
-         + (DADX) * (vx[VI] - (xTop + DxHDy * (vy[VI] - yH))))
+    ((A) + (DADE) * (ey[VI] - yH) \
+         + (DADX) * (ex[VI] - (xTop + DxHDy * (ey[VI] - yH))))
 
     if (shaded) {
         float R    = rh_hi(g_rh_w[sb+0], g_rh_w[sb+4]);
@@ -10387,8 +10764,14 @@ static void do_matrix(unsigned p, unsigned len, unsigned int a)
     if (p & MTX_PROJECTION) {
         g_mtx_proj++;
         /* The RSP keeps no projection stack; PUSH is meaningless here. */
-        if (p & MTX_LOAD) { memcpy(g_proj, m, sizeof m); g_mtx_load++; }
-        else              { mtx_mul(m, g_proj, g_proj);  g_mtx_mul++; }
+        if (p & MTX_LOAD) {
+            memcpy(g_proj_game, m, sizeof m); g_mtx_load++;
+            g_proj_is_world = (g_world_proj_addr != 0 && a == g_world_proj_addr)
+                           || (g_world_proj_addr2 != 0 && a == g_world_proj_addr2);
+        } else {
+            mtx_mul(m, g_proj_game, g_proj_game);  g_mtx_mul++;
+        }
+        proj_apply_aspect();
         gl_load_projection();
         return;
     }
@@ -11159,10 +11542,14 @@ static void emit_tri_slots(int a, int b, int c)
             if (ds < 0.0f) ds = -ds;
             if (dt < 0.0f) dt = -dt;
             dtex = ds > dt ? ds : dt;
-            ax = g_proj[0] * ea[0] / -ea[2] * 480.0f;
-            ay = g_proj[5] * ea[1] / -ea[2] * 330.0f;
-            bx = g_proj[0] * eb[0] / -eb[2] * 480.0f;
-            by = g_proj[5] * eb[1] / -eb[2] * 330.0f;
+            /* The GAME's projection, not the #45-widened one: this is the
+             * N64's texel-per-pixel estimate at the N64's own pixel density,
+             * and the safe rect keeps that density at every aspect (the
+             * bands add pixels, they do not change pixels per texel). */
+            ax = g_proj_game[0] * ea[0] / -ea[2] * 480.0f;
+            ay = g_proj_game[5] * ea[1] / -ea[2] * 330.0f;
+            bx = g_proj_game[0] * eb[0] / -eb[2] * 480.0f;
+            by = g_proj_game[5] * eb[1] / -eb[2] * 330.0f;
             ax -= bx; ay -= by;
             if (ax < 0.0f) ax = -ax;
             if (ay < 0.0f) ay = -ay;
@@ -12241,7 +12628,11 @@ static void tri4(unsigned int w0, unsigned int w1)
  * glPushAttrib: the point is to know what changed.
  */
 
-static unsigned g_aov_draws, g_aov_tris_drawn;
+static unsigned g_aov_draws, g_aov_part_draws, g_aov_tris_drawn;
+/* SL_PAD_DBG timing of the part-only draws (see draw_asset_override). */
+static int      g_aov_dbg_time;         /* set with SL_PAD_DBG by the first whole draw */
+static LONGLONG g_aov_part_t0, g_aov_part_ticks, g_aov_part_ticks_last;
+static unsigned g_aov_part_n, g_aov_part_n_last;
 
 /* ---- generated coordinates for an override model -------------------------
  *
@@ -12329,29 +12720,69 @@ static int aov_mat_generates(const struct sl_amdl *m,
 static void aov_tex_upload(struct sl_amdl_tex *t)
 {
     GLuint name = 0;
+    unsigned char *mb0 = NULL, *mb1 = NULL;
 
     glGenTextures(1, &name);
     if (name == 0) return;
     glBindTexture(GL_TEXTURE_2D, name);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    /* MIPMAPPED (2026-09-20, #64). A controller model's 1024-square texture
+     * lands on a pad ~300 px wide and on a button icon ~13 px wide: four to
+     * eighty times minified, and under plain GL_LINEAR a minified texel is
+     * one of the four nearest, so the DualSense's thin grey button symbols
+     * fell between samples and vanished (measured: plain white discs on the
+     * page and its icons). The complete box-filtered pyramid, the B-119
+     * chain the game's own textures take (mip_box_halve), and trilinear
+     * sampling; magnified textures - the logo screens' reflection maps -
+     * sample level 0 exactly as before. Two scratch levels, freed here. */
+    if (t->w > 1u || t->h > 1u) {
+        size_t half = (size_t) ((t->w + 1u) / 2u) * (size_t) ((t->h + 1u) / 2u) * 4u;
+        mb0 = (unsigned char *) malloc(half);
+        mb1 = (unsigned char *) malloc(half);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    (mb0 != NULL && mb1 != NULL) ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei) t->w, (GLsizei) t->h, 0,
                  GL_RGBA, GL_UNSIGNED_BYTE, t->rgba);
+    if (mb0 != NULL && mb1 != NULL) {
+        const unsigned char *cur = t->rgba;
+        unsigned char *nxt = mb0, *oth = mb1, *tmp;
+        unsigned cw = t->w, ch = t->h, nw, nh, level = 1;
+        while (cw > 1u || ch > 1u) {
+            mip_box_halve(cur, cw, ch, nxt, &nw, &nh);
+            glTexImage2D(GL_TEXTURE_2D, (GLint) level, GL_RGBA,
+                         (GLsizei) nw, (GLsizei) nh, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, nxt);
+            cur = nxt; tmp = nxt; nxt = oth; oth = tmp;
+            cw = nw; ch = nh; level++;
+        }
+    }
+    free(mb0);
+    free(mb1);
     t->gl = (unsigned) name;
     /* The upload bound a name behind the DL texture cache's back. */
     g_tex_gl_bound = 0;
 }
 
-static void draw_asset_override(unsigned id, unsigned fade)
+/* sel: 0 draws the whole model; p draws only the part with canonical id
+ * p - 1, about its own pivot (the bridge command's <part> field,
+ * src/sl_asset_override.h) - the watch page's standalone button icons. */
+static void draw_asset_override(unsigned id, unsigned fade, unsigned sel)
 {
     const struct sl_amdl *m = sl_asset_override_get_model((int) id);
     float k = (float) fade * (1.0f / 255.0f);
     int lit, use_col, use_uv, gen_any, gen_ok;
     unsigned i;
+    unsigned sel_part = (unsigned) -1;      /* the part INDEX sel names, if any */
 
     if (m == NULL) return;
+    if (sel != 0u) {
+        for (i = 0; i < m->npart; i++)
+            if (m->part[i].id == sel - 1u) { sel_part = i; break; }
+        if (sel_part == (unsigned) -1) return;   /* this model has no such part */
+    }
 
     lit     = (m->nrm != NULL);
     use_col = (m->col != NULL);
@@ -12428,7 +12859,118 @@ static void draw_asset_override(unsigned id, unsigned fade)
         g_aov_gen_verts += m->nvert;
     }
 
-    g_aov_draws++;
+    if (sel == 0u) g_aov_draws++; else g_aov_part_draws++;
+
+    /* SL_PAD_DBG (#64): what a part-only draw COSTS, measured with glFinish
+     * on both sides so the GPU's share is in the number (which perturbs the
+     * frame - a diagnostic, off by default): the sum over the part draws
+     * since the last whole draw, printed with the whole draw's line. */
+    if (g_aov_dbg_time && sel != 0u) {
+        LARGE_INTEGER t0;
+        glFinish();
+        QueryPerformanceCounter(&t0);
+        g_aov_part_t0 = t0.QuadPart;
+    }
+
+    /* SL_PAD_DBG (#63 defect round 2): what this draw is about to do, once
+     * per second per model - the lighting term MEASURED rather than
+     * reasoned. The mean of N.L over the model's normals under the modelview
+     * in force, with L the rig's own (0,0,1) in eye space, is the diffuse
+     * factor the fixed pipeline will apply; the modelview's determinant
+     * sign says whether the page's frame is mirrored (which is what flips
+     * every normal's winding side under two-sided lighting). Off by
+     * default; no behaviour attached. */
+    {
+        static int dbg = -1;
+        static unsigned last_at[SL_ASSET_ID_COUNT];
+        if (dbg < 0) { dbg = getenv("SL_PAD_DBG") != NULL; g_aov_dbg_time = dbg; }
+        if (dbg && sel == 0u && (last_at[id] == 0u || g_aov_draws - last_at[id] >= 60u)) {
+            /* the part draws since the last report: count and glFinish-bounded time */
+            LARGE_INTEGER fq;
+            unsigned pn = g_aov_part_n - g_aov_part_n_last;
+            LONGLONG pt = g_aov_part_ticks - g_aov_part_ticks_last;
+            QueryPerformanceFrequency(&fq);
+            fprintf(stderr, "sl_pad_dbg: part-draws since last report: %u in %.2f ms total (%.3f ms each; glFinish-bounded, CPU+GPU)\n",
+                    pn, fq.QuadPart ? 1000.0 * (double) pt / (double) fq.QuadPart : 0.0,
+                    (pn && fq.QuadPart) ? 1000.0 * (double) pt / (double) fq.QuadPart / (double) pn : 0.0);
+            g_aov_part_n_last = g_aov_part_n;
+            g_aov_part_ticks_last = g_aov_part_ticks;
+            const float *mv = g_mv[g_mv_sp];
+            double ndl = 0.0, npos = 0.0;
+            unsigned n = 0;
+            float det = mv[0] * (mv[5] * mv[10] - mv[9] * mv[6])
+                      - mv[4] * (mv[1] * mv[10] - mv[9] * mv[2])
+                      + mv[8] * (mv[1] * mv[6]  - mv[5] * mv[2]);
+            if (m->nrm != NULL) {
+                unsigned step = m->nvert > 4096u ? m->nvert / 4096u : 1u;
+                for (i = 0; i < m->nvert; i += step) {
+                    const float *nn = &m->nrm[i * 3u];
+                    /* the normal in eye space: the upper 3x3, column-major */
+                    float ex = mv[0] * nn[0] + mv[4] * nn[1] + mv[8]  * nn[2];
+                    float ey = mv[1] * nn[0] + mv[5] * nn[1] + mv[9]  * nn[2];
+                    float ez = mv[2] * nn[0] + mv[6] * nn[1] + mv[10] * nn[2];
+                    float len = (float) sqrt((double) ex * ex + (double) ey * ey + (double) ez * ez);
+                    if (len > 0.0f) { ez /= len; ndl += ez; if (ez > 0.0f) npos += 1.0; n++; }
+                }
+            }
+            last_at[id] = g_aov_draws;
+            fprintf(stderr, "sl_pad_dbg: draw id=%u fade=%u k=%.3f exposure=%.1f lit=%d col=%d uv=%d"
+                            " prims=%u tris=%u parts=%u mv-det=%s mean(N.L)=%.3f facing=%.0f%% of %u"
+                            " mv=[%.3f %.3f %.3f | %.3f %.3f %.3f | %.3f %.3f %.3f]\n",
+                    id, fade, k, m->exposure, lit, use_col, use_uv, m->nprim, m->nidx / 3u, m->npart,
+                    det < 0.0f ? "NEG" : "pos", n ? ndl / n : 0.0, n ? 100.0 * npos / n : 0.0, n,
+                    mv[0], mv[4], mv[8], mv[1], mv[5], mv[9], mv[2], mv[6], mv[10]);
+            /* WHERE THE MODEL LANDS (#63 defect round 3): the eye-space depth
+             * of the model's origin, the projection's near and far planes,
+             * how many sampled vertices sit in front of the near plane, and
+             * the projected bounding box in window pixels through the
+             * viewport in force. A model that is drawn in full but clipped
+             * away by the near plane - the Dam page, whose modelview arrived
+             * at a fifth of its size - reads "near-culled=100%" and an empty
+             * box, which is the one number that separates "did not draw"
+             * from "drew, and nothing survived". */
+            {
+                const float *pj = g_proj;
+                double A = (double) pj[10], B = (double) pj[14];
+                double znear = 0.0, zfar = 0.0;
+                unsigned step = m->nvert > 4096u ? m->nvert / 4096u : 1u;
+                unsigned tot = 0, culled = 0, box = 0;
+                float bx0 = 0.0f, by0 = 0.0f, bx1 = 0.0f, by1 = 0.0f;
+                if (pj[11] != 0.0f && A != 1.0 && A != -1.0) {
+                    znear = B / (A - 1.0);   /* GL: A = -(f+n)/(f-n), B = -2fn/(f-n) */
+                    zfar  = B / (A + 1.0);
+                }
+                for (i = 0; i < m->nvert; i += step) {
+                    const float *pp = &m->pos[i * 3u];
+                    float ex = mv[0] * pp[0] + mv[4] * pp[1] + mv[8]  * pp[2] + mv[12];
+                    float ey = mv[1] * pp[0] + mv[5] * pp[1] + mv[9]  * pp[2] + mv[13];
+                    float ez = mv[2] * pp[0] + mv[6] * pp[1] + mv[10] * pp[2] + mv[14];
+                    float cx = ex * pj[0] + ey * pj[4] + ez * pj[8]  + pj[12];
+                    float cy = ex * pj[1] + ey * pj[5] + ez * pj[9]  + pj[13];
+                    float cz = ex * pj[2] + ey * pj[6] + ez * pj[10] + pj[14];
+                    float cw = ex * pj[3] + ey * pj[7] + ez * pj[11] + pj[15];
+                    tot++;
+                    if (cz < -cw) { culled++; continue; }   /* in front of the near plane */
+                    if (cw > 0.0f && g_vp_rect[2] > 0 && g_vp_rect[3] > 0) {
+                        float sx = (float) g_vp_rect[0] + (cx / cw * 0.5f + 0.5f) * (float) g_vp_rect[2];
+                        float sy = (float) g_vp_rect[1] + (cy / cw * 0.5f + 0.5f) * (float) g_vp_rect[3];
+                        if (!box) { bx0 = bx1 = sx; by0 = by1 = sy; box = 1; }
+                        else {
+                            if (sx < bx0) bx0 = sx;
+                            if (sx > bx1) bx1 = sx;
+                            if (sy < by0) by0 = sy;
+                            if (sy > by1) by1 = sy;
+                        }
+                    }
+                }
+                fprintf(stderr, "sl_pad_dbg: place id=%u origin-depth=%.1f near=%.1f far=%.1f"
+                                " near-culled=%.0f%% of %u viewport=%d,%d %dx%d box=%s%.0f,%.0f-%.0f,%.0f (gl px, bottom-left origin)\n",
+                        id, (double) -mv[14], znear, zfar, tot ? 100.0 * culled / tot : 0.0, tot,
+                        g_vp_rect[0], g_vp_rect[1], g_vp_rect[2], g_vp_rect[3],
+                        box ? "" : "EMPTY ", bx0, by0, bx1, by1);
+            }
+        }
+    }
 
     /* ---- enter -------------------------------------------------------- */
     batch_end();          /* glBegin is open across most of a list          */
@@ -12437,6 +12979,23 @@ static void draw_asset_override(unsigned id, unsigned fade)
     tex1_off();
     texenv_set(0);        /* GL_MODULATE, fixed pipeline                    */
     vp_use(1);            /* the game's 3D viewport, not the whole window   */
+
+    /* EXPOSURE (#63): a modulate whose result is scaled 2x or 4x
+     * (GL_COMBINE with GL_RGB_SCALE), for a model whose texture is near
+     * black - the watch's controllers. The texenv cache is told the mode is
+     * foreign (g_texenv = -1 on leave) so the next draw re-establishes its
+     * own. Only when the exposure is above 1: the logos take the plain
+     * modulate they always took. */
+    if (m->exposure > 1.0f) {
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+        glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_TEXTURE);
+        glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+        glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_PRIMARY_COLOR);
+        glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR);
+        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_MODULATE);
+        glTexEnvf(GL_TEXTURE_ENV, GL_RGB_SCALE, m->exposure >= 4.0f ? 4.0f : 2.0f);
+    }
 
     glMatrixMode(GL_PROJECTION);
     glLoadMatrixf(g_proj);
@@ -12511,6 +13070,38 @@ static void draw_asset_override(unsigned id, unsigned fade)
         const struct sl_amdl_mat  *mt = &m->mat[p->material];
         int blend = (mt->flags & SL_AMDL_M_ALPHA_BLEND) != 0;
         int mask  = (mt->flags & SL_AMDL_M_ALPHA_MASK)  != 0;
+        const struct sl_amdl_pose *pose = NULL;
+
+        /* A part-only draw (sel): every other primitive is skipped. */
+        if (sel != 0u && p->part != sel_part) continue;
+
+        /* PARTS (#63). A primitive inside a part is stored about the part's
+         * pivot, so its modelview is the model's, translated to the pivot,
+         * then the part's pose: its own translation (a button's press) and
+         * a rotation about its pivot (a stick's tilt, a trigger's pull).
+         * Fixed-function GL, post-multiplied: MV * T(pivot) * T(move) * R.
+         * A primitive outside every part - or a model with no part table -
+         * draws under the plain modelview exactly as before. A part drawn
+         * ALONE (sel) leaves the pivot out: the caller's modelview already
+         * says where the pivot goes, and the pose applies about it. */
+        glMatrixMode(GL_MODELVIEW);
+        glLoadMatrixf(g_mv[g_mv_sp]);
+        if (p->part != SL_PART_NONE && p->part < m->npart) {
+            const struct sl_amdl_part *pt = &m->part[p->part];
+            pose = &m->pose[p->part];
+            if (sel != 0u)
+                glTranslatef(pose->move[0], pose->move[1], pose->move[2]);
+            else
+                glTranslatef(pt->pivot[0] + pose->move[0],
+                             pt->pivot[1] + pose->move[1],
+                             pt->pivot[2] + pose->move[2]);
+            if (pose->rot[0] != 0.0f)
+                glRotatef(pose->rot[0] * (180.0f / 3.14159265f), 1.0f, 0.0f, 0.0f);
+            if (pose->rot[1] != 0.0f)
+                glRotatef(pose->rot[1] * (180.0f / 3.14159265f), 0.0f, 1.0f, 0.0f);
+            if (pose->rot[2] != 0.0f)
+                glRotatef(pose->rot[2] * (180.0f / 3.14159265f), 0.0f, 0.0f, 1.0f);
+        }
         /* KHR_materials_unlit, per material. The light rig is built once
          * above when the mesh has normals; a material that declares
          * itself unlit switches it off for its own draw and takes the
@@ -12563,10 +13154,15 @@ static void draw_asset_override(unsigned id, unsigned fade)
 
         if (!use_col) {
             /* Unlit models take the fade in the colour; lit ones already took
-             * it in the light, so applying it twice would square it. */
+             * it in the light, so applying it twice would square it. A part's
+             * tint (a held button's highlight) multiplies in here - the one
+             * material override there is, no second pipeline. A model with
+             * COLOR_0 carries its colour per vertex and takes no tint. */
             float s = plit ? 1.0f : k;
-            glColor4f(mt->base[0] * s, mt->base[1] * s, mt->base[2] * s,
-                      mt->base[3]);
+            float tr = 1.0f, tg = 1.0f, tb = 1.0f;
+            if (pose != NULL) { tr = pose->tint[0]; tg = pose->tint[1]; tb = pose->tint[2]; }
+            glColor4f(mt->base[0] * s * tr, mt->base[1] * s * tg,
+                      mt->base[2] * s * tb, mt->base[3]);
         }
 
         glDrawElements(GL_TRIANGLES, (GLsizei) p->count, GL_UNSIGNED_INT,
@@ -12602,9 +13198,23 @@ static void draw_asset_override(unsigned id, unsigned fade)
     g_tex_gl_bound = 0;
     cull_set(0);
     rm_invalidate();
+    if (m->exposure > 1.0f) {
+        glTexEnvf(GL_TEXTURE_ENV, GL_RGB_SCALE, 1.0f);
+        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+        g_texenv = -1;                    /* the cache re-establishes its mode */
+        texenv_set(0);
+    }
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+
+    if (g_aov_dbg_time && sel != 0u) {
+        LARGE_INTEGER t1;
+        glFinish();
+        QueryPerformanceCounter(&t1);
+        g_aov_part_ticks += t1.QuadPart - g_aov_part_t0;
+        g_aov_part_n++;
+    }
 }
 
 /* ---- LIST NESTING PROBE (SL_DEPTH_DBG), off by default -------------------
@@ -12692,7 +13302,8 @@ static void walk(const unsigned int *dl, int depth, int swapped)
             if ((w0 & SL_AOV_DL_W0_MASK) == SL_AOV_DL_W0_BASE
                 && (w1 & SL_AOV_DL_W1_MASK) == SL_AOV_DL_W1_BASE
                 && (w0 & 0xffu) < (unsigned) SL_ASSET_ID_COUNT) {
-                draw_asset_override(w0 & 0xffu, w1 & 0xffu);
+                draw_asset_override(w0 & 0xffu, w1 & 0xffu,
+                                    (w1 & SL_AOV_DL_W1_PART_MASK) >> SL_AOV_DL_W1_PART_SHIFT);
             } else {
                 g_unknown++;
                 g_op_hist[op]++;
@@ -13461,8 +14072,10 @@ static void walk(const unsigned int *dl, int depth, int swapped)
              * rule, same numbers, ordered so the height a box is scaled by
              * is the height it was authored against. */
             if (y1 >= 64 && y1 <= 1024) {
+                unsigned before = g_scr_h;
                 if (!g_scr_h_adopted) { g_scr_h = (unsigned) y1; g_scr_h_adopted = 1; }
                 else if (y1 > (int) g_scr_h) g_scr_h = (unsigned) y1;
+                if (g_scr_h != before) rects_update();     /* #45: the fit follows the logical size */
             }
             if (x1 <= x0 || y1 <= y0) {
                 /* B-143. An EMPTY box. The RDP would draw nothing under it;
@@ -13761,7 +14374,10 @@ static void walk(const unsigned int *dl, int depth, int swapped)
             g_cimg_cmds++;
             g_cimg_addr = w1;
             g_cimg_w    = (w0 & 0x0fff) + 1;
-            if (g_cimg_w >= 64 && g_cimg_w <= 1024) g_scr_w = g_cimg_w;
+            if (g_cimg_w >= 64 && g_cimg_w <= 1024 && g_scr_w != g_cimg_w) {
+                g_scr_w = g_cimg_w;
+                rects_update();                            /* #45: the fit follows the logical size */
+            }
             g_cimg_is_z = (g_zimg_addr != 0 &&
                            img_norm(g_cimg_addr) == img_norm(g_zimg_addr));
             break;
@@ -13928,6 +14544,32 @@ static void walk(const unsigned int *dl, int depth, int swapped)
         case OP_TILESYNC:
         case OP_LOADSYNC:
         case OP_PIPESYNC:
+            break;
+        case 0xC0:                         /* ucode05.txt "C0 rdp_noop" */
+            /* #45 FIELD OF VIEW: the game brackets the first-person weapon
+             * with two tagged no-ops (bondview2.c maybe_mp_interface, native
+             * arm): 'SVM1' opens the VIEWMODEL, which keeps the 60-degree
+             * projection widened by the aspect only, 'SVM0' closes it and the
+             * world's FOV scale returns. The projection in force is re-applied
+             * at each edge; any other no-op is what it always was. */
+            if (w1 == 0x53564D31u || w1 == 0x53564D30u) {
+                int want = (w1 == 0x53564D31u);
+                if (want != g_viewmodel) {
+                    g_viewmodel = want;
+                    if (g_proj_is_world && g_fov_s != 1.0) {
+                        proj_apply_aspect();
+                        gl_load_projection();
+                    }
+                }
+            }
+            /* The pointer cursor's placement tag (g_cur_ovr): the marker is
+             * in w0's low 24 bits, where gDPNoOpTag always leaves zero. */
+            else if ((w0 & 0x00FFFFFFu) == 0x00534C43u) {
+                g_cur_x4 = (int) (short) ((w1 >> 16) & 0xFFFFu);
+                g_cur_y4 = (int) (short) (w1 & 0xFFFFu);
+                g_cur_ovr = 1;
+                g_cur_tags++;
+            }
             break;
         default:
             g_unknown++;
@@ -14173,6 +14815,9 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     g_mv_sp = 0;
     memcpy(g_mv[0], g_identity, sizeof g_identity);
     memcpy(g_proj, g_identity, sizeof g_identity);
+    memcpy(g_proj_game, g_identity, sizeof g_identity);
+    g_proj_is_world = 0;
+    g_viewmodel = 0;
 
     /* RDP texture state is per-task, exactly like the matrix stack: the
      * cache of decoded images persists, the parse state does not. */
@@ -14278,7 +14923,11 @@ void sl_gfx_frame_dl(const void *first, const void *end)
      * catching a viewport this walker set itself. g_vp_rect is NOT reset -
      * the viewport is task state like g_scr_w, and a list that issues no
      * movemem of its own keeps the one in force. */
-    glGetIntegerv(GL_VIEWPORT, g_win_vp);
+    glGetIntegerv(GL_VIEWPORT, g_window_vp);
+    /* #45: the content and safe rects for this frame, from the window just
+     * read, the logical size in force and the selected aspect. */
+    rects_update();
+    bars_clear();
     g_vp_cur = -1;
     g_vp_applies = 0;
     g_nw_front = g_nw_straddle = g_nw_inside = g_nw_behind = 0;
@@ -14342,6 +14991,8 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     g_rh_skylerp = 0;
     memset(g_tr_reject, 0, sizeof g_tr_reject);
     g_fr_cmds = g_fr_drawn = g_fr_zskip = g_fr_degen = 0;
+    g_fr_extended = g_rh_extended = 0;
+    g_cur_ovr = 0; g_cur_applied = g_cur_tags = 0;   /* the cursor placement tag never spans frames */
     g_fr_filled = g_fr_combined = 0;
     g_fogp_cmds = 0; g_fog_geom_tris = g_fog_p_tris = 0;
     g_tri_id = 0; g_room_dl = 0;
@@ -14712,6 +15363,24 @@ void sl_gfx_frame_dl(const void *first, const void *end)
         fprintf(stderr, "sl_dl: frame %u cmds=%u vtx=%u(rej=%u) tris=%u unknown=%u redraw=%u/%u/%u  [census off; SL_DL_CENSUS=1]\n",
                 g_dl_frame, g_cmds, g_verts, g_vtx_reject, g_tris, g_unknown,
                 g_rd_loads_old, g_rd_tris, g_rd_tris_same);
+        /* #45: the display shape in force this frame - the selection, the
+         * three rectangles (window coordinates, GL origin) and k - plus how
+         * many backdrops were widened. The 4:3 negative control reads
+         * k=1.000 with content == safe == window and 0/0 here. */
+        {
+            int capped = 0;
+            double veff = sl_display_fov_effective(g_aspect_id, &capped);
+            double vtot = 2.0 * atan(tan(veff * 3.14159265358979323846 / 360.0) * sl_aspect_value(g_aspect_id)) * 180.0 / 3.14159265358979323846;
+            fprintf(stderr, "sl_display: aspect=%s k=%.3f window=%dx%d content=%d,%d %dx%d safe=%d,%d %dx%d logical=%ux%u extended=%u/%u"
+                            " fov=%d.%02d(h16=%d) eff=%.2f total=%.1f cap=%s s=%.4f world-proj=%s cursor=%u/%u\n",
+                    sl_aspect_name(g_aspect_id), g_aspect_k, g_window_vp[2], g_window_vp[3],
+                    g_content_vp[0], g_content_vp[1], g_content_vp[2], g_content_vp[3],
+                    g_win_vp[0], g_win_vp[1], g_win_vp[2], g_win_vp[3],
+                    g_scr_w, g_scr_h, g_fr_extended, g_rh_extended,
+                    sl_fov_vertical() / 100, sl_fov_vertical() % 100, sl_fov_h16_displayed(),
+                    veff, vtot, capped ? "engaged" : "off", g_fov_s,
+                    g_world_proj_addr ? "named" : "none", g_cur_applied, g_cur_tags);
+        }
       } else {
         fprintf(stderr, "sl_dl: frame %u cmds=%u vtx=%u(rej=%u) tris=%u unknown=%u "
                         "bounds x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]\n",
@@ -14850,10 +15519,10 @@ void sl_gfx_frame_dl(const void *first, const void *end)
              * drew; draws>0 with prims=0 says one drew and generated
              * nothing, which is a different failure and has to be
              * distinguishable from the first. */
-            fprintf(stderr, "sl_texgen: model draws=%u tris=%u"
+            fprintf(stderr, "sl_texgen: model draws=%u part-draws=%u tris=%u"
                             "  generated prims=%u verts=%u zero-normal=%u"
                             "  declined=%u no-normals=%u  (SL_TEXGEN_MODEL=%d)\n",
-                    g_aov_draws, g_aov_tris_drawn, g_aov_gen_prims,
+                    g_aov_draws, g_aov_part_draws, g_aov_tris_drawn, g_aov_gen_prims,
                     g_aov_gen_verts, g_aov_gen_zeronrm, g_aov_gen_declined,
                     g_aov_gen_nonrm, texgen_model());
             fprintf(stderr, "sl_tex: stride disagreements=%u of %u distinct\n",
@@ -15154,7 +15823,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
         int due = wit_due(now);
         g_wit_a = 0;                    /* B-143: pass A of this frame is over */
         if (due) {
-            int w = g_win_vp[2], h = g_win_vp[3];
+            int w = g_window_vp[2], h = g_window_vp[3];   /* the whole window (#45) */
             unsigned char *a = NULL, *b = NULL;
             g_wit_fired = 1; g_wit_fired_at = now;
             if (w > 0 && h > 0) {
@@ -15166,7 +15835,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
             } else {
                 int save_vp[4];
                 unsigned save_scr_w, save_scr_h;
-                memcpy(save_vp, g_win_vp, sizeof save_vp);
+                memcpy(save_vp, g_window_vp, sizeof save_vp);
                 save_scr_w = g_scr_w; save_scr_h = g_scr_h;
 
                 /* Pass A is on the back buffer right now; SDL_GL_SwapWindow

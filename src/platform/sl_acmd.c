@@ -10,11 +10,27 @@
 #include "sl_acmd.h"
 
 #include <string.h>
-/* GENERATED, ROM-derived, never committed: the RESAMPLE polyphase table from
- * the aspMain data segment. Produced by tools/native/gen_resample_tab.py
- * into build/native/, which is gitignored. The build fails loudly if the
- * locally extracted microcode segment is absent. */
-#include "sl_resample_tab.h"
+
+/* THE MICROCODE'S OWN DATA - the ENVMIXER per-lane ramp and the RESAMPLE
+ * 64x4 polyphase table from the aspMain data segment. Both are ROM-derived
+ * and are NOT compiled in: sl_ucode.c reads them out of the user's ROM at
+ * start-up and sets them here through sl_acmd_set_ucode_tables, once, before
+ * mainproc. Until then sl_acmd_exec refuses to run. There is deliberately no
+ * default, no fallback and no generated header (the build-time generator
+ * that used to fill these was retired at v0.2.0 - docs/releases/v0.2.0.md). */
+#define SL_ENVMIX_LANES   8
+#define SL_RESAMPLE_PHASES 64
+#define SL_RESAMPLE_TAPS   4
+static short sl_ucode_envmix_ramp[SL_ENVMIX_LANES];
+static short sl_ucode_resample_tab[SL_RESAMPLE_PHASES * SL_RESAMPLE_TAPS];
+static int   sl_ucode_tables_ready;
+
+void sl_acmd_set_ucode_tables(const short *ramp, const short *taps) {
+    memcpy(sl_ucode_envmix_ramp, ramp, sizeof sl_ucode_envmix_ramp);
+    memcpy(sl_ucode_resample_tab, taps, sizeof sl_ucode_resample_tab);
+    sl_ucode_tables_ready = 1;
+}
+int sl_acmd_ucode_tables_ready(void) { return sl_ucode_tables_ready; }
 
 /* Numeric choices for POLEF, swept independently during derivation.
  * Defaults are the values that reproduced the cartridge. */
@@ -286,7 +302,7 @@ static short sl_mixstep(short dst, short in, short g) {
 static void sl_env_construct(short cvol, short ratm, unsigned short ratl, sl_env *e) {
     int k;
     for (k = 0; k < 8; k++) {
-        unsigned short f = (unsigned short) SL_ENVMIX_RAMP[k];
+        unsigned short f = (unsigned short) sl_ucode_envmix_ramp[k];
         long long a = sl_acc48(((long long) f * (long long) ratl) >> 16);
         a = sl_acc48(a + (long long) f * (long long) ratm);
         a = sl_acc48(a + (((long long) cvol) << 16));
@@ -436,6 +452,16 @@ void sl_acmd_init(sl_acmd_state *s, uint8_t *dram, uint32_t lo, uint32_t size) {
 
 int sl_acmd_exec(sl_acmd_state *s, const uint32_t *words, uint32_t n) {
     uint32_t k;
+
+    /* No tables, no execution: a mixer running RESAMPLE against zeros would
+     * produce silence that looks like an audio bug rather than a start-up
+     * one. sl_ucode.c sets them before mainproc; this is the belt to that
+     * brace, and it is reported through the ordinary error path. */
+    if (!sl_ucode_tables_ready) {
+        s->err_op = -1;
+        s->err_index = 0;
+        return SL_ACMD_ERR_UNGROUNDED;
+    }
 
     for (k = 0; k < n; k++) {
         uint32_t w0 = words[2 * k], w1 = words[2 * k + 1];
@@ -891,7 +917,7 @@ int sl_acmd_exec(sl_acmd_state *s, const uint32_t *words, uint32_t n) {
                                     || (ia + kk) != (ia + 1 + kk)) sl_rs_taps_moved++; }
                             ia = ia + 1; } }
 #endif
-                    tp = &SL_RESAMPLE_TAB[idx * 4];
+                    tp = &sl_ucode_resample_tab[idx * 4];
                     long long sum = 0;
                     for (k = 0; k < 4; k++) {
                         int32_t jsel = (int32_t) k;

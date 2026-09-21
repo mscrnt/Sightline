@@ -236,13 +236,58 @@
         [
           "Objects and Attributes/ammunition/ammo value tables and maximums.txt",
           "maximums"
+        ],
+        [
+          "Objects and Attributes/weapons/weapon statistics bitflags.txt",
+          "the per-item statistics record the game's get_ptr_item_statistics reads: +0x1C ammo type, +0x20 ammo on clip, +0x34 [float] zoom, +0x6C the weapon bitflags. Names the bits: 0x8000 'can not crouch' (WEAPONSTATBITFLAG_DISABLE_CROUCH), 0x00400000 no clip, 0x00100000 doubles, 0x8 auto-aim. The samples table shows 0x8000 set on exactly the Sniper Rifle (00178A70) and the Camera (0000A990) - which is why bondview2.c uses that one bit both to refuse crouch and to enable adjustable scope zoom"
         ]
       ],
       "governs": [
         "src/game/gunfire.c",
         "src/game/gun.c",
         "src/game/bondinv.c"
-      ]
+      ],
+      "learned": "2026-09-17 (#38, native actions): 'weapon statistics bitflags.txt' settled the scoped-zoom context test without a weapon-id list - sl_game_scoped_zoom_active (src/native/sl_game_query.c) asks the same 0x8000 stat bit bondview2.c:5359 asks, and the note's samples column is the proof that only the sniper and the camera carry it."
+    },
+    "player-input": {
+      "why": "how the game turns the pad into Bond's movement, aiming, crouch, use/reload and weapon cycling - the seams the native action layer attaches to",
+      "files": [
+        [
+          "Gameplay and Misc/7F081974 - player gameplay interaction.txt",
+          "the disassembly of bondviewProcessInput (bondview2.c:4786) with the button tests annotated: ANDI 4000 'B button' / 'CANCEL button state' (the use-or-reload tap), the 0x8000 'inhibit crouch' stat-bit tests around aiming (BONDdata+0x124 = insightaimmode), the 0x0808 / 0x0404 C-up / C-down masks for zoom and crouch"
+        ],
+        [
+          "Objects and Attributes/weapons/weapon statistics bitflags.txt",
+          "see weapons-ammo: the 0x8000 bit those tests read"
+        ]
+      ],
+      "governs": [
+        "src/game/bondview2.c",
+        "src/native/sl_game_query.c",
+        "src/native/sl_action_channels.c",
+        "src/platform/sl_action.c"
+      ],
+      "learned": "2026-09-17 (#38): the corpus has no note on the pad-read seam in lv.c (the contextual use-or-reload line at lv.c:756 is only reachable from the decomp), and no note names a separate 'reload' or 'interact' input - on the cartridge there is none, B is contextual, which is what the native action layer separates. Tree-wide grep 'crouch' over the notes: only the 7F081974 disassembly and the bitflags note carry it."
+    },
+    "player-viewport": {
+      "why": "how the game sets the player's viewport, FOV and aspect per frame - the projection the native aspect-ratio presentation (#45) widens from the renderer side",
+      "files": [
+        [
+          "Gameplay and Misc/7F086F9C.txt",
+          "the disassembly of bondviewMovePlayerUpdateViewport (bondview2.c:8501): the FOV set, then 'set based on screen ratio' - the 16:9 branch (7F0870CC) computes viewport width / height * 0.75 (0x3F40) * the widescreen constant and stores it as the player's aspect; the normal branch width / height. That is the cartridge's own 16:9 option: an ANAMORPHIC squeeze for a stretching TV, not a wider view"
+        ],
+        [
+          "Gameplay and Misc/Goldeneye eeprom saves.txt",
+          "the save's screen-ratio flag: '0x80 Screen Ratio: 0-normal; 1-16:9' - the persisted switch the branch above reads"
+        ]
+      ],
+      "governs": [
+        "src/game/bondview2.c",
+        "src/fr.c",
+        "src/gfx/sl_gfx_dl.c",
+        "src/platform/sl_display.c"
+      ],
+      "learned": "2026-09-18 (#45): the notes carry the ratio branch and the save flag, and nothing on the projection's FOV convention (guPerspective's first angle is vertical - libultra perspective.c, not the corpus) or on the portal traversal's screen rectangle (bg.c bgUpdateCurrentPlayerScreenMinMax, the seam the wide draw set widens). Tree-wide grep 'fovy|field of view|aspect|widescreen|16:9' over the notes: ucode05's texture 'mapping aspect', the 7F086F9C ratio branch, the eeprom flag, one oddities.txt sentence and the PD FAQ - nothing else."
     },
     "turrets": {
       "why": "autoguns, CCTV, drone guns - a separate AI class from chrs",
@@ -280,6 +325,29 @@
         "src/game/cheat.c",
         "src/game/front.c"
       ]
+    },
+    "front-end-menus": {
+      "why": "the cursor-driven front-end screens: mode select's row geometry and hit bands, and where the cursor is re-placed on each transition",
+      "files": [
+        [
+          "Main Menus/Main and Misc/menu 06 - mode select/7F00D828 - menu 06 constructor - mode select.txt",
+          "AUTHORITY for the mode-select layout: numeral at x 0x96, label at 0xAA, rows at y 0xDC / 0xFC / 0x11C, highlight box (0x94, y-2) .. (label width + 0xAF, y+0xE), the third row drawn only while 8002A94C (cheat menu available) is set - which is exactly what constructor_menu06_modesel spells out"
+        ],
+        [
+          "Main Menus/Main and Misc/menu 06 - mode select/7F00D298 - menu 06 interface - mode select.txt",
+          "the per-frame interface: the cheat-availability loop over cheats 1..0x4A, the wallet switches, the tab 3 (PREVIOUS) test, A/Z/START as the confirm mask"
+        ],
+        [
+          "Main Menus/return positions.txt",
+          "the cursor return positions per screen as floats: Main Page Solo (126,226) Multi (126,258) Cheats (126,290) = setCursorPOSforMode(mode) mode*0x20+0xE2; also the solo stage grid rows/columns, the 007 difficulty entry and the briefing NEXT tab"
+        ]
+      ],
+      "governs": [
+        "src/game/front.c",
+        "src/native/sl_front_options.c",
+        "src/native/sl_menu_pointer.c"
+      ],
+      "learned": "2026-09-17 (#41): the mode-select group was moved up 16 units and a third row (Options) added natively; the constructor note above gave every constant the move had to carry (rows, boxes, the 9-unit hit threshold below each row's text read from the interface's 243/275 compares) and return positions.txt confirmed setCursorPOSforMode's formula, so the offset went into one constant (SL_MODESEL_DY) applied at every site the notes list rather than being measured off a screenshot."
     },
     "multiplayer": {
       "why": "scenarios, scoring, respawn, per-player stats",
@@ -856,6 +924,16 @@
       "RDP texture LUT fetch for a CI index past the F0-loaded entry count",
       "SEARCHED AND SILENT. ucode05.txt:870-886 (F0 rdp_loadtlut) and ucode05_old.txt describe the palette LOAD - tile, count, start - and nothing about the texture unit's FETCH when a texel's index exceeds the entries loaded: a corpus grep -rni 'tlut|palette' over notes/ hits only those field tables, the generators' own loadtlut emissions and the Spectrum-emulation disassembly. GoldenEye authors exactly that case on the type-1 detail command (tex.c:731 texHandleType1 + texWriteTileFromDefinition): TARDETAIL and GRAVELDETAIL (assets/images.def:22-23, flags 0x3/0x8/0xD/0x2 - the 'Detailflag1 ... 0x38D2' of image.h) set tile 0 at tmem word 19 with mask s 7 / t 2, a 128x4 window over a 16x16 CI8 whose 53-entry LUT the indices overrun. On hardware the LUT is the upper half of TMEM and such an index reads whatever stale entry sits there. Settled by measurement (B-141, 2026-09-16): the cartridge (romtele.py stage 30 at the Depot yard mark) draws the floor as dark tarmac; the native decoder had rejected the whole tile (SL_TEX_ERR_SHORT_PAL) and left the draw untextured. The production rule in src/gfx/sl_gfx_tex.c is SL_TEX_FLAG_PAL_WRAP - the index wraps into the loaded entries - chosen because it keeps every texel in the texture's own palette (the cartridge's tone, 36/32/24 vs 35/35/36 floor means); the stale entry's actual bytes are NOT claimed, and a TMEM byte model would be needed to reproduce them.",
       "2026-09-16"
+    ],
+    [
+      "watch Control Options page: how the pad and its button icons are drawn (7F0AADC0 draw_watch_controller, 7F06359C watchRenderController)",
+      "SEARCHED AND SILENT. 'topic watch-menu' routes the page SET and the per-page interfaces (7F0A55C4 - solo watch controls page advance covers the LEFT / RIGHT navigation only); 'search controller page button icons watch' returns no filename match, and a corpus grep -rni 'GjoypadZ|joypad|7F0A9AB8|controller page' over notes/ hits only the TLB index line for 7F0A9AB8 ('displays controller layout for selected setting'), the joypad's object-line / multi-load rows and the object-templates list entry - no note describes the page's matrices (the -45 degree pitch about x, the spin about z, the look-at from (-5, 2000, -168)), the button positions table g_1ContButtonPositions, or the second subdraw that draws the pad's own button nodes as icons beside the labels with the body hidden. Authority is the decomp: options.c draw_watch_controller / sub_GAME_7F0A9AB8 and gunfire.c watchRenderController (animatebuttons: nodes 1..12 placed at buttonpositions->{start, joystick, dPad, cUp..cRight, a, b, l, r, z} in the look-at frame, R_x(-60 deg) for the face buttons, +60 for L / R, the d-pad -51.4, the Z R_z(180)). The pad's own frame was MEASURED from the ROM model (scratch modern5/n64pad.py over GjoypadZ: the face buttons' winding normals are +y to three places, the plane through their pivots pitched -2.4 degrees) - the modern controller models are fitted to that frame.",
+      "2026-09-20"
+    ],
+    [
+      "gun barrel / eye intro composition and its layer transforms",
+      "SEARCHED AND SILENT. gedocs 'gun barrel', 'gunbarrel' and 'intro' return no filename matches, and the intro-boot-sequence area covers only the boot chain's TIMERS and the legal / Nintendo / Rareware screens - nothing describes the gun-barrel sequence's layers or their transforms. Authority is the decomp: src/game/title.c renderGunbarrelEyeIntroSequence is the state machine (cases 0..6 off gunbarrel_mode - 2); manipulateGunbarrelAndLogoMatrices and insert_sight_backdrop_eye_intro draw the barrel's hand-built aperture through the 1280x960 guOrtho initializeGunBarrelIntro sets; insert_sniper_sight_eye_intro draws the backdrop through titleRenderFolderMenuBackground at x offset viGetX() * g_TitleX / 1280; insert_bond_eye_intro draws Bond through his own guPerspective(46 deg, 320/240) from gunbarrelPosition1/2/3. One sweep value, g_TitleX, drives all three. SL_INTRO_DBG (native, getenv-gated) prints mode, case, g_TitleX and whether Bond's layer runs, per frame.",
+      "2026-09-21"
     ]
   ]
 }

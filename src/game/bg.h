@@ -239,4 +239,11 @@ void bgFindRoomsAlongSegment(coord3d *pos1, coord3d *pos2, u8 *initialRooms, u8 
 s32 sub_GAME_7F0B9E04(coord3d *arg0, coord3d *arg1);
 void bgRoomCalcBB(s32 room);
 
+#ifndef __sgi
+/* #45 (bg.c): the 4:3-view tests for the scripting and spawn rules, kept
+ * apart from the widened draw set. */
+u8  sl_roomIsOnScreen43(s32 roomID);
+s32 sl_clampBoxToView43(struct bbox2d *box);
+#endif
+
 #endif

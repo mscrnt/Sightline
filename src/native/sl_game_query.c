@@ -31,6 +31,7 @@
 #include "fr.h"
 #include "propobj.h"
 #include "bg.h"
+#include "gun.h"
 #include <math.h>
 
 /**
@@ -88,8 +89,11 @@ s32 sl_game_aim_mode(s32 player_num)
  * options menu is gone the moment the process ends.
  *
  * This is deliberately NOT a reimplementation of Rare's save format. It sets
- * the same value through the game's own setter (options.c:454), and the
- * platform layer remembers it across runs in a sidecar. Rule 5 is satisfied
+ * the same value through the game's own setter (options.c:454). The value is
+ * remembered across runs by the native settings store (src/platform/
+ * sl_settings.c, #41), which applies it at every stage start through
+ * sl_settings_apply.c rather than through this entry point; this one stays as
+ * the read/write pair's writer for any platform caller. Rule 5 is satisfied
  * because nothing about the game's behaviour changes - the player's own choice
  * is simply still there next time.
  */
@@ -168,6 +172,57 @@ s32 sl_game_menu_mode(void)
 
 
 /**
+ * How many players the game is running, 1..4 - the split-screen count the
+ * viewport code lays the screen out for (fr.c viSetupScreensForNumPlayers,
+ * bondview2.c bondviewGetCurrentPlayerViewportWidth). 1 before any player
+ * exists and in the front end.
+ *
+ * The display shape (#45, src/platform/sl_display.c) asks this for ONE
+ * decision: the selected aspect widens the 3D view only in single player.
+ * The split-screen layout is per-player viewports across one 4:3 logical
+ * framebuffer, and widening each about its own centre would overlap them;
+ * that layout is left exactly as it is (recon recorded on #45) and the
+ * content rect simply stays 4:3 while two or more players are in.
+ */
+s32 sl_game_player_count(void)
+{
+    s32 n = (s32) getPlayerCount();
+    return n < 1 ? 1 : n;
+}
+
+/**
+ * Is a LEVEL running - a stage other than the title, with a player - as
+ * opposed to the front end? The display shape's FIELD OF VIEW (#45,
+ * src/platform/sl_display.c) applies to the player's world view only; the
+ * front end's screens keep their authored projection, so its 3D paper and
+ * its 2D text cannot drift apart. Same two facts sl_game_menu_mode reads.
+ */
+s32 sl_game_in_level(void)
+{
+    if (bossGetStageNum() == LEVELID_TITLE)
+        return 0;
+    if (g_playerPointers[0] == NULL)
+        return 0;
+    return 1;
+}
+
+/**
+ * The watch SIGHTLINE page's sub-menu stack (#45, options.c): is a child
+ * view open, and the request to step one level back - the input layer's
+ * Escape asks these so the key means "back" inside a sub-menu and "close
+ * the watch" only on the page itself (sl_input_live_escape).
+ */
+s32 sl_game_watch_child_open(void)
+{
+    return sl_sightline_child_open();
+}
+
+void sl_game_watch_child_back(void)
+{
+    sl_sightline_request_back();
+}
+
+/**
  * Whether the player's Look Up/Down option is set to UPRIGHT, 0 or 1.
  *
  * The input layer needs this for ONE narrow purpose: the mouse must have
@@ -191,6 +246,126 @@ s32 sl_game_menu_mode(void)
 s32 sl_game_look_upright(void)
 {
     return get_cur_player_look_vertical_inverted() != 0;
+}
+
+
+/**
+ * Whether ADJUSTABLE SCOPED AIMING is active for a player, 0 or 1, or -1
+ * before the player exists. This is the wheel's context switch: while it is
+ * 1 the wheel zooms the scope, otherwise it cycles weapons (sl_action.h,
+ * SL_WHEEL_CTX_*).
+ *
+ * THE TEST IS THE GAME'S OWN, not a list of weapon ids. bondviewProcessInput
+ * gates continuous zoom on exactly two things (bondview2.c:5359-5361 for the
+ * 1.x styles, :5088-5089 for 2.x): insightaimmode, and the right-hand item's
+ * WEAPONSTATBITFLAG_DISABLE_CROUCH stat bit - 0x8000 in the weapon statistics
+ * bitflags, "can not crouch" per goldeneye_docs "Objects and Attributes/
+ * weapons/weapon statistics bitflags.txt", which the sniper rifle
+ * (0x00178A70) and the camera (0x0000A990) carry and nothing else does. Rare
+ * used one bit for both "cannot crouch with this" and "this has a zoom you
+ * can adjust", so asking that bit here is asking the same question the game
+ * asks, and a future item with the bit set gets the wheel for free.
+ *
+ * One frame stale by construction, like sl_game_aim_mode above, and for the
+ * same reason. The consequence is one notch at the aim transition landing in
+ * the previous context, which the seam in bondviewProcessInput then refuses
+ * with the same two-term test - so the worst case is a notch that does
+ * nothing, never one that does the wrong thing.
+ */
+s32 sl_game_scoped_zoom_active(s32 player_num)
+{
+    struct player *pl;
+
+    if (player_num < 0 || player_num >= 4)
+        return -1;
+    pl = g_playerPointers[player_num];
+    if (pl == NULL)
+        return -1;
+    if (pl->insightaimmode == 0)
+        return 0;
+    return bondwalkItemCheckBitflags((ITEM_IDS) pl->hands[GUNRIGHT].weaponnum,
+                                     WEAPONSTATBITFLAG_DISABLE_CROUCH) != 0;
+}
+
+
+/**
+ * The action layer's WITNESS, for the SL_INPUT_DEBUG line and nothing else:
+ * the game-side facts each native action is supposed to move, read once per
+ * poll into one string. Read-only, like everything in this file; the platform
+ * layer prints it beside the action states so that "E was pressed" and "the
+ * door in front of Bond started opening" appear on one line of one log.
+ *
+ *   crouch    crouchpos (CROUCH_SQUAT 0 / HALF 1 / STAND 2)
+ *   weap      right-hand weaponnum
+ *   anim      hands[GUNRIGHT].weapon_action_state (9-12 is the reload
+ *             sequence, GUN_ANIM_STATE_RELOAD_START..RAISE), and the pending
+ *             weapon_current_animation request
+ *   zoom      sniper_zoom / camera_zoom, whichever the right-hand item reads
+ *             (get_item_in_hand_zoom, gun.c:1297)
+ *   door      the NEAREST door prop within 400 units of the eye: its
+ *             openstate (DOORSTATE 0 stationary, 1 opening, 2 closing, 3
+ *             waiting) and openPosition, or "none"
+ *   sprint    sl_bond_sprint_state (#42): 0 not held / setting off, 1 held
+ *             but not applied, 2 the movement vector was scaled this tick
+ *   spd       speedforwards / speedsideways as the physics step last saw
+ *             them (crouch halving included) and speedboost - the three
+ *             numbers the sprint rule reads and writes
+ *
+ * Returns the number of characters written; 0 with no player. Bounded: the
+ * prop walk is capped like sl_cam_probe_frame's.
+ */
+extern s32 sl_bond_sprint_state(void);
+
+s32 sl_game_action_witness(char *out, s32 n)
+{
+    extern int snprintf(char *, unsigned int, const char *, ...);
+    struct player *pl = g_playerPointers[0];
+    PropRecord *pr, *best = NULL;
+    f32 bestd2 = 400.0f * 400.0f;
+    s32 k, cnt = 0;
+
+    if (out == NULL || n < 8)
+        return 0;
+    out[0] = '\0';
+    if (pl == NULL || pl->viewtoworldmtxf == NULL)
+        return 0;
+
+    for (pr = g_ActivePropsTail; pr != NULL && cnt < 4096; pr = pr->prev, cnt++) {
+        f32 dx, dy, dz, d2;
+        if (pr->type != PROP_TYPE_DOOR || pr->door == NULL)
+            continue;
+        dx = pr->pos.f[0] - pl->viewtoworldmtxf->m[3][0];
+        dy = pr->pos.f[1] - pl->viewtoworldmtxf->m[3][1];
+        dz = pr->pos.f[2] - pl->viewtoworldmtxf->m[3][2];
+        d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestd2) {
+            bestd2 = d2;
+            best = pr;
+        }
+    }
+
+    k = snprintf(out, (unsigned int) n,
+                 "crouch=%d weap=%d anim=%d/%d zoom=%.2f sprint=%d spd=%.3f/%.3f/%.2f door=",
+                 (int) pl->crouchpos,
+                 (int) pl->hands[GUNRIGHT].weaponnum,
+                 (int) pl->hands[GUNRIGHT].weapon_action_state,
+                 (int) pl->hands[GUNRIGHT].weapon_current_animation,
+                 (double) ((pl->hands[GUNRIGHT].weaponnum == ITEM_SNIPERRIFLE)
+                               ? pl->sniper_zoom
+                           : (pl->hands[GUNRIGHT].weaponnum == ITEM_CAMERA)
+                               ? pl->camera_zoom : 0.0f),
+                 (int) sl_bond_sprint_state(),
+                 (double) pl->speedforwards, (double) pl->speedsideways,
+                 (double) pl->speedboost);
+    if (k < 0 || k >= n)
+        return k < 0 ? 0 : n - 1;
+    if (best == NULL)
+        snprintf(out + k, (unsigned int) (n - k), "none");
+    else
+        snprintf(out + k, (unsigned int) (n - k), "%d/%.3f@%.0f",
+                 (int) best->door->openstate,
+                 (double) best->door->openPosition, (double) sqrtf(bestd2));
+    return (s32) k;
 }
 
 

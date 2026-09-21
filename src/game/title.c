@@ -647,6 +647,26 @@ void clearChrGunModelInstances(void)
  * Address: 0x7F009254
 */
 Gfx *renderGunbarrelEyeIntroSequence (Gfx *gdl) {
+#ifndef __sgi
+    /* NATIVE WITNESS (SL_INTRO_DBG only, never in a player session): the
+     * gun-barrel sequence's own state, once per frame - which case is
+     * drawing, the sweep position the barrel and the background both read,
+     * and whether Bond's layer runs this frame (case 1 draws him only once
+     * g_TitleX < 600). Read-only; nothing here changes the sequence or its
+     * timing. */
+    {
+        extern char *getenv(const char *);
+        extern int fprintf(void *, const char *, ...);
+        extern void *stderr;
+        static int dbg = -1;
+        if (dbg < 0) dbg = (getenv("SL_INTRO_DBG") != NULL);
+        if (dbg)
+            fprintf(stderr, "sl_intro: mode=%d case=%d TitleX=%.2f TitleY=%.2f transX=%.2f bond=%d vi=%dx%d\n",
+                    (int) gunbarrel_mode, (int) gunbarrel_mode - 2, g_TitleX, g_TitleY, titleTransitionX,
+                    (gunbarrel_mode - 2 == 1) ? (g_TitleX < 600.0f) : (gunbarrel_mode - 2 >= 2 && gunbarrel_mode - 2 <= 5),
+                    (int) viGetX(), (int) viGetY());
+    }
+#endif
     D_8002A7D0 = (1 - D_8002A7D0);
     switch (gunbarrel_mode - 2)
     {

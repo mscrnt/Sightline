@@ -22,12 +22,23 @@ map_path, unresolved_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
 text = Path(map_path).read_text(errors="replace")
 
 seg = {}
-for m in re.finditer(r"0x([0-9a-f]+)\s+(_\w+Segment(?:Rom)?(?:Start|End)) =", text):
-    seg.setdefault(m.group(2), int(m.group(1), 16))
-
 addr = {}
-for m in re.finditer(r"^\s+0x([0-9a-f]{8,16})\s+([A-Za-z_][A-Za-z0-9_]+)\s*$", text, re.M):
-    addr.setdefault(m.group(2), int(m.group(1), 16))
+if text.startswith("# sightline linkmap"):
+    # The tracked extraction (tools/native/ge007.u.linkmap.txt, produced by
+    # tools/native/extract_linkmap.py from the matching build's map): the
+    # same two dictionaries, already reduced to what this script consumes.
+    # This is what the Windows build reads, so it needs no `make matching`.
+    for ln in text.splitlines():
+        if not ln or ln.startswith("#"):
+            continue
+        kind, name, val = ln.split()
+        (seg if kind == "seg" else addr)[name] = int(val, 16)
+else:
+    # A raw linker map (build/u/ge007.u.map).
+    for m in re.finditer(r"0x([0-9a-f]+)\s+(_\w+Segment(?:Rom)?(?:Start|End)) =", text):
+        seg.setdefault(m.group(2), int(m.group(1), 16))
+    for m in re.finditer(r"^\s+0x([0-9a-f]{8,16})\s+([A-Za-z_][A-Za-z0-9_]+)\s*$", text, re.M):
+        addr.setdefault(m.group(2), int(m.group(1), 16))
 
 unresolved = set(Path(unresolved_path).read_text().split())
 

@@ -1824,7 +1824,13 @@ void                   ai(PropDefHeaderRecord *Entityp, PROP_TYPE EntityType)
                 case AI_IFImOnScreen:
                 {
                     AiIFImOnScreenRecord *ai = AiListp + Offset;
+#ifndef __sgi
+                    /* #45: the script's "on screen" is the 4:3 view, whatever
+                     * the monitor shows (bg.c, the block on sl_view43). */
+                    if (sl_propIsOnScreen43(ChrEntityp->prop))
+#else
                     if ((ChrEntityp->prop->flags & PROPFLAG_ONSCREEN))
+#endif
                     {
                         Offset = chraiGoToLabel(AiListp, Offset, ai->GOTOLABEL);
                     }
@@ -1838,7 +1844,11 @@ void                   ai(PropDefHeaderRecord *Entityp, PROP_TYPE EntityType)
                 {
                     AiIFMyRoomIsOnScreenRecord *ai = AiListp + Offset;
 
+#ifndef __sgi
+                    if (sl_roomIsOnScreen43(getTileRoom(ChrEntityp->prop->stan)))   /* #45: the 4:3 view */
+#else
                     if (getROOMID_isRendered(getTileRoom(ChrEntityp->prop->stan))) // embedded func to match, must be s32 not u8
+#endif
                     {
                         Offset = chraiGoToLabel(AiListp, Offset, ai->GOTOLABEL);
                     }

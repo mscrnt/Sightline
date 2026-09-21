@@ -62,6 +62,936 @@ Copy this block. Newest entries at the top of the log.
 
 ## Log
 
+### D-018 — the modern pad's DEFAULT bumpers MIRROR the triggers (owner, 2026-09-21): RB / R1 is a second FIRE and LB / L1 a second AIM in every live preset, the weapon cycle and the zoom are the d-pad's alone, and the BUMPER preset is retired; the scope-aware source mechanism is unchanged (native-only setting, the D-009 class - but the DEFAULT itself moves, deliberately)
+
+- **Date:**        2026-09-21
+- **Phase:**       1
+- **Commit:**      322ca69e (src/platform/sl_bindings.c g_layouts and the retired flag, sl_bindings.h, the watch row's stepper) - Gitea #64, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the change is the native binding registry's default table; nothing in src/game changed at all)
+- **First tick:**  n/a - no recorded trace carries pad input; the registry is consulted only by the live input path
+- **Fields:**      none hashed
+- **Toggle:**      `pad_button_layout` in the native settings store, and every pad slot is editable in both BINDINGS editors. Unlike the rest of the D-009 class the DEFAULT is not the previous behaviour: this entry exists because the shipped default deliberately changed. A config that already spells the old table keeps it (it loads as CUSTOM).
+
+**What changed**
+
+The compiled pad default and the preset table (`g_layouts`). Before: RB was
+NEXT WEAPON + ZOOM IN and LB PREVIOUS WEAPON + ZOOM OUT - the scope-aware
+cycle introduced in #63 round 6 - with the d-pad carrying the same pairs.
+Now RB is FIRE's second slot and LB is AIM's, in DEFAULT, SOUTHPAW (sides
+swapped) and GREEN THUMB; the weapon cycle and the zoom are the d-pad's
+alone (left / right cycle, up / down zoom). GREEN THUMB's R3 AIM takes the
+slot LB holds elsewhere - two slots per action is the whole editor - so LB
+is unbound in that preset only. The BUMPER preset is retired: its point was
+the TRIGGERS cycling weapons, which is what this removes. Its id stays
+occupied (the setting is persisted and its ids are append-only) and is
+never offered, applied or matched.
+
+FIRE and AIM are UNPAIRED actions, so their rows carry no context
+(`sl_bindings_source_ctx`) and a bumper acts in every context - measured
+inside the sniper scope. The scope-aware MECHANISM is untouched: the `ctx`
+flag still rides on the wheel and on both bumpers, so a player who binds a
+cycle or zoom action to a bumper by hand still gets the two-row behaviour,
+the stale rule and the conflict policy exactly as before.
+
+**Why**
+
+Owner, 2026-09-21: "I also don't like RB and LB and L1 and R1 cycling the
+weapons. They should just mirror the triggers for aim and shoot. Dpad
+handles weapons fine." A control-feel decision, made by the owner, on a
+native-only control layer the cartridge does not have.
+
+**Why it is safe**
+
+Nothing in src/game changed (`git diff --stat -- src/game` empty for this
+commit), so the matching build and every recorded trace are untouched: no
+trace carries pad input, and the registry is read only by the live input
+path. The three config paths were witnessed on scratch files - a DEFAULT
+file with no pad `bind.` lines gets the new table with no manual step, a
+custom pad row is kept verbatim as CUSTOM, and a file recording the retired
+BUMPER loads as CUSTOM keeping whatever lines it holds, so no player's
+controls change under them. In play on Dam with an SDL virtual Xbox pad and
+the sniper rifle: RB alone `FIRE+H+P` with the N64 Z bit, LB `AIM+H` and
+the context turning `scoped`, RB while LB held `ctx=scoped held=3000
+pressed=1000 FIRE+H+P AIM+H`, d-pad up scoped `ZOOM_IN+H` with the zoom
+running 11.27 -> 7.00, d-pad right `WEAPON_NEXT+H+P`. inputtest's
+modern-pad case 132 -> 139 checks, 0 failed (including the retired
+preset's refusals and the hand-binding mechanism); pad-tune, pad-tune-invert
+and hold-toggle 0 failed; the main run's 22 B-096 failures unchanged.
+
+---
+
+### D-017 — the native menu POINTER is drawn across the CONTENT rect while the hit position stays Rare's, and a click outside the 4:3 image confirms nothing (#65): the widescreen cursor could not reach the window's edges and a click in a side band activated whatever the frozen cursor sat on (native-only presentation, no game state)
+
+- **Date:**        2026-09-21
+- **Phase:**       1
+- **Commit:**      c203b508 (src/gfx/sl_gfx_dl.c placement tag + sl_gfx_content_rect, src/platform/sl_display.c sl_display_pointer_logical, src/native/sl_menu_pointer.c, src/native/sl_watch_pointer.c, src/platform/sl_input.c, one guarded call in src/game/front.c) - Gitea #65, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the front end and the solo watch; the change is in the render and input layers)
+- **First tick:**  n/a - the cursor's DRAWN position is a render fact and the game's own cursor variables are written by the same code as before
+- **Fields:**      none hashed. `cursor_h_pos` / `cursor_v_pos` keep exactly the values they had: they are written only while the pointer is over the 4:3 safe rect, and the game's own 20-unit inset still clamps them.
+- **Toggle:**      none. The drawn cursor follows the pointer only when the MOUSE owns the cursor (`sl_input_pointer_owns`); a pad or keyboard player sees Rare's placement drawn exactly as before, and at the 4:3 aspect the frames are pixel-identical (measured).
+
+**What changed**
+
+Three things that were one variable are named apart: the PHYSICAL POINTER
+(window pixels), the HIT POSITION (Rare's cursor, unchanged) and the
+VISIBLE CURSOR. The cursor's texrect - the front end's red crosshair and
+the watch's reduced one - is now placed anywhere in the #45 CONTENT rect,
+the bands a wider aspect adds included, by a tagged no-op the renderer
+consumes with the next texrect (`C0 'SLC'`, the rect's top-left in signed
+1/4 logical px); that one quad is drawn with the scissor lifted, because
+the level's own [0,10]-[320,230] scissor clipped a crosshair at the top and
+bottom edges. A pointer outside the safe rect hovers nothing (the hit
+position is left where it was, never clamped to an edge) and a left click
+there into a cursor menu is DROPPED instead of confirming.
+
+**Why**
+
+Owner-observed on the v0.2.0 candidate: at any aspect wider than 4:3 the
+red cursor could not reach the visible left / right edges, and in the watch
+the crosshair vanished at the edges. Measured before the change: a probe at
+window (0,360) of 1280x720 drew nothing new and left the cursor at Rare's
+placement, and a probe at (40,360) plus a click produced `menu 6 -> 26` -
+the click activated the row the frozen cursor still sat on. Underneath it,
+a texrect cannot name a position left of logical 0 (E4's corners are
+unsigned) and the game's own `draw_textured_rectangle` clips `xl < 0` to 0,
+so no game-side coordinate could ever have reached the band.
+
+**Why it is safe**
+
+At 4:3 the content rect IS the safe rect and the tag names the corner the
+untagged draw would have had, so the frames are pixel-identical - measured
+against the pre-round binary on the same seed and probes (the baseline, two
+mid-screen probes and a click that opened OPTIONS: identical; the two
+probes inside Rare's 20-unit inset differ only inside the cursor's own box,
+with the same row highlighted in both logs). Every front-end hit test, every
+menu target and the dossier's layout are untouched. src/game gained one
+guarded call in `frontDrawCursor`; front.c preprocesses token-identically
+under `__sgi` (+10 native lines, zero repair tokens). displaytest 171 / 0
+(17 new mapping checks), inputtest's four new click-gate checks pass and
+the main run's 22 B-096 failures are unchanged, test.ps1 300 PASS.
+
+---
+
+### D-016 — the front end's mode-select gains a fourth native row, 4. QUIT GAME (#66), which files the one quit request the frame pump already honours for SDL_QUIT (native-only screen change; the cartridge's three rows are untouched under `__sgi`)
+
+- **Date:**        2026-09-21
+- **Phase:**       1
+- **Commit:**      9b554aec (src/game/front.c native arm, src/platform/sl_window.c sl_quit_request / _requested, src/platform/sl_ultra_shim.c) - Gitea #66, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      n/a (the front end)
+- **First tick:**  n/a
+- **Fields:**      none hashed
+- **Toggle:**      none. The row is present in the native build only; the `__sgi` arm still draws Rare's three rows (and the third only when a cheat is unlocked, as the cartridge does).
+
+**What changed**
+
+`interface_menu06_modesel` / `constructor_menu06_modesel` (native arm) draw
+and hit-test a fourth row under OPTIONS, placed by the menu's own rule: a
+row every 0x20 with its band starting 9 above its text (Rare's 243 / 275
+compares), so text at 0x13C, box 0x13A..0x14A, band from 307, all plus the
+existing `SL_MODESEL_DY` group offset. Confirming it (START / Z / A - what
+a click, Enter and the pad's A all become) plays the menu's own confirm
+sound and calls `sl_quit_request`; the frame pump reads the flag at the
+next frame boundary and takes the path closing the window already took -
+`sl_gfx_shutdown` then `exit(0)` with its atexit work.
+
+**Why**
+
+Owner-observed: at a large resolution or in exclusive fullscreen there was
+no normal way to close the game - no X to click, and a borderless window at
+5120x1440 hides the desktop.
+
+**Why it is safe**
+
+Nothing exits from menu code: a tree-wide grep for exit / _exit / abort /
+ExitProcess over src/game and src/native finds two hits and neither is a
+call. The flag lives with the window's other lifecycle state so the display
+self-test asserts it (5 checks: unset until activated, latching, changing no
+display state, cleared afterwards - the test never calls exit). front.c
+preprocesses token-identically under `__sgi` (+49 native lines, zero quit
+tokens), so the cartridge screen is unchanged. Witnessed by keyboard, mouse
+and a virtual pad, in WINDOWED, BORDERLESS, FULLSCREEN at the desktop's mode
+and FULLSCREEN with a real 2560x1440 mode switch: exit 0 every time, no
+crash, the scratch config's SHA256 unchanged, and the desktop measured back
+at 5120x1440 after each.
+
+---
+
+### D-015 — WINDOW MODE, RESOLUTION and VSYNC (#52): three persisted PC display settings the SDL backend applies to its window and GL context - windowed at a chosen client height, SDL's fullscreen-desktop, or a real exclusive display mode, and the swap interval - live, transactional, under the #45 fit; default WINDOWED / nothing chosen / vsync off = the accepted launch bit for bit (native-only setting, the D-009 class)
+
+- **Date:**        2026-09-20
+- **Phase:**       1
+- **Commit:**      see the #52 backlog entry of the same date (the settings rows, src/platform/sl_window.h/.c, the SDL backend's sdl_apply_display, the DISPLAY tab rows, the watch DISPLAY child rows) - Gitea #52, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the change is the window's, in src/gfx / src/platform; nothing in src/game changed behaviour - options.c / options.h gained native-arm rows only)
+- **First tick:**  n/a - nothing in the simulation reads the window's mode, size or swap interval; the render side reads the framebuffer size at its frame reset exactly as before #52 (the #45 fit), through the one path
+- **Fields:**      none hashed. The renderer's g_window_vp (and the content / safe rects derived from it), the input layer's confinement rectangle, and the pointer layers' safe-rect mapping follow the window as they already did on any size the window had
+- **Toggle:**      `window_mode` (0 WINDOWED / 1 BORDERLESS / 2 FULLSCREEN), `window_width` / `window_height`, `fullscreen_width` / `fullscreen_height` (0 / 0 = not chosen), `vsync` (0 / 1) in the native settings store, **the defaults = exactly the pre-#52 launch** (the launcher's SL_WINDOW_SIZE window at the aspect's width, `SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN`, swap interval 0). Two views of the one store: OPTIONS -> SETTINGS -> DISPLAY (front end: WINDOW MODE, RESOLUTION, VSYNC before ASPECT RATIO and FIELD OF VIEW) and the solo watch's SIGHTLINE -> DISPLAY child. An INACTIVE store (trace replay, headless health) reads the defaults and the backend never consults it.
+
+**What changed**
+
+src/gfx/sl_gfx_sdl.c, `sdl_apply_display` (the successor of #45's
+sdl_apply_aspect, whose width rule it keeps verbatim), once per frame at
+the frame reset and once at init. The editors file a REQUEST through
+src/platform/sl_window.c (a mode, a size of the current mode's list, a
+swap interval); the backend takes it, remembers the working state, asks
+SDL (WINDOWED: SDL_SetWindowFullscreen(0) then SDL_SetWindowSize to the
+chosen height at the aspect's width, re-centred; BORDERLESS:
+SDL_WINDOW_FULLSCREEN_DESKTOP; FULLSCREEN: the chosen pair when the
+display offers it else the desktop's, at the DESKTOP'S refresh rate,
+SDL_SetWindowDisplayMode then SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN)
+- through a windowed hop when the window is already exclusive, measured
+necessary on SDL 2.32.10's windows driver, where a mode change in place
+switches the panel but leaves the HWND's client rectangle; VSYNC:
+SDL_GL_SetSwapInterval on the live context), reads back (the flags, the
+window size, the exclusive mode, the display bounds, the GL drawable, the
+swap interval) and COMMITS to config.ini only what matched, restoring the
+working state otherwise (and the launcher's windowed size should the
+restore fail too); a fallback the backend took for an unsupported stored
+value is logged once and never written. A chosen windowed height creates
+the window at that size; a fullscreen mode creates it hidden and shows it
+once the mode is established. The lists come from the display the window
+is on: the exclusive list its modes deduped by width x height, the
+windowed list the distinct heights that fit the desktop at the aspect's
+width. Nothing else was told: the renderer keeps reading the window from
+GL at its frame reset (sl_gfx_dl.c g_window_vp), the #45 fit keeps
+deriving the content and safe rects, the input layer keeps re-reading the
+size every poll, the pointer layers keep reading the safe rect back - so a
+mode change reaches every consumer once, on the next frame, with no level
+reload, no context recreation and no second copy of the aspect maths.
+
+**Why**
+
+Owner intent (#52): the player chooses the window mode, size and VSync
+from the menus and has it persist, without touching a script; the window
+contract of #45 holds in every mode (the aspect is the shape at the
+current height; a fixed framebuffer FITS - pillarbox or letterbox, never a
+stretch); accepted current behaviour (windowed, the launcher's size, VSync
+off) is the default and a config without these rows behaves as today.
+
+**Why it is safe**
+
+Default identity is asserted against a MEASUREMENT taken before the first
+edit: the 230b4b52 exe on the owner-shaped config through play.ps1's
+launch (client 960x720, window rect 966x749 at (2077,334), style
+0x16ca0000, the `sl_display:` / confinement / aspect lines) and the new
+build on the same config print the same lines byte for byte
+(Compare-Object 0 differences over the 8 lines; the external window probe
+the same numbers; the 16:9 launch the same, 1280x720), the config's hash
+unchanged, `swap=0` read back. The pacing contract is measured unchanged
+with VSync on (SL_PHASE=1: NINTENDO 501 frames in 8.343 s at 60.1 fps vs
+8.345 s at 60.0 off, catchup 0 both) - the swap interval is applied to the
+presentation only, and trace replay (no window) never reaches it. The
+mode transitions are read back from SDL and the OS (the drawable, the
+client rectangle, the monitor rectangle by an external probe) in WINDOWED
+960x720 / 1024x768 / 1067x800 / 1365x768, BORDERLESS 5120x1440 at 4:3 /
+16:9 / 32:9 (the fit 1920x1440 / 2560x1440 / 5120x1440 with the 2D layer
+1920x1440 centred), exclusive 5120x1440 and 2560x1440 (a real mode switch,
+back again), and the rollback path was witnessed on a transition SDL
+reported but the OS did not honour (restored, nothing written). The
+front end's rows and the watch's rows hit at the same logical spot in
+every mode through the existing pointer mapping (SL_POINTER_PROBE), and a
+WINDOWED -> BORDERLESS -> WINDOWED switch from the open watch on Dam kept
+the watch, its hit rects and the level. displaytest 149 / 0 (62 new),
+settingstest 156 / 0 (10 new), inputtest the 22 pre-existing B-096
+failures byte-identical, test.ps1 facility 300 PASS. options.c / options.h
+(the watch rows) preprocess byte-identically to 230b4b52 under __sgi (md5
+c5b3b9864b82 / 89af0a83a899), non-vacuous control, native arms +89 / +11
+lines, zero #52 tokens. `make trace-verify` NOT run (no MIPS toolchain; the
+store is inactive in every replay, no window exists there, and the __sgi
+arms are verbatim).
+
+### D-014 — CROUCH MODE and SPRINT MODE, HOLD or TOGGLE (#56): under an opt-in persisted setting per action, a fresh press of a CROUCH or SPRINT source flips a runtime latch at the platform action layer instead of the level following the control; default HOLD = the pre-#56 behaviour bit for bit (native-only setting, the D-009 class)
+
+- **Date:**        2026-09-20
+- **Phase:**       1
+- **Commit:**      see the #56 backlog entry of the same date (settings rows, the action-layer transform and harness case, the GAMEPLAY tab rows, the watch GAMEPLAY child rows) - Gitea #56, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the transform is the platform action layer's; nothing in src/game changed behaviour - options.c / options.h gained native-arm rows only, and bondview2.c's crouch and sprint consumers are untouched)
+- **First tick:**  n/a under HOLD (nothing moves). Under TOGGLE only the published CROUCH / SPRINT level differs from the raw one - a player input, not a state the harness hashes independently of input
+- **Fields:**      none hashed. The action channels' held mask (sl_action_channels_set) carries the latch in place of the level for the two actions; every other action, the movement channels, the N64 buttons, the registry, the mouse and the menus do not read it
+- **Toggle:**      `crouch_mode` and `sprint_mode` (0 HOLD / 1 TOGGLE) in the native settings store, **default HOLD = exactly the pre-#56 behaviour** (under HOLD sl_action_modes_apply leaves the evaluated state untouched). Two views of the one store: OPTIONS -> SETTINGS -> GAMEPLAY (front end: SPRINT MODE / CROUCH MODE after SPRINT) and the solo watch's SIGHTLINE -> GAMEPLAY child. An INACTIVE store (trace replay, headless health, the input harness's main run) reads HOLD.
+
+**What changed**
+
+src/platform/sl_action.c, `sl_action_modes_apply`, called by sl_input.c
+between the registry evaluation (sl_action_eval) and the publish
+(sl_action_channels_set). Under TOGGLE the action's `held` is replaced by
+ONE runtime latch per action - never per source: Ctrl and the pad's B flip
+the same CROUCH latch, Shift and L3 the same SPRINT latch - that the
+evaluator's own fresh-press edge flips (PRESSED, with the round-6 stale
+rule; no second edge history exists): inactive + press -> active, active +
+next press -> inactive; holding never repeats, releasing never toggles. The
+flip is gated on the publish predicate (live input, no menu), so a press in
+the watch, the front end or an editor never flips, and a control held
+across a menu's close finds its per-slot raw memory already down - no
+stale edge in either direction. The latch is dropped when the action's
+mode changes (HOLD then follows the level; TOGGLE starts OFF and wants a
+release and a fresh press even with a control held through the change),
+when its bindings change (a per-action generation the registry advances on
+every slot write, steal, preset, RESET DEFAULTS and load -
+sl_bindings_generation), when SPRINT ENABLED is off (a disabled sprint
+cannot stay latched; on again does not resume it), at every stage start
+(sl_settings_apply_player_defaults -> sl_action_latch_reset: the front-end
+flow, a restart after death, SL_BOOT_LEVEL; the edge history is kept, so a
+control held across it is not a fresh press), and on a focus loss or
+shutdown (sl_action_reset - no stuck crouch or sprint). The game's
+consumers (bondview2.c:5776 SPRINT, :5783 CROUCH) read the same level bits
+as before and do not know which mode produced them; a toggled sprint may
+stay latched while stationary and applies again when movement resumes
+under the game's own gates, with no invented auto-cancel; a toggled crouch
+is the existing g_sl_crouch_native state driven by a constant level.
+Nothing is persisted but the two modes.
+
+**Why**
+
+Owner intent (#56): Crouch and Sprint each get a HOLD / TOGGLE choice,
+persisted, shown in both editors, with HOLD (today's behaviour) as the
+default - the cartridge's own AIM CONTROL vocabulary. A PC player expects a
+toggled crouch and a toggled sprint from a keyboard; the N64 pad never had
+either. The interpretation belongs to the action layer, where the
+semantics already live, so the game is handed the same level it always
+was.
+
+**Why it is safe**
+
+Default identity is asserted against a MEASUREMENT taken before the
+transform existed: the real sl_input.c / sl_action.c / sl_bindings.c /
+sl_settings.c through the inputtest stubs at 68fd4d1e printed a 92-row
+table (per poll: the physical keys / pad buttons / menu state fed in -> the
+published CROUCH / SPRINT level and edge, the held mask, the four movement
+channels - across press / hold / release on both devices, two sources,
+the watch both directions, a focus loss and the negatives; scratch
+holdtoggle witness-pre.txt) and the same program on the new tree with no
+config prints it byte-identically (Compare-Object: 0 differences). The
+in-game sprint magnitudes are unchanged under HOLD (Surface, the #42
+measurement, the pre-change and post-change binaries: W 2023.1 units per
+240 ticks and 9.693 / tick, W+Shift 2785.9 and 12.978 / tick with spd
+1.729, W+D 2789.0 and 12.885 / tick, W+D+Shift 2789.0 = W+D exactly,
+sprint=1 held-not-applied; the one 2784.8 reading on the pre binary
+repeated as 2785.9 twice and is injection timing). The hold-toggle
+inputtest case pins the semantics (127 checks, 0 failed: the HOLD identity,
+the CROUCH trace OFF / press ON / hold ON ON ON / release ON / idle ON /
+press OFF / hold OFF / release OFF, the second source, keyboard = pad, the
+menu and watch isolation both directions for both actions, the mode
+changes with a control held, the SPRINT trace through stop and resume,
+sprint_enabled off / on / fresh press, both resets, the remap and RESET
+DEFAULTS, the negatives); settingstest 146 / 0; the inputtest main run 219
+with the 22 pre-existing B-096 failures byte-identical; test.ps1 facility
+300 PASS; displaytest 87 / 0. options.c / options.h (the watch rows)
+preprocess byte-identically to 68fd4d1e under __sgi (md5 c5b3b9864b82 /
+89af0a83a899), non-vacuous control, native arms +28 / +7 lines, zero #56
+tokens. `make trace-verify` NOT run (no MIPS toolchain; the store is
+inactive in every replay and the __sgi arms are verbatim).
+
+### D-013 — CONTROLLER LOOK SENSITIVITY, LOOK DEADZONE and MOVE DEADZONE (#51): three persisted values tune the modern pad's sticks at the platform seam - the look pair's gain after the stick layout has routed it, and the inner deadzone of each pair - default 100 / 15 / 15 = the accepted pad arithmetic bit for bit (native-only setting, the D-009 class)
+
+- **Date:**        2026-09-20
+- **Phase:**       1
+- **Commit:**      see the #51 backlog entry of the same date (settings rows, the seam, the PAD tab rows, the watch STICK TUNING child) - Gitea #51, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seam is the platform layer's pad reader; nothing in src/game changed behaviour - options.c / options.h gained native-arm rows only)
+- **First tick:**  n/a at 100 / 15 / 15 (nothing moves). At any other value only the live pad's channel values change - a player input, not a state the harness hashes independently of input
+- **Fields:**      none hashed. The four movement channels (sl_move_channels_set) carry the tuned values; the N64 stick, the buttons, the registry, the mouse and the menus' stick do not read the gain
+- **Toggle:**      `pad_look_sensitivity` (25..200 step 5), `pad_look_deadzone` and `pad_move_deadzone` (0..40 step 1) in the native settings store, **default 100 / 15 / 15 = exactly the pre-#51 arithmetic** (100 / 100.0f is 1.0f; 15 x 5000 / 15 is the compiled SL_PAD_DEADZONE 5000). Two views of the one store: OPTIONS -> SETTINGS -> PAD (front end) and the solo watch's SIGHTLINE -> CONTROLS -> STICK TUNING child. An INACTIVE store (trace replay, headless health, the input harness) reads the defaults.
+
+**What changed**
+
+src/platform/sl_input.c. `pad_axis(raw, dz)` keeps the shape the pad
+reader has always had - per axis (a square zone), the remainder over
+(32767 - dz) so full travel still reaches 1.0, clamped - with the size a
+parameter. read_pad applies the LOOK DEADZONE to the two physical axes the
+STICK LAYOUT routes to turn / pitch and the MOVE DEADZONE to the other two,
+by one roles table (s_stick_roles) that map_pad_modern's routing now reads
+as well, so the deadzone and the routing cannot disagree under SOUTHPAW,
+LEGACY or LEGACY SOUTHPAW. map_pad_modern multiplies the LOGICAL look pair
+(turn, pitch - after the routing, after the deadzone, before the developer
+SL_LOOK_INVERT and before channel()'s +/-70 clamp) by LOOK SENSITIVITY /
+100. The cartridge's own curve on the channel (bondview2.c:6533 turn,
+:6453 pitch: the value over 70, signed-squared, times fovy / 60) is
+untouched: 100 = full stick = the game's full turn rate; a higher percent
+reaches that rate at a smaller deflection and never past it (200 saturates
+from half the remaining travel); the sniper zoom slows the pad through
+fovy / 60 exactly as before; the game's Look Up/Down option still flips
+the pad's pitch game-side. The intent carries the TUNED axes, so the
+last-device-wins arbitration, the menu's digital step and the watch's
+controller picture all see a stick inside its deadzone as neutral. The
+deadzone percent p is p x 5000 / 15 raw SDL units - 15 is the compiled
+5000 exactly, every other value within one percent of p percent of the
+32767-unit travel (0 = no deadzone, 40 = 13333).
+
+**Why**
+
+Owner intent (#51, unblocked by #63's acceptance): the controller's look
+tunable from the menus and persisted - sensitivity and the stick deadzone
+at minimum - with the classic feel as the default. The pad is a native
+producer with no cartridge behaviour to preserve beyond the accepted feel,
+which the defaults reproduce exactly. The move deadzone rides along
+because it is the same compiled constant on the other pair, a drifting
+left stick makes Bond creep, and exposing it is one table row; there is no
+move sensitivity (full stick is the game's full speed).
+
+**Why it is safe**
+
+Default identity is asserted against a MEASUREMENT taken before the seam
+existed: the real sl_input.c through the inputtest stubs at 04b92554
+printed a 230-line transfer table (raw SDL axis -> the snapshot's
+normalized value -> the four channels: both sticks, both signs, the
+boundary raws 4999 / 5000 / 5001, the diagonals, the four stick layouts,
+aiming, the menu; scratch analog witness-pre.txt) and the same program on
+the new tree with no config prints it byte-identically (Compare-Object: 0
+differences). The pad-tune inputtest case pins those numbers (73 checks,
+0 failed, and 73 / 0 again under SL_LOOK_INVERT=1: 20 oracle raws x 7
+probes; 50 -> 35 at full stick, 200 -> 57 at half and 70 from 18884 on,
+25 -> 17; deadzone 30 kills raw 7777 and rescales 16384 to 19, 0 wakes
+5001 to 10, 40 leaves full stick at 70; the four layouts tune the look
+pair only; the d-pad, the bumpers, the mouse's 6.00 degrees, W's 70 and
+the menu stick unchanged). settingstest 134 / 0; modern-pad 124 / 0;
+inputtest main 219 with the 22 pre-existing B-096 failures byte-identical.
+options.c / options.h (the watch rows) preprocess byte-identically to
+04b92554 under __sgi (md5 c5b3b9864b82 / 89af0a83a899), non-vacuous
+control, native arms +63 / +22 lines, zero #51 tokens. `make trace-verify`
+NOT run (no MIPS toolchain; the store is inactive in every replay and the
+__sgi arms are verbatim).
+
+### D-012 — THE D-PAD AND THE BUMPERS IN PLAY (#63 / #64, round 6): the pad's d-pad is four registry sources in play (DEFAULT: up / down ZOOM IN / OUT, left / right PREVIOUS / NEXT WEAPON) and no N64 d-pad bit reaches the game from the pad outside a menu; the two bumpers are contextual sources by the wheel's rule (NEXT / PREVIOUS WEAPON on foot, ZOOM IN / OUT in the scope); a zoom action on a held button zooms for as long as it is held
+
+- **Date:**        2026-09-20
+- **Phase:**       1
+- **Commit:**      see the #63 / #64 round-6 backlog entry of the same date - Gitea #63 / #64, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the platform layer's pad mapping and registry; one native channel getter; nothing in src/game touched)
+- **First tick:**  n/a - player input, not a state the harness hashes independently of input; the store and the action channels are inactive in every replay
+- **Fields:**      none hashed. The d-pad's actions reach the game through sl_action_channels (D-005) as ZOOM_IN / ZOOM_OUT / WEAPON_PREVIOUS / WEAPON_NEXT; the pad's U/D/L/R_JPAD bits are 0 in play (they were the cartridge's C-button aliases under 1.1 Honey: bondview2.c:5427 look, :5495 the scope's zoom, :5419 the digital strafes) and unchanged in a menu
+- **Toggle:**      **none** - an owner request on the modern pad (D-011's only pad), not a change to Rare's code: the game still reads the N64 pad exactly as it did; what the native layer puts on it changed. A player who wants the old d-pad behaviour rebinds: the four directions are ordinary registry sources (pad:DPAD_UP etc.), and an unbound direction does nothing in play. The bumpers' rule is the registry's `ctx` flag on LB / RB (sl_bindings.c g_pad), the same flag the wheel carries; BUTTON LAYOUT BUMPER puts AIM / FIRE on them, which is a plain level (the rule gates only weapon-cycle and zoom rows). The compiled DEFAULT preset changed: RB next weapon + zoom in, LB previous + zoom out, the d-pad as above, Y and R3 unbound (two slots per action); GREEN THUMB's B is CROUCH again.
+
+**What changed**
+
+src/platform/sl_bindings.c: four d-pad sources (tokens pad:DPAD_UP / DOWN /
+LEFT / RIGHT, family label "D-PAD UP" etc.), the `ctx` flag on LB / RB and
+the wheel, `sl_bindings_source_ctx` (a row of a contextual source on a
+weapon-cycle action is PLAY, on a zoom action SCOPED, anything else no
+context) read by the evaluator and the conflict policy in place of the
+wheel-only test, the four presets re-seeded. src/platform/sl_action.c: a
+level row out of its context contributes nothing; the STALE rule (an edge
+needs a live source that went down THIS poll, so leaving the scope with RB
+held does not step the weapon). src/platform/sl_input.c map_pad_modern: the
+pad intent's d-pad bits pass only while a menu is up.
+src/native/sl_action_channels.c: the getter reports a zoom tick while the
+notch pulse runs OR the ZOOM level is held - the cartridge's own C-up feel
+(zoomInFovPersec = 1.0 every tick the button is down; gun.c:1326 divides
+the FOV by 1.1 per tick). Until round 6 R3's ZOOM IN was a two-tick pulse
+per press and read to the owner as doing nothing.
+
+**Consequence for an existing config**
+
+A stored DEFAULT / SOUTHPAW / BUMPER / GREEN THUMB preset re-seeds to the
+new table at the next preset apply; at load a config whose bind. lines
+equal the OLD table no longer matches any preset and reads CUSTOM (the
+row never lies), keeping exactly the bindings it held - RB / Y next weapon,
+LB previous, R3 zoom in - with the d-pad unbound in play (it did the
+Honey C-button aliases before). RESET DEFAULTS or choosing DEFAULT gives
+the new table. A wheel bound by hand to an action outside the two pairs
+(INTERACT, say) now fires in either context and its capture steals both
+the play and the scoped row of that notch; the default wheel table is
+untouched (asserted: wheel up / down scoped and unscoped).
+
+**Why**
+
+The owner's replay with a real Xbox pad and a DualSense (2026-09-20):
+"look and zoom in aren't mapped correctly. D pad isn't used at all, and it
+should be, and zoom in is actually look. To zoom in, we should probably use
+lb and rb. So it zooms when scoping for sniper rifle, and cycles weapons
+when not."
+
+**Why it is safe**
+
+inputtest `modern-pad` 124 / 0 (96 before): each d-pad direction to its
+action with no N64 bit in play and the N64 bit in the watch, the held
+zoom level, RB / LB unscoped -> the cycle and scoped -> the zoom (both
+directions), the stale rule both ways, the d-pad's zoom rows as plain
+levels, the wheel unchanged scoped and unscoped, a key on the cycle
+unchanged in the scope, BUMPER's LB aiming straight through the scope and
+its RT cycling there, the row contexts, the conflict policy on RB, every
+preset re-seeding exactly with a behavioural probe, the label resolver's
+two rows per bumper, the d-pad token and labels. The main run 219 with the
+22 pre-existing B-096 failures byte-identical (218 before: the wheel-onto-
+INTERACT case became two). Witnessed in play on Dam with the sniper rifle
+(the round-6 backlog entry: the action lines). `make trace-verify` NOT run
+(no MIPS toolchain; nothing in src/game changed, the channels are inactive
+in every replay).
+
+### D-011 — THE MODERN PAD IS THE ONLY PAD, and the control style is pinned (#63, round 4): the ORIGINAL / MODERN profile, BUTTON MODE and the N64 CONTROL STYLE setting are gone from the native build; the gamepad is always the dual-stick controller of D-010, the game's control style is 1.1 Honey on every stage start, and which thumb does what is the new STICK LAYOUT and BUTTON LAYOUT settings
+
+- **Date:**        2026-09-20
+- **Phase:**       1
+- **Commit:**      see the #63 round-4 backlog entry of the same date - Gitea #63, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the platform layer's pad mapping and one native apply seam; nothing in src/game changed behaviour outside the native arms)
+- **First tick:**  n/a - player input, not a state the harness hashes independently of input; the store is inactive in every replay
+- **Fields:**      none hashed. The pad's sticks arrive as the channels of D-001/D-002 (which pair on which stick is the STICK LAYOUT), FIRE / AIM as N64 Z / R, the rest through sl_action_channels (D-005); g_CurrentPlayer->cur_player_control_type_0 is CONTROLLER_CONFIG_HONEY in solo play whatever the per-folder save carries
+- **Toggle:**      **none for the removal** - an owner decision, not a rule-5 toggle ("I don't really see a point to hide that behind a profile. Sightline will never get a n64 controller hooked up and we aren't using emulation"). The __sgi build keeps all eight styles and the N64 page verbatim. The two settings that replace the styles: `pad_stick_layout` (0 DEFAULT / 1 SOUTHPAW / 2 LEGACY / 3 LEGACY SOUTHPAW, default DEFAULT = D-010's routing) and `pad_button_layout` (0 DEFAULT / 1 SOUTHPAW / 2 BUMPER / 3 GREEN THUMB / 4 CUSTOM, default DEFAULT = the compiled pad table). Views: the watch's Control Options page (its two rows), the SIGHTLINE -> CONTROLS child, OPTIONS -> SETTINGS -> PAD.
+
+**What changed**
+
+Superseding D-010's toggle. `controller_profile`, `pad_button_mode` and
+`control_style` are retired keys of the settings store (read as unknown
+keys: ignored, never rewritten by a load, dropped on the next
+write-on-change); `map_pad`, `map_pad_dual`, `style_is_dual`, the
+SL_CONTROLS=retro knob and read_pad's fixed-button block are deleted from
+src/platform/sl_input.c and `map_pad_modern` is the one pad mapping; the
+registry's PAD slots are always live. src/native/sl_settings_apply.c
+writes CONTROLLER_CONFIG_HONEY through cur_player_set_control_type at every
+stage start in solo play (the seam that used to apply the store's style),
+so Z is FIRE and R is AIM - what every native binding assumes; the SYNC
+seam no longer mirrors the style. The compiled pad default table is now
+the DEFAULT preset (RT fire, LT aim, RB + Y next weapon, LB previous, A
+interact, X reload, B crouch, L3 sprint, R3 zoom in) - RB, LB and R3
+changed meaning from the #46 CUSTOM layout for anyone who never edited
+them. The watch's Control Options page draws BUTTON LAYOUT / STICK LAYOUT
+in place of CONTROL STYLE / CONTROLLER and, beside the pad, each control's
+family name with the action the live registry holds for it.
+
+**Consequence for an existing config**
+
+A `control_style` line is ignored. A keyboard player who had picked 1.3
+Kissy or 1.4 Goodnight - under which the mouse's Z arrived as AIM and R as
+FIRE - gets the Honey click back: left button FIRE, right button AIM (the
+KBM registry never changed; the game's reading of Z / R did). A
+`controller_profile=0` (ORIGINAL) file gets the modern pad. A
+`pad_button_mode` line changes nothing (the registry was already live
+under MODERN).
+
+**Why**
+
+Owner decision 2026-09-20 (#63, after the round-3 replay with a real Xbox
+pad): no profile, and Sightline's own layouts (Halo CE's Button Layout and
+Stick Layout as the model) in place of the N64 control styles.
+
+**Why it is safe**
+
+inputtest `modern-pad` 96 / 0: the family, the labels, the right and left
+sticks at 10 / 50 / 100 percent and the twelve-point sweep with no C bit,
+each of the four stick layouts routing a four-magnitude probe to the right
+channels (and SOUTHPAW's look pair staying live while aiming), every
+DEFAULT button, each preset seeding the table exactly with a behavioural
+probe, CUSTOM on a hand edit and a preset again on re-seed, RESET reading
+DEFAULT, a mismatched stored preset loading as CUSTOM, the label resolver,
+the physical snapshot, the menu mapping, persistence with none of the
+retired keys, no pad. settingstest 118 / 0 (section 6: an owner-shaped
+round-3 file with the three stale keys loads with every live key intact
+and is not rewritten; section 12: the two layout keys). The main inputtest
+run keeps its 22 pre-existing B-096 failures byte-identical (the ORIGINAL
+identity cases that asserted the deleted path went with it). test.ps1
+facility 300 PASS; options.c / options.h preprocess byte-identically to
+45479b1b under __sgi (md5 c5b3b9864b82 / 89af0a83a899; control differs;
+native arms +75 / +10 lines; zero new tokens). `make trace-verify` NOT run
+(no MIPS toolchain; the store is inactive in every replay, the apply seam
+returns before touching anything there, and the __sgi arms are verbatim).
+
+### D-010 — CONTROLLER PROFILE MODERN (#63): under an opt-in persisted setting the gamepad is a modern dual-stick controller - both sticks reach the game through the four native movement channels (the keyboard/mouse seam, D-001/D-002's), its buttons and triggers through the binding registry, and the watch's Control Options page draws the attached family's own controller; default ORIGINAL = the accepted virtual N64 pad, byte-identical
+
+- **Superseded by:** D-011 (2026-09-20): the profile is gone, MODERN is the only pad path, and the control style is pinned.
+- **Date:**        2026-09-19
+- **Phase:**       1
+- **Commit:**      see the #63 backlog entry of the same date - Gitea #63, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the profile is the platform layer's pad mapping; nothing in src/game changed behaviour outside the native arms)
+- **First tick:**  n/a under ORIGINAL (nothing moves). Under MODERN the pad's sticks arrive as the channels a live keyboard/mouse already publishes and its buttons as the registry's actions - player input, not a state the harness hashes independently of input
+- **Fields:**      none hashed. Under MODERN: moveData.analogWalk/Strafe/Turn/Pitch through sl_move_channels (the D-001/D-002 seam), FIRE/AIM as N64 Z/R exactly as the keyboard's F/Q, the other actions through sl_action_channels (D-005); the N64 stick stays neutral in play and no C-button bit is raised for look
+- **Toggle:**      `controller_profile` in the native settings store, 0 ORIGINAL / 1 MODERN, **default ORIGINAL** (rule 5: the accepted pad behaviour stays the default, and an existing file's `pad_button_mode` keeps its meaning). Two views of the one store: OPTIONS -> SETTINGS -> PAD (front end) and the solo watch's SIGHTLINE -> CONTROLS child (PROFILE). Live on the next poll; changing it rewrites no binding, style or button mode. An INACTIVE store (trace replay, headless, the input harness) reads ORIGINAL.
+
+**What changed**
+
+src/platform/sl_input.c reads the profile every poll (as BUTTON MODE is
+read). Under MODERN `map_pad_modern` replaces `map_pad` / `map_pad_dual`
+for the pad: the left stick becomes walk / strafe and the right stick turn
+/ pitch in the game's own +/-70 unit (`channel()`, the mouse's fallback
+arithmetic: full deflection = 70 = the channel's own maximum, partial
+proportional, after the fixed 5000-unit inner deadzone), published through
+`sl_move_channels_set` when the pad is the owning device - the consumer is
+bondviewProcessInput's NATIVE MOVEMENT seam, which applies Rare's own
+stick curve, ramp, pitch limits and the Look Up/Down option to them. The
+right stick raises no U/D/L/R_CBUTTONS bit and the N64 stick stays neutral
+in play (aim mode's crosshair stays centred, as for the mouse). The linear
+mouse-look channel is not used by the pad (mouse_sensitivity, the scoped
+percent and Invert Mouse Y never touch it). Buttons and triggers feed the
+registry's PAD slots whatever BUTTON MODE says (the accepted #46 CUSTOM
+layout by default; a user's custom pad bindings stand); FIRE / AIM leave as
+the same N64 Z / R the keyboard's F / Q become, Start as START, the d-pad
+as the d-pad; in a menu the left stick is the menu stick, A accepts and B
+goes back. The pad's family (SDL_GameControllerGetType, SDL's mapping
+database - never a product name) labels the editors' pad slots (A / CROSS,
+RT / R2 ...; the persisted token `pad:A` never changes) and picks the model
+the watch draws in place of GjoypadZ on the Control Options page, its parts
+posed from the pad's physical state; no model, a generic pad or ORIGINAL
+draws the N64 page exactly as before.
+
+**Why**
+
+Owner direction (#63): a modern controller plays as a modern dual-stick
+game, with the original experience selectable and unchanged. The control
+styles still decide what Z / R do (the keyboard precedent: FIRE is Z under
+every style, so 1.3 / 1.4 and the 2.3 / 2.4 hands read differently - the
+accepted KBM behaviour, not a new one).
+
+**Why it is safe**
+
+ORIGINAL identity is asserted against HEAD's own platform sources, not
+against this build's expectations: a witness program compiled once against
+the 8891b62e sl_input.c / sl_action.c / sl_bindings.c / sl_settings.c and
+once against the working tree prints, for a fixed set of pad inputs under
+all eight styles (sticks, C-button deflections, A / B / X / Y / LB / RB /
+RT / LT / Start / d-pad / L3, aiming, the menu) plus the keyboard and mouse
+rows, a byte-identical 319-line table (md5 7b6512f7aa27 both, scratch
+modern\witness_head.txt / witness_work.txt). The inputtest `modern-pad`
+case (72 checks, 0 failed) pins the profile default and persistence, the
+family classification, the labels, the ORIGINAL fixed map, the MODERN
+channels at 10 / 50 / 100 percent on both axes and the diagonal, a
+twelve-point sweep with no C bit anywhere (the C-BUTTON NEGATIVE
+CONTROL), the left stick's proportional walk / strafe, the accepted
+defaults on every button and trigger with the 8000 threshold kept, a
+custom pad binding honoured, the menu mapping, the no-pad fallback and a
+live switch both ways. settingstest 120 / 0 (section 12), test.ps1
+facility 300 PASS, inputtest 225 with the 22 pre-existing B-096 failures
+unchanged. options.c / options.h (the watch rows and the page hook)
+preprocess token-identically to 8891b62e under __sgi (control differs,
+native arms +69 / +6 lines, zero #63 tokens). `make trace-verify` NOT run
+(no MIPS toolchain; the store is inactive in every replay and the __sgi
+arms are verbatim).
+
+### D-009 — MOUSE SENSITIVITY and SCOPED SENSITIVITY (#50): two persisted percents scale the live keyboard/mouse look at the one gameplay mouse-look seam, the second only under the game's own adjustable-scope predicate; default 100 / 100 = the accepted look bit for bit (native-only setting, the D-008 class)
+
+- **Date:**        2026-09-19
+- **Phase:**       1
+- **Commit:**      see the #50 backlog entry of the same date (settings rows, the seam, the CONTROL tab rows, the watch CONTROLS rows) - Gitea #50, branch sightline/qol-controls
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seam is the platform layer's mouse gain; nothing in src/game changed behaviour)
+- **First tick:**  n/a at 100 / 100 (nothing moves). At any other value only the live keyboard/mouse look rate changes - a player input, not a state the harness hashes independently of input
+- **Fields:**      none hashed. The linear look channel's degrees (sl_mouse_look_set) and the +/-70 fallback channel scale by the factor; the pad sticks, the watch / front-end / bindings pointers, the buttons and the wheel do not read it
+- **Toggle:**      `mouse_sensitivity` and `scoped_mouse_sensitivity` in the native settings store, percents 10..300 in steps of 10, **default 100 / 100 = exactly the pre-#50 arithmetic** (SL_MOUSE_SENS 6 x 0.025 = 0.15 deg/count; 100 / 100.0f is 1.0f). Two views of the one store: OPTIONS -> SETTINGS -> CONTROL (front end) and the solo watch's SIGHTLINE -> CONTROLS child. An INACTIVE store (trace replay, headless health, the input harness) reads 100 / 100.
+
+**What changed**
+
+`mouse_sens()` in src/platform/sl_input.c multiplies the developer base
+(SL_MOUSE_SENS, default 6) by MOUSE SENSITIVITY / 100 and, while
+`sl_game_scoped_zoom_active` holds (aim mode with an item carrying
+WEAPONSTATBITFLAG_DISABLE_CROUCH - the sniper rifle, the camera; the same
+predicate the wheel's ZOOM context uses, asked once per poll before
+read_mouse and shared), by SCOPED SENSITIVITY / 100. The one factor feeds
+both look axes at the two mouse lines in read_mouse (the fallback channel)
+and the linear publish in sl_input_live_poll (the channel the game
+consumes, bondview2.c). Invert Mouse Y stays the one sign point it was
+(#39), applied before the factor and independent of it. Plain aiming
+without an adjustable scope is not scoped (measured in the game: Q held
+with weapon 5 -> `aim=1 ... scoped=0`).
+
+**Why**
+
+Owner intent (#50): normal and scoped look tunable from the menus, felt
+at once, persisted, identical in both editors. The mouse is a native
+producer with no cartridge behaviour to preserve; the only preservation
+obligation is the accepted feel, which the default reproduces exactly.
+
+**Why it is safe**
+
+Default identity is asserted against a MEASUREMENT taken before the seam
+existed: the real sl_input.c through the inputtest stubs at cc3a418a gave
+dx 40 -> yaw 6.000000 deg (pitch 6.000000 for dy -40, 0.15 for one count,
+scoped identical); the same program on the new tree prints a
+byte-identical table (scratch qol11 witness-pre.txt / witness-post-
+defaults.txt), and the mouse-sens inputtest case pins those numbers
+(30 checks, 0 failed: 50 -> 3.0, 200 -> 12.0, base 200 / scoped 50 ->
+12.0 play / 6.0 scope, 10 / 10 -> 0.6 / 0.06, malformed -> 6.0, invert ON
+at 50 -> pitch -3.0, the watch pointer moves one pixel per count at 50 and
+at 300 / 300, a pad stick deflection is the same N64 stick at 100 / 100 and
+50 / 50). settingstest 111 / 0, displaytest 87 / 0, inputtest 225 with the
+22 pre-existing B-096 failures unchanged, test.ps1 facility 300 PASS.
+options.c / options.h (the watch rows) preprocess byte-identically to
+cc3a418a under __sgi (md5 7bb753c2d90d / 89af0a83a899 both), non-vacuous
+control, native arms +25 / +9 lines, zero #50 tokens. `make trace-verify`
+NOT run (no MIPS toolchain; the store is inactive in every replay and the
+__sgi arms are verbatim).
+
+### D-008 — selectable 4:3 / 16:9 / 21:9 / 32:9 presentation and a FIELD OF VIEW setting (#45): the native renderer widens the 3D view horizontally (vertical composition kept) and, with the slider, zooms the world projection out about the centre; the 2D layer stays a centred 4:3 image at the window's height; the room traversal's draw set follows the wide view while the script and spawn tests keep the 4:3 one; the viewmodel keeps the 60-degree projection; default 4:3 / h16 91 = the accepted presentation, byte-identical
+
+- **Date:**        2026-09-18
+- **Phase:**       1
+- **Commit:**      f73db2c2 (setting + sl_display helper), 057bf539 (renderer), b6b0c4cd (room traversal / 4:3 tests), 5881dc9a (DISPLAY tab); second round the same day: the window-width contract, 21:9, the FIELD OF VIEW row and cap, the viewmodel bracket (see the #45 backlog entries) - Gitea #45, branch sightline/qol-controls
+- **Addendum (same day, owner contract):** the selected aspect is the SHAPE at the CURRENT HEIGHT: in windowed mode the window's width becomes height x aspect (960x720 -> 1280 / 1680 / 2560 x 720; sl_gfx_sdl.c sdl_apply_aspect, live and at the first frame; SL_WINDOW_SIZE names the initial window, the aspect wins on the width); the letterbox / pillarbox fit is for a framebuffer that cannot be resized only. 21:9 is id 3 (append-only: 2 = 32:9 was already in the owner's config). FIELD OF VIEW: `fov_vertical` (hundredths of a degree of the VERTICAL fov, default 6000 = 60.00 = FOV_Y_F exactly, range 3598..7756) displayed and stepped as the 16:9-equivalent horizontal h16 = 2 atan(tan(v/2) 16/9) in whole degrees 60..110 (default 91); applied by the renderer to the world projection only (named by fr.c and bondview2.c, native arms) as clip x,y scaled by s = tan(30)/tan(v_eff/2); total horizontal 2 atan(tan(v/2) ratio) capped at 140 degrees by reducing v_eff (the `sl_display:` line says `cap=engaged`); the crosshair's drawn position follows s about the view centre (gunfire.c gunDrawSight, native arm); the first-person weapon is bracketed by tagged no-ops ('SVM1'/'SVM0', bondview2.c) and keeps the 60-degree projection widened by the aspect only; the sky / sea polygons are drawn through the same zoom with their edge corners pushed back to the edges; the traversal root widens vertically by 1/s as well. The mouse look stays degrees per count (nothing in the game's look path reads the setting); the sniper zoom's own fovy-scaled rate is Rare's. Default: every scale 1.0, byte-identical.
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seams are the renderer's projection / viewport / 2D mapping and bg.c's traversal root)
+- **First tick:**  n/a at 4:3 (no hashed state moves). At 16:9 / 32:9 the props digest (key 0xFFFE) differs from tick 0 of a Facility session: PROPFLAG_ONSCREEN on the props drawn in the bands - a render fact - nothing else
+- **Fields:**      at 16:9 / 32:9: `prop->flags` bit PROPFLAG_ONSCREEN (0x02) for props in the bands; the room_rendered set (wider); the room apertures. NOT: any character entity (65 of 65 identical on 749 ticks), the player, prop positions / object state / door fractions (per-prop detail identical), the AI command list's on-screen tests, spawn placement, CHRFLAG_HAS_BEEN_ON_SCREEN, aim, auto-aim, spread, guard perception
+- **Toggle:**      `aspect_ratio` in the native settings store (`%LOCALAPPDATA%\sightline\config.ini`), **default 0 = 4:3, the accepted presentation exactly as it stood before #45**; 1 = 16:9, 2 = 32:9, 3 = 21:9. Two views of the one state: OPTIONS -> SETTINGS -> DISPLAY on the front end and (2026-09-19, owner request) the solo watch's SIGHTLINE page -> DISPLAY child (ASPECT RATIO, FIELD OF VIEW). Inactive store (trace replay, headless health) and split-screen (two or more players) read 4:3.
+- **Addendum (2026-09-19, watch structure):** the SIGHTLINE watch page (src/game/options.c, native arm only - the __sgi expansion of options.c / options.h is token-identical to 40fbbccb) is a table of VIEWS: the page itself lists GRAPHICS (dimmed, unselectable - nothing ships there yet), GAMEPLAY (SPRINT), DISPLAY (ASPECT RATIO, FIELD OF VIEW) and CONTROLS (INVERT MOUSE Y, BINDINGS - the #46 child moved under it); every child ends in BACK, Escape steps one level up (sl_game_watch_child_open / _back), the ring's L/R belong to the SIGHTLINE page only, and the #40 pointer hit-tests each child's rows by kind. No game-visible state is touched by the restructure: the rows write the same settings-store fields the front end writes.
+
+**What changed**
+
+The player picks a SHAPE. The renderer (src/gfx/sl_gfx_dl.c) fits that
+shape inside the window (content rect; bars, never a stretch), fits the
+logical 4:3 image inside it (safe rect) and takes k = content / safe (1,
+4/3, 8/3). Every projection matrix the display list loads has its clip-space
+x divided by k and the RSP viewport is widened by k about its centre, so the
+4:3 image lands pixel-for-pixel on the safe rect and the bands to either
+side receive the world the 4:3 frustum edge cut off: tan(hfov/2) =
+tan(30 deg) * 4/3 * k, the vertical 60 degrees untouched (horizontal-plus).
+The 2D layer (HUD, watch, front-end text, crosshair, overlays) maps logical
+[0, w] onto the safe rect - centred, unstretched - and backdrops that span
+the whole logical width (fades, the letterbox strips, the sky / sea band)
+are extended to the content edges. The room traversal (src/game/bg.c)
+starts from a root rectangle widened by the same band so the rooms behind
+the bands are drawn; the AI command list's IF-I'M-ON-SCREEN /
+IF-MY-ROOM-IS-ON-SCREEN / IF-ROOM-WITH-PAD-IS-ON-SCREEN, the spawn
+placement test and CHRFLAG_HAS_BEEN_ON_SCREEN read the ORIGINAL 4:3
+rectangle through sl_roomIsOnScreen43 / sl_propIsOnScreen43; the
+consumers whose wrong answer the player would see (animation ticks for
+characters in view, "magic" off-screen travel, slot recycling, scorch /
+impact drawing, hit registration on a drawn character) follow the drawn
+set.
+
+**Why**
+
+Owner requirement (#45): a selectable 4:3 / 16:9 / 32:9 with a genuinely
+wider horizontal view, no stretch, the vertical composition kept, aspect
+separate from resolution. The projection seam is the renderer's because the
+game's projection (fr.c:709, fovy 60 over the 4:3 logical viewport) also
+feeds aim (bondview.c c_scalex), auto-aim (chrprop.c screen bands), spread
+(gunfire.c) and the frustum planes: widening the game's aspect would have
+changed aim-mode angular speed and auto-aim acquisition by k. The traversal
+root is the one game-side seam because a room not reached is not drawn at
+all, and the visible bands showed the fog backdrop where rooms stand
+(measured, Facility catwalk theta 240 / 285 / 300 at 32:9).
+
+**Why it is safe**
+
+At 4:3 (or the store inactive) all three rectangles are the window, k is
+1, the band is 0 and every value is the original's: measured same-pose
+frames (SL_VI_CATCHUP=0, frame 301) on the Facility catwalk, Dam room 121
+and the Surface intro are byte-identical to captures from the pre-#45 exe
+(sha256 EF09C9FB..., 4F8DE0D7..., 7EF5F4AD...). At 32:9 the per-tick
+state traces (SL_TRACE_OUT) of the same Facility session at 4:3 and 32:9
+agree on every character entity and the player on all 749 ticks; the
+props digest differs only by the on-screen bit of props drawn in the
+bands (per-prop detail at tick 200: 4 of 1050 lines, all `flags=04` vs
+`flags=06`). The safe-rect crop of the 16:9 / 32:9 frame against the 4:3
+frame differs by GL sub-pixel rasterisation only (interior: 3.5% of pixels
+by <= 4/255, 100 px by 9-16, max 55 at 3 px; the rest in the outer 12
+columns where the 4:3 frame's own 1-px scissor inset was). __sgi proof over
+the seven src/game files: token-identical expansions, non-vacuous control,
+zero #45 tokens. test.ps1 facility 300 PASS; settingstest 82/82;
+displaytest 53/53; inputtest 225 checks with the 22 pre-existing B-096
+failures unchanged. `make trace-verify` NOT run (no MIPS toolchain; the
+__sgi arms are verbatim and the 4:3 native path is byte-identical).
+
+### D-007 — MODERN presentation (#43 Phase A): every world texture minifies through a box-filtered mip pyramid with 16x anisotropic filtering; default OFF, opt-in through OPTIONS -> SETTINGS -> DISPLAY (native renderer only) — RETIRED / NOT SHIPPED 2026-09-18
+
+- **Status:**      **RETIRED / NOT SHIPPED (2026-09-18).** Owner decision: the
+                   owner compared ORIGINAL against MODERN on Dam and found the
+                   filtering-only MODERN not meaningfully distinguishable, and
+                   does not want to ship a filtering-only Original / Modern
+                   toggle. Removed by forward commit 474f6691 on
+                   sightline/qol-controls (the setting, the accessor and enum,
+                   the DISPLAY tab and row, the cache key / activation branch /
+                   census); src/gfx/sl_gfx_dl.c is byte-identical to its
+                   pre-#43 content (5fce05ed) again, and the Facility same-pose
+                   frame 601 on the retired build is byte-identical to the
+                   pre-#43 baseline capture (sha256 2B45EE02..., 2073600
+                   bytes). Gitea #43 stays OPEN as PARKED / DEFERRED until the
+                   dedicated graphics phase, where Modern is to carry
+                   substantial visible changes (textures, lighting). No pixel
+                   divergence from this entry exists in the tree any more; the
+                   record below is kept as written for what was measured.
+- **Date:**        2026-09-18
+- **Phase:**       1
+- **Commit:**      defaaa42 (renderer seam), 1eda1849 (setting), b0aa67e7 (DISPLAY tab) - Gitea #43; retired by 474f6691
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seam is tex_acquire in src/gfx/sl_gfx_dl.c)
+- **First tick:**  n/a - no hashed state moves; this is texture SAMPLING in the native renderer
+- **Fields:**      none. Pixels only: under MODERN a world texture's GL object
+                   carries GL_LINEAR_MIPMAP_LINEAR, GL_TEXTURE_MAX_ANISOTROPY
+                   and a full pyramid; under ORIGINAL the pre-#43 GL_LINEAR
+                   object, byte-identical frames (measured)
+- **Toggle:**      `presentation_mode` in the native settings store
+                   (`%LOCALAPPDATA%\sightline\config.ini`), **default 0 =
+                   ORIGINAL, the accepted Sightline rendering exactly as it
+                   stood before #43**; read by the renderer through
+                   `sl_presentation_mode()` only. The front end's SETTINGS
+                   page, DISPLAY tab, is its only view.
+
+**What changed**
+
+With the mode at MODERN, `tex_acquire` uploads every 3D world texture
+(outside the two-tile water / mip-lerp family the B-116 enhancement also
+excludes) with a complete box-filtered mip pyramid built from the image it
+actually uploads as level 0 (the B-116 enhanced image or the decoded one),
+trilinear minification and the largest anisotropy the context grants (16x on
+the owner's NVIDIA 4.6 context; absent = trilinear alone). S/T coordinates,
+wrap modes, alpha, the combiner and the geometry are the same in both modes.
+The mode is part of the texture cache key, so a change applies at each
+texture's next resolve - the next frame - with no restart.
+
+**Why**
+
+Owner intent (#43): a player-selectable ORIGINAL / MODERN presentation. The
+first MODERN enhancement had to be visible, renderer-side only, on the
+existing assets, with no simulation change and no dependency: the bounded
+recon found every texture minifying under plain GL_LINEAR at the window's
+resolution (the RDP's own per-pixel LOD selection has no native counterpart
+outside the B-119 far image), so oblique floors, distant gratings and walls
+alias and sparkle. Proper minification is the one fixed renderer state that
+delivers an honest delta today.
+
+**Why it is safe**
+
+`sl_presentation_mode()` answers ORIGINAL whenever the settings store is
+inactive (trace replay and headless never initialise it), the key is
+missing, malformed or out of range; under ORIGINAL `want_modern` is 0, the
+filter / upload statements are the pre-#43 ones and the MODERN-path census
+(resolves this frame / uploads over the run, on the `sl_dl` heartbeat line)
+reads 0/0. Measured (scratch qol6, SL_VI_CATCHUP=0, same teleport pose and
+frame): Facility catwalk frame 601 and Dam intro frame 901 from the pre-#43
+binary (5fce05ed, exe sha256 0CB0F3BE...) and the post-#43 binary are
+byte-identical under ORIGINAL (2073600 bytes each), and differ under MODERN
+(24.95% / 9.91% of pixels). `test.ps1` facility 300 PASS; settingstest
+50/50. No src/game file is touched. `make trace-verify` was NOT run (no MIPS
+toolchain on this host; nothing in the harness's path changed).
+
+### D-006 — native SPRINT (Left Shift, held): the keyboard's movement vector is scaled to the magnitude the cartridge's own 45-degree diagonal already reaches, never more; default OFF, opt-in through OPTIONS -> SETTINGS -> GAMEPLAY (live keyboard/mouse only)
+
+- **Date:**        2026-09-18
+- **Phase:**       1
+- **Commit:**      (this change) - Gitea #42
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seam is in bondviewProcessInput)
+- **First tick:**  n/a - no hashed state moves under replay or headless (below)
+- **Fields:**      none under the harness. Under LIVE keyboard/mouse, with the
+                   setting ON and Left Shift held: `speedforwards` and
+                   `speedsideways` are scaled by one common factor after
+                   :6063 (after the +/-1 clamps and 1.08 * speedboost)
+- **Toggle:**      `sprint_enabled` in the native settings store
+                   (`%LOCALAPPDATA%\sightline\config.ini`), **default 0 =
+                   the cartridge's movement; Left Shift does nothing**. The
+                   front end's SETTINGS page, GAMEPLAY tab, and (since
+                   2026-09-18, #44) the solo watch's SIGHTLINE page are its two
+                   views, both through sl_sprint_enabled / _set - one state.
+                   Rule 5's shape exactly: an intentional behaviour change
+                   behind a runtime toggle defaulting to original behaviour.
+
+**What changed**
+
+An eighth native action, SPRINT (`src/platform/sl_action.h`, a LEVEL bound
+to Left Shift in the default table, published through the action channels
+regardless of the setting), and one block in `bondviewProcessInput`
+(`src/game/bondview2.c`, "NATIVE SPRINT", right after `speedforwards *=
+speedboost`): with the key held, the setting ON, the keyboard channels applied
+this tick, not aiming, standing (crouchpos == CROUCH_STAND) and the vector
+non-zero, the pair (F, 1.08 * S) is scaled so its magnitude equals this
+tick's `|(1.08 * speedboost, 1.08)|` - the magnitude W+D already produces -
+and never beyond it (a request already at or above the cap is left alone, so
+W+D+Shift equals W+D exactly). The 1.08 is MEASURED, not assumed: 7.79 world
+units per tick per unit of `speedforwards` against 8.42 per unit of
+`speedsideways` (ratio 1.081), i.e. Rare's own 1.08 at :6062 is what makes
+the un-boosted forward speed equal the strafe speed. Straight-line Sprint is
+therefore 11.90 units/tick un-boosted (= sqrt(2) * 8.41, the diagonal's) and
+13.47 fully boosted (= |(10.52, 8.42)|, the boosted diagonal's).
+
+**Why**
+
+Owner direction (#42): an optional Sprint on Left Shift for players who want
+it, off by default, and explicitly NOT an emulation of the diagonal-running
+trick - "its own, explicit speed change" whose hard upper bound is what the
+game already allows to a player holding W+D.
+
+**Why it is safe**
+
+`sl_action_channels_get` returns 0 for every headless run and every recorded
+replay, `sl_sprint_enabled` answers the table default 0 while the settings
+store is inactive (replay and headless never initialise it), and the block is
+further gated on `g_sl_channels_live`, so it is inert under the trace harness
+and for a controller by construction. The `__sgi` arms of `bondview2.c`,
+`front.c` and `bondconstants.h` preprocess byte-identically to master
+(362607 b, 305088 b, 379103 b; positive controls differ; zero native tokens
+in the `__sgi` expansions). Measured on Surface (280 ticks of held keys, eye
+position per tick, scratch qol5): W 2443.9 units, W+D 3203.1, W+Shift 2785.9
+over the first 240 ticks against W+D's 2789.0 (ratio 0.999, straight,
+dz = 0.0), W+D+Shift 2789.0 = W+D exactly (every 40-tick segment identical);
+with the setting OFF, W+Shift = W to the unit. `test.ps1` facility 300 PASS.
+`make trace-verify` was NOT run (no MIPS toolchain on this host).
+
+### D-005 — native ACTIONS: interact, reload, crouch, weapon previous/next and scope zoom reach the game as semantics from a keyboard and wheel, beside the N64 button path (live keyboard/mouse only)
+
+- **Date:**        2026-09-17
+- **Phase:**       1
+- **Commit:**      (this change) - Gitea #38
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seams are in bondviewProcessInput and lvlRender)
+- **First tick:**  n/a - no hashed state moves under replay or headless (below)
+- **Fields:**      none under the harness. Under LIVE keyboard/mouse only:
+                   moveData.btap / weaponBackOffset / weaponForwardOffset /
+                   crouchDown / crouchUp / zoomIn,OutFovPersec, and the two
+                   reload calls, are raised by native actions in addition to
+                   the pad
+- **Toggle:**      none needed by rule 3's own terms: the cartridge had no
+                   keyboard, so there is no original keyboard behaviour being
+                   overridden. The pad path is byte-for-byte untouched and
+                   remains the original behaviour for a controller.
+
+**What changed**
+
+Seven native actions (`src/platform/sl_action.h`) - INTERACT, RELOAD, CROUCH,
+WEAPON_PREVIOUS, WEAPON_NEXT, ZOOM_IN, ZOOM_OUT - bound by default to E, R,
+Left Ctrl, 1, 2 and the mouse wheel, are published per poll through
+`src/native/sl_action_channels.c` (held mask + accumulated edges + a zoom pulse
+counted in game ticks) and consumed at two seams:
+
+- `bondviewProcessInput` (`src/game/bondview2.c`, "NATIVE ACTIONS", after the
+  movement seam and under the same gates): INTERACT sets `moveData.btap` like
+  a B edge, so Rare's tank enter/exit runs verbatim, and marks the press
+  interact-only; after Rare's btap block the mark takes `field_D0` and clears
+  it. RELOAD raises a flag of its own. WEAPON_PREVIOUS/NEXT set
+  `weaponBackOffset` / `weaponForwardOffset`. CROUCH (hold) sets `crouchDown`
+  while held and `crouchUp` once released, both refused by the same
+  `WEAPONSTATBITFLAG_DISABLE_CROUCH` test as :5375. ZOOM_IN/OUT set
+  `zoomIn/OutFovPersec = 1.0f` for each tick of the pulse (2 ticks per
+  notch, x1.21), under the same aiming + stat-bit test as :5359.
+- `lvlRender` (`src/game/lv.c`, beside :756): the interact-only press calls
+  `bond_interact_object()` and ignores its return (E in front of nothing does
+  nothing); the reload press calls `attempt_reload_item_in_hand` for both
+  hands without consulting `bond_interact_object` (R in front of a door leaves
+  the door alone).
+
+E no longer raises N64 B and R no longer raises N64 A; Space still raises B.
+The wheel in play cycles weapons, or zooms while aiming with a weapon that
+carries the 0x8000 stat bit (`sl_game_scoped_zoom_active`); in a menu it is
+still the stick pulse.
+
+**Why**
+
+Owner direction (#38): the cartridge folds use and reload into one contextual
+button, puts crouch inside aim mode and reaches the previous weapon with a
+two-button chord. A PC player expects E, R, Ctrl and a wheel that each do one
+thing, and none of those can be expressed by synthesising N64 buttons without
+also triggering the button's contextual behaviour - E would reload when
+nothing was there, R would activate the door in front of Bond.
+
+**Why it is safe**
+
+`sl_action_channels_get` returns 0 for every headless run and every recorded
+replay - the channels are published only by the live poll, gated on
+`sl_live_input_active()` and on no menu being up, and no replay sidecar exists
+for them - so both game blocks are inert under the trace harness by
+construction. The `__sgi` arms of `bondview2.c` and `lv.c` preprocess
+byte-identically to master (362607 b == 362607 b, 57879 b == 57879 b;
+positive controls differ; zero `sl_action`/`sl_bond_pressed`/`SL_ACTCH`
+tokens in the `__sgi` expansion). The pad does not come through the action
+table (no gamepad rows by default), so a controller's B/A/X and aim + C-down
+behave exactly as before. `test.ps1` facility 300 PASS; live evidence in
+docs/backlog.md (2026-09-17, #38). `make trace-verify` was NOT run (no MIPS
+toolchain on this host).
+
 ### D-004 — props are fully visible until the near-fog visibility cull; the translucent distance-fade band is removed (owner-requested presentation)
 
 - **Date:**        2026-09-15

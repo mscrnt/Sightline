@@ -1,0 +1,68 @@
+{
+ "asset_id": "controllers.dualsense",
+ "family": "PlayStation",
+ "provenance": "THIRD-PARTY, CC-BY-4.0 - NOT Sightline-authored, NOT CC0.",
+ "third_party": {
+  "title": "Playstation 5 Dualsense",
+  "author": "AHarmlessPotato",
+  "author_url": "https://sketchfab.com/AHarmlessPotato",
+  "source_url": "https://sketchfab.com/3d-models/playstation-5-dualsense-878c1f882808477ab81c2fe86d5a3936",
+  "license": "CC-BY-4.0",
+  "license_url": "http://creativecommons.org/licenses/by/4.0/",
+  "attribution": "This work is based on \"Playstation 5 Dualsense\" (https://sketchfab.com/3d-models/playstation-5-dualsense-878c1f882808477ab81c2fe86d5a3936) by AHarmlessPotato (https://sketchfab.com/AHarmlessPotato) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)",
+  "changes": "mesh split into one node per physical control with pivots; re-based into the GoldenEye joypad model frame (GjoypadZ) and scaled to its 788-unit width; normal / metallic-roughness / emissive maps dropped; base-colour textures resized to 1024 px and re-encoded as PNG; manufacturer logos removed (button symbols and letters kept); the four face-button symbols (cross, circle, triangle, square) on the button-top tile darkened and thickened by script (tools/asset/darken_symbols.py, see sightline_edits); the button-top material given alphaMode MASK (cutoff 0.5) so its clear-coat layering no longer hides the symbols (see sightline_edits); compiled to Sightline's native .slmodel format with a part table"
+ },
+ "sightline_edits": {
+  "textures/dualsense_basecolor_1.png": {
+   "date": "2026-09-20",
+   "why": "the symbols were 2..3-texel grey (RGB 159) strokes on the lilac button tops (RGB 231/225/237) and vanished into plain discs at the watch page's ~12 px buttons and ~13 px icons (#63 / #64 round 6)",
+   "script": "tools/asset/darken_symbols.py dualsense",
+   "regions": { "cross": [585, 165, 634, 215], "circle": [653, 370, 701, 417], "triangle": [684, 450, 729, 490], "square": [11, 563, 63, 616] },
+   "rule": "inside each region a texel with luminance 120..205 and channel spread <= 16 is the stroke; the stroke is dilated 3 texels (a disc), at most 6 texels outside the region, onto texels lighter than 205 only; every mask texel is painted RGB 56/56/64, alpha kept; 5080 texels painted, nothing else touched",
+   "source_sha1": "826BA223BB4FF36AEE21B421A14C34522C26C693",
+   "sha1": "93951E60ABD4A125F56C6980D669CB3A02665DF6"
+  },
+  "dualsense.gltf materials[dualsense_mat1]": {
+   "date": "2026-09-20",
+   "why": "the tile's alpha channel is the author's clear-coat layering - each face button carries a cap at alpha ~51 over the symbol face at alpha ~150-160, and 268,847 texels (26%) of the tile are below 128 - exported with no alphaMode, i.e. OPAQUE, so the caps drew solid and hid the symbols and the d-pad arrows (measured on the page: plain discs even with the darkened strokes compiled in)",
+   "change": "alphaMode MASK, alphaCutoff 0.5 (the renderer's alpha test, src/gfx/sl_gfx_dl.c); BLEND was tried and shows depth-order artefacts (a black button); nothing else in the material changed",
+   "effect": "the symbols and the d-pad arrows read on the page's pad and icons; no other visible change on the page"
+  }
+ },
+ "authored_parts": {
+  "btn_ps": "plain btn_ps replacing the original logo-shaped part"
+ },
+ "authored_parts_note": "These parts are the project owner's own replacement geometry (manufacturer logos removed); everything else in the mesh and every texture is the third party's CC-BY-4.0 work as changed above.",
+ "debranding": "btn_ps: the logo-shaped button (all five shells) replaced by an owner-authored plain oval covering the logo-shaped recess so no outline shows through (extras.sl_authored_part on the node); tile 1002 (textures/dualsense_basecolor_2.png): the manufacturer wordmark painted out with the surrounding colour (the tile is now one flat colour, zero dark pixels).",
+ "frame": "GjoypadZ: +x = player's right, +y = up toward the watch camera, -z = the top edge; N64 body 788 x 253 x 836; fitted to width 788",
+ "fitted_width": 788.0,
+ "parts": {
+  "body": "BODY",
+  "stick_l": "LEFT_STICK",
+  "stick_r": "RIGHT_STICK",
+  "dpad": "DPAD",
+  "btn_cross": "FACE_SOUTH",
+  "btn_circle": "FACE_EAST",
+  "btn_square": "FACE_WEST",
+  "btn_triangle": "FACE_NORTH",
+  "l1": "LEFT_SHOULDER",
+  "r1": "RIGHT_SHOULDER",
+  "l2": "LEFT_TRIGGER",
+  "r2": "RIGHT_TRIGGER",
+  "btn_options": "MENU",
+  "btn_create": "BACK",
+  "btn_ps": "GUIDE",
+  "btn_mute": "MUTE",
+  "touchpad": "TOUCHPAD"
+ },
+ "parts_note": "package node label (extras.sl_part) -> canonical physical part (tools/asset/gltf_import.py PARTS); physical controls only, never actions",
+ "source_oracle_sha1": {
+  "textures/dualsense_basecolor_0.png": "900FDBFD0D0309317ED77C3D6388E97ABD3C22D3",
+  "textures/dualsense_basecolor_1.png": "826BA223BB4FF36AEE21B421A14C34522C26C693",
+  "textures/dualsense_basecolor_2.png": "7829DC0D5575E96014CFDF17BFAA82CB3DD7E3C1",
+  "controller_dualsense.bin": "566D62777C63684A9B856B8204C4CD29965B9301",
+  "controller_dualsense.gltf": "CC76F4C9E1B5FE3404E4B818E9C96BEA8B8DCFF4"
+ },
+ "source_oracle_note": "sha1 of the owner's staged package files as received (2026-09-19); the .bin and textures/dualsense_basecolor_0.png / _2.png are committed verbatim, the .gltf's extras were rewritten, and textures/dualsense_basecolor_1.png carries the scripted symbol edit recorded under sightline_edits (its current sha1 there; the oracle above is the file as received)",
+ "texture_refs": {}
+}

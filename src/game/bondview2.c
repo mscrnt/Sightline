@@ -4776,6 +4776,137 @@ static s32 g_sl_frozen_input = 0;
  * be overwritten by the block that runs after it.
  */
 static s32 g_sl_channels_live = 0;
+
+/* sl_action_channels_get - the native ACTION channels (src/native/
+ * sl_action_channels.c): gameplay semantics a PC player has keys for and the
+ * N64 pad has no button for. Declared locally, inside this same #ifndef __sgi,
+ * for the reasons sl_move_channels_get is. Bits, in enum order:
+ *
+ *     0 INTERACT   1 RELOAD   2 CROUCH   3 WEAPON_PREVIOUS   4 WEAPON_NEXT
+ *     5 ZOOM_IN    6 ZOOM_OUT
+ *
+ * `held` is a level, `pressed` an edge mask accumulated since the previous
+ * tick; zoom_in / zoom_out are 0/1 for THIS tick of a notch's pulse. The call
+ * CONSUMES, so it is made on every pass through bondviewProcessInput - frozen
+ * or not - and the result is applied only when the movement seam's own gates
+ * hold. An edge that arrives during an intro camera, with the watch up or
+ * with Bond dead is therefore dropped, never banked for the first live tick.
+ * Returns 0 for every headless run, every recorded replay and every menu
+ * frame, and the block below then does nothing. */
+extern int sl_action_channels_get(u32 *held, u32 *pressed,
+                                  s32 *zoom_in, s32 *zoom_out);
+
+#define SL_ACTCH_INTERACT         (1u << 0)
+#define SL_ACTCH_RELOAD           (1u << 1)
+#define SL_ACTCH_CROUCH           (1u << 2)
+#define SL_ACTCH_WEAPON_PREVIOUS  (1u << 3)
+#define SL_ACTCH_WEAPON_NEXT      (1u << 4)
+#define SL_ACTCH_SPRINT           (1u << 7)
+
+/* NATIVE SPRINT (#42) - the Gameplay setting and the two facts the seam
+ * below keeps between the action block and the speed block of the same
+ * bondviewProcessInput pass.
+ *
+ * sl_sprint_enabled - the persisted `sprint_enabled` row of the native
+ * settings store (src/native/sl_settings_apply.c), 0 unless the player
+ * turned it on in OPTIONS -> GAMEPLAY. Declared locally for the reasons
+ * sl_action_channels_get is. With the store inactive (every headless run,
+ * every replay) it answers 0 and the seam is inert.
+ *
+ * g_sl_sprint_held - SPRINT is a LEVEL in the action channels; this is that
+ * level AND the setting AND the action block's own gates, all true on this
+ * tick. Written on every pass (0 first), read once by the speed block.
+ *
+ * g_sl_sprint_applied - did the speed block actually scale the vector this
+ * tick (held, on foot, not aiming, standing, moving)? Read-only diagnostics
+ * through sl_bond_sprint_state, for the SL_INPUT_DEBUG witness. */
+extern int sl_sprint_enabled(void);
+static s32 g_sl_sprint_held = 0;
+static s32 g_sl_sprint_applied = 0;
+
+/* WHAT SPRINT IS, and why it is a vector-magnitude rule (owner spec, #42).
+ *
+ * The keyboard's walk and strafe channels arrive at +/-70 each and are
+ * consumed PER AXIS (:6011 strafe/70 and :6030 walk/70, each clamped to
+ * +/-1 at :6042-6060) - a SQUARE, not a circle. So W+D is the vector
+ * (1.08 * speedboost, 1.0) and its displacement exceeds W's; that is the
+ * cartridge's own diagonal running, and it is the HARD UPPER BOUND Sprint is
+ * defined against: Sprint straight = the magnitude the existing 45-degree
+ * diagonal already reaches, never more. The two components are NOT
+ * isotropic in world units: forward displacement is the head animation's
+ * root motion scaled by percent_speed (bheadUpdate, bondhead.c:279-290),
+ * sideways is speedsideways * speedMultiplier * 0.5 added directly
+ * (:7645). SL_SPRINT_Q below is the MEASURED ratio of those two gains
+ * (world units per unit of speedsideways over world units per unit of
+ * speedforwards) so that the rule works in world magnitudes:
+ *
+ *     req  = | (F, Q*S) |                         the requested magnitude
+ *     cap  = | (1.08 * speedboost, Q * 1.0) |     this tick's W+D magnitude
+ *     if held and 0 < req < cap:  F *= cap/req;  S *= cap/req
+ *
+ * MEASURED 2026-09-18 (Surface, teleported to the start pad, 280 ticks of
+ * held keys, eye position per tick; scratch qol5 A/B/E): forward 8.41
+ * units/tick at F = 1.08 and 10.52 at F = 1.35 (7.79 per unit F, linear
+ * through the run-up); sideways 8.39-8.47 units/tick at S = 1.0 (8.42 per
+ * unit S); W+D 11.85-12.07 unboosted = sqrt(8.41^2 + 8.42^2) = 11.90, at 45.0
+ * degrees, and 13.47 boosted at 38.7 degrees. The ratio of the gains is
+ * 8.42 / 7.79 = 1.081: Rare's own 1.08 at :6062 is what makes the
+ * un-boosted forward speed equal the strafe speed, so Q IS that constant
+ * and the sprint magnitudes are sqrt(2) * 1.08 = 1.527 (in F units)
+ * un-boosted and sqrt(1.35^2 + 1.08^2) = 1.729 fully boosted: 11.90 and
+ * 13.47 units/tick, the two diagonal figures above, never more.
+ *
+ * Direction is preserved by construction (one scalar on both components);
+ * W+D is already AT cap (req == cap) and is left alone, so W+D+Shift equals
+ * W+D exactly; W+Shift and A+Shift reach cap and stay straight / pure
+ * sideways. The cap uses THIS tick's speedboost, so during Rare's run-up
+ * W+Shift ramps exactly as W+D does and never leads it - and a pure sideways
+ * Sprint, which never builds the run-up (:6032 needs analogWalk > 60), is
+ * capped at the un-boosted diagonal, 11.90. A channel multiply would have
+ * been neutralised by the +/-1 clamps, which is why the rule sits after
+ * them, after :6063, and scales the two scalars the physics reads. */
+#define SL_SPRINT_Q 1.08f
+
+/* The two semantics the cartridge folds into B, separated for lvlRender.
+ *
+ * On the cartridge a B edge sets moveData.btap; bondviewProcessInput turns
+ * that into tank exit / tank entry / field_D0 = 1 (:5583-5653), and
+ * lv.c:756 reads field_D0 as "B was pressed", calls bond_interact_object()
+ * and RELOADS when that returns TRUE, i.e. when nothing was there to
+ * interact with. Native INTERACT (E) must interact and never reload; native
+ * RELOAD (R) must reload and never interact. So:
+ *
+ *   INTERACT sets moveData.btap exactly as B does, so that Rare's tank
+ *   branches run verbatim (entering and leaving the tank ARE interactions),
+ *   and marks the press with g_sl_interact_only. After Rare's block, the
+ *   native block at the btap consumer takes field_D0 - which is 1 only when
+ *   neither tank branch ran - into g_sl_interact_pressed and CLEARS field_D0,
+ *   so lv.c's contextual line sees no press. lv.c's own native block then
+ *   calls bond_interact_object() and ignores its return.
+ *
+ *   RELOAD sets g_sl_reload_pressed; lv.c's native block reloads both hands
+ *   from it, never consulting bond_interact_object.
+ *
+ * Same lifetime as field_D0: written on every tick here, read once in
+ * lvlRender through the two accessors at the end of this file. */
+static s32 g_sl_interact_only = 0;
+static s32 g_sl_interact_pressed = 0;
+static s32 g_sl_reload_pressed = 0;
+
+/* Native CROUCH is HOLD-TO-CROUCH: Bond is down while the key is down and
+ * stands when it is released. That is the cartridge's own shape - aim +
+ * C-down held puts him down (:5375-5377) and, still aiming, releasing it
+ * raises him (:5379-5381, crouchUp is true whenever C-up is NOT held) - minus
+ * the aim requirement, which a PC crouch key does not have. What is NOT
+ * copied is the cartridge's quirk that leaving aim mode while down leaves
+ * Bond down until the next aim; that quirk is a consequence of crouch living
+ * inside aim mode, and it is left exactly as it is FOR THE PAD by raising
+ * crouchUp only for a crouch this key put him into (this flag), never for one
+ * the pad's aim + C-down did. Heights, the SQUAT/HALF/STAND states, the
+ * +/-2 step, the speed penalty and the cannot-crouch weapons all stay Rare's:
+ * the key writes the same two moveData flags the buttons write and nothing
+ * else, and is refused by the same stat-bit test. */
+static s32 g_sl_crouch_native = 0;
 #endif
 
 /**
@@ -5576,6 +5707,109 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
             g_sl_channels_live = 1;
         }
     }
+
+    /* NATIVE ACTIONS - the second seam, beside the first and gated the same
+     * way. Each action writes the SAME moveData flag the style branches above
+     * write for the equivalent button combination, so every consumer below -
+     * the btap block, currentPlayerAdjustCrouchPos at :5908, the zoom calls at
+     * :5694, backstep/advance_through_inventory at :6329 - runs Rare's code on
+     * Rare's flags and nothing downstream knows a keyboard was involved.
+     *
+     *   INTERACT  -> moveData.btap (+ g_sl_interact_only; see the declaration)
+     *   RELOAD    -> g_sl_reload_pressed, read by lvlRender
+     *   CROUCH    -> moveData.crouchDown while held / crouchUp after, both
+     *                refused by the cannot-crouch stat bit exactly as :5375
+     *   WEAPON_*  -> moveData.weaponBackOffset / weaponForwardOffset
+     *   ZOOM_*    -> moveData.zoomIn/OutFovPersec = 1.0f for this tick of the
+     *                pulse, under the same aiming + stat-bit test as :5359
+     *
+     * The remote-mine detonate combination (:5389) is a PAD combination
+     * (weapon-cycle button held while B is pressed) and is untouched: the
+     * native actions never raise a button, so it cannot arm from here.
+     *
+     * Player 0 only: live keyboard and mouse are the first player, and the
+     * read consumes, so a second player's pass must neither apply nor eat it. */
+    {
+        u32 sl_held = 0, sl_pressed = 0;
+        s32 sl_zoom_in = 0, sl_zoom_out = 0;
+        s32 sl_have;
+
+        g_sl_interact_only = 0;
+        g_sl_reload_pressed = 0;
+        g_sl_sprint_held = 0;
+        g_sl_sprint_applied = 0;
+
+        sl_have = (g_CurrentPlayer == g_playerPointers[0])
+            && sl_action_channels_get(&sl_held, &sl_pressed, &sl_zoom_in, &sl_zoom_out);
+
+        if (sl_have
+            && g_sl_frozen_input == 0
+            && g_CurrentPlayer->watch_animation_state == WATCH_ANIMATION_0x0
+            && g_CurrentPlayer->bonddead == FALSE
+            && lvlGetControlsLockedFlag() == 0
+            && disablePlayerActionsWhenPausedOrInMpMenu())
+        {
+            if (sl_pressed & SL_ACTCH_INTERACT)
+            {
+                moveData.btap = 1;
+                g_sl_interact_only = 1;
+            }
+
+            if (sl_pressed & SL_ACTCH_RELOAD)
+            {
+                g_sl_reload_pressed = 1;
+            }
+
+            if (sl_pressed & SL_ACTCH_WEAPON_PREVIOUS)
+            {
+                moveData.weaponBackOffset = 1;
+            }
+
+            if (sl_pressed & SL_ACTCH_WEAPON_NEXT)
+            {
+                moveData.weaponForwardOffset = 1;
+            }
+
+            /* SPRINT: the level, gated by the Gameplay setting here and by
+             * the locomotion state at the speed block (:6065 onward). Never
+             * a button, never a stick value, never motion on its own. */
+            if ((sl_held & SL_ACTCH_SPRINT) && sl_sprint_enabled())
+            {
+                g_sl_sprint_held = 1;
+            }
+
+            if (bondwalkItemCheckBitflags(getCurrentPlayerWeaponId(GUNRIGHT), WEAPONSTATBITFLAG_DISABLE_CROUCH) == 0)
+            {
+                if (sl_held & SL_ACTCH_CROUCH)
+                {
+                    moveData.crouchDown = 1;
+                    g_sl_crouch_native = 1;
+                }
+                else if (g_sl_crouch_native)
+                {
+                    moveData.crouchUp = 1;
+                    if (g_CurrentPlayer->crouchpos == CROUCH_STAND)
+                    {
+                        g_sl_crouch_native = 0;
+                    }
+                }
+            }
+
+            if ((bondwalkItemCheckBitflags(getCurrentPlayerWeaponId(GUNRIGHT), WEAPONSTATBITFLAG_DISABLE_CROUCH))
+                && g_CurrentPlayer->insightaimmode)
+            {
+                if (sl_zoom_out)
+                {
+                    moveData.zoomOutFovPersec = 1.0f;
+                }
+
+                if (sl_zoom_in)
+                {
+                    moveData.zoomInFovPersec = 1.0f;
+                }
+            }
+        }
+    }
 #endif
 
     g_CurrentPlayer->field_D0 = 0;
@@ -5651,6 +5885,22 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
             g_CurrentPlayer->field_D0 = 1;
         }
     }
+#ifndef __sgi
+    /* NATIVE INTERACT, second half. field_D0 is 1 here only when Rare's block
+     * above took neither tank branch - the press is an on-foot use. Carry it
+     * to lvlRender under its own name and clear field_D0, so the contextual
+     * use-or-reload line at lv.c:756 sees no press: E interacts, and when
+     * nothing is there it does NOTHING, which is the owner's boundary. A B
+     * press on the same tick is folded in as an interact-only press; that
+     * costs the B press its reload fallback for that one tick and nothing
+     * else. See g_sl_interact_only. */
+    g_sl_interact_pressed = 0;
+    if (g_sl_interact_only)
+    {
+        g_sl_interact_pressed = g_CurrentPlayer->field_D0;
+        g_CurrentPlayer->field_D0 = 0;
+    }
+#endif
 
     if (moveData.invertPitch == 0)
     {
@@ -5887,6 +6137,47 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
         g_CurrentPlayer->speedforwards *= 1.08f;
         g_CurrentPlayer->speedforwards *= g_CurrentPlayer->speedboost;
 
+#ifndef __sgi
+        /* NATIVE SPRINT (#42) - the consumed movement seam. Both scalars are
+         * final here: clamped to +/-1 per axis, 1.08 * speedboost applied.
+         * Everything the physics does with them (crouch halving at :6862 in
+         * MoveBond, the animation pick, breathing, the collision step) runs
+         * after this, on Rare's code, unaware. See SL_SPRINT_Q above for the
+         * rule. Gates, each one a real restriction:
+         *   g_sl_sprint_held      Shift down AND the setting ON AND the action
+         *                         block's gates (frozen, watch, dead, locked,
+         *                         paused) held this tick
+         *   g_sl_channels_live    the keyboard/mouse channels were APPLIED
+         *                         this tick - the pad never sprints, whatever
+         *                         the keyboard is doing
+         *   insightaimmode == 0   aim mode's own locomotion restriction (walk
+         *                         and strafe are withheld while aiming, :5633)
+         *   crouchpos == STAND    Sprint never raises a crouched speed; the
+         *                         cartridge halves SQUAT at :6862 and this
+         *                         refuses HALF and SQUAT alike
+         *   req > 0               Sprint cannot create motion by itself
+         * Not gated on firing: the cartridge has no fire-speed rule, so none
+         * is invented here. */
+        if (g_sl_sprint_held
+            && g_sl_channels_live
+            && g_CurrentPlayer->insightaimmode == 0
+            && g_CurrentPlayer->crouchpos == CROUCH_STAND)
+        {
+            f32 sl_f = g_CurrentPlayer->speedforwards;
+            f32 sl_s = g_CurrentPlayer->speedsideways * SL_SPRINT_Q;
+            f32 sl_fmax = 1.08f * g_CurrentPlayer->speedboost;
+            f32 sl_req = sqrtf(sl_f * sl_f + sl_s * sl_s);
+            f32 sl_cap = sqrtf(sl_fmax * sl_fmax + SL_SPRINT_Q * SL_SPRINT_Q);
+
+            if (sl_req > 0.0f && sl_req < sl_cap)
+            {
+                f32 sl_r = sl_cap / sl_req;
+                g_CurrentPlayer->speedforwards *= sl_r;
+                g_CurrentPlayer->speedsideways *= sl_r;
+                g_sl_sprint_applied = 1;
+            }
+        }
+#endif
         if ((moveData.canLookAhead == 0) && (moveData.digitalStepForward == 0))
         {
             g_CurrentPlayer->speedmaxtime60 = 0;
@@ -8492,6 +8783,17 @@ void bondviewUpdateCameraMatrices(coord3d* cam_pos, coord3d* cam_look_dir, coord
 
     guMtxF2L((f32 (*)[4]) &sp60, temp_s0);
     set_BONDdata_field_10E0((s32) temp_s0);
+#ifndef __sgi
+    /* #45 FIELD OF VIEW: this is the world projection with the view folded
+     * in - the matrix props, explosions and glass load as their projection
+     * (bg.c:741, explosion.c:884, glass.c:281, propobj.c:7414) - so it is
+     * named to the native renderer beside fr.c's, and the same FOV scale
+     * reaches it. A note, not a change. */
+    {
+        extern void sl_gfx_note_world_projection2(unsigned int addr);
+        sl_gfx_note_world_projection2((unsigned int) osVirtualToPhysical((void *) temp_s0));
+    }
+#endif
 
     scale = bgGetLevelVisibilityScale();
 
@@ -9290,7 +9592,19 @@ Gfx *maybe_mp_interface(Gfx *gdl)
 
     gunUpdateAndFireBothHands();
     gunRenderCasings(&gdl);
+#ifndef __sgi
+    /* #45 FIELD OF VIEW: the first-person weapon is the VIEWMODEL - it keeps
+     * the original 60-degree projection (widened by the aspect only) while
+     * the world takes the slider, the practice every PC shooter follows so
+     * the gun neither shrinks nor skews. The two tagged no-ops bracket it
+     * for the native renderer (src/gfx/sl_gfx_dl.c, OP 0xC0 'SVM1' / 'SVM0');
+     * a no-op is what the RDP sees, and the matching build never emits them. */
+    gDPNoOpTag(gdl++, 0x53564D31u);
+#endif
     gunRenderFirstPersonGunModels(&gdl);
+#ifndef __sgi
+    gDPNoOpTag(gdl++, 0x53564D30u);
+#endif
     gdl = bondviewRenderWatch(gdl);
 
     if (g_CurrentPlayer->mpmenuon != 0)
@@ -9771,6 +10085,28 @@ f32 bondviewGetPlayerPitchRadians(void)
 s32 bond_pressed_reload_activate(void) {
     return g_CurrentPlayer->field_D0;
 }
+#ifndef __sgi
+/* The two native semantics, for lvlRender - the same contract as
+ * bond_pressed_reload_activate above (written every tick in
+ * bondviewProcessInput, read once per frame in lv.c), split in two. Player 0
+ * only, because the flags are written only on player 0's pass and a second
+ * player's frame must not act on them. */
+s32 sl_bond_pressed_interact(void) {
+    return g_CurrentPlayer == g_playerPointers[0] && g_sl_interact_pressed;
+}
+
+s32 sl_bond_pressed_reload(void) {
+    return g_CurrentPlayer == g_playerPointers[0] && g_sl_reload_pressed;
+}
+
+/* SPRINT state of the last player-0 pass, for the SL_INPUT_DEBUG witness
+ * (src/native/sl_game_query.c) and nothing else: 0 not held (or the setting
+ * off), 1 held but not applied (aiming, crouched, not moving, pad), 2 the
+ * vector was scaled this tick. Read-only. */
+s32 sl_bond_sprint_state(void) {
+    return g_sl_sprint_applied ? 2 : (g_sl_sprint_held ? 1 : 0);
+}
+#endif
 
 
 void set_bondata_invincible_flag(u32 arg0) {

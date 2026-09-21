@@ -33051,3 +33051,5861 @@ Sequencing: #38 -> #39 (folds into the controls sprint) -> #40/#41
 (options/UI) -> #42 (optional) -> #43 (roadmap). First implementation
 objective: the native action/binding layer with E/R as its first consumers.
 No legal-screen bug is filed: the timing is measured (B-091..B-093).
+
+## 2026-09-17 - #38 Controls: the native action/binding layer - E interact,
+## R reload, Ctrl crouch, 1/2 + wheel weapon cycle, contextual scope zoom -
+## implemented on sightline/qol-controls (cc4f900e, 24dad059)
+
+Scope correction posted on #38 (comment id 298, read back): recorder/replay
+support is NOT an acceptance condition; recorder coverage of the actions is
+tooling/evidence debt (see the last section). #39-#43 not started.
+
+### Architecture
+
+Three files added, four touched, zero tokens for the IDO build:
+
+- `src/platform/sl_action.h` / `sl_action.c` - `enum sl_action` (INTERACT,
+  RELOAD, CROUCH, WEAPON_PREVIOUS, WEAPON_NEXT, ZOOM_IN, ZOOM_OUT; the enum
+  order IS the bit order of the masks the game reads), `sl_binding` rows with
+  a per-device source (`SL_SRC_KEY` scancode, `SL_SRC_MOUSE_BUTTON`,
+  `SL_SRC_WHEEL` direction + context, `SL_SRC_PAD_BUTTON`, `SL_SRC_PAD_AXIS`
+  half), `sl_action_eval(devices, out[])` -> per action HELD (level) and
+  PRESSED (down edge from the previous poll's level, or counted wheel
+  notches), `sl_action_reset`, `sl_action_name`, `sl_action_bindings`.
+- `src/native/sl_action_channels.c` - the publish/read seam, same shape as
+  `sl_move_channels`: `sl_action_channels_set(active, held_mask)` per poll,
+  `sl_action_channels_pulse(action, n)` ACCUMULATES edges until the game's
+  once-per-tick `sl_action_channels_get(held, pressed, zoom_in, zoom_out)`
+  consumes them (polls and ticks are not 1:1 - measured in the #20 round -
+  so a set-and-overwrite edge could vanish), `_peek` for a recorder later.
+  Inactive (headless, replay, menu) drops everything. ZOOM: a notch becomes
+  `SL_ACT_ZOOM_TICKS_PER_NOTCH = 2` game ticks of the cartridge's own
+  `zoomIn/OutFovPersec = 1.0` rate, counted down in the getter, so the pulse
+  is in ticks not polls: x1.21 per notch, ~11 notches sweep the sniper's
+  60->7 range; 1 tick (x1.1, 23 notches) reads as no control, 3 (x1.33) too
+  coarse to aim with. Owner's to judge; one constant.
+- `src/native/sl_game_query.c` - `sl_game_scoped_zoom_active(player)`:
+  insightaimmode AND the right-hand item's WEAPONSTATBITFLAG_DISABLE_CROUCH
+  bit, the same two-term test as bondview2.c:5359-5361, never a weapon-id
+  list (the bit is 0x8000 'can not crouch' per "Objects and Attributes/
+  weapons/weapon statistics bitflags.txt", set on exactly the Sniper Rifle
+  00178A70 and the Camera 0000A990 - routed in docs/doc-routing.json, new
+  area `player-input`). Also `sl_game_action_witness` - the read-only string
+  the SL_INPUT_DEBUG line prints (crouchpos, right-hand weaponnum,
+  weapon_action_state / weapon_current_animation, sniper/camera zoom, the
+  nearest door's openstate/openPosition) - the one diagnostic added.
+- `src/platform/sl_input.c` - E and R leave `read_keyboard` (E was `action`
+  -> N64 B, R was `next_weapon` -> N64 A); Space still raises B. Raw wheel
+  notches are counted per direction beside the menu queue
+  (`g_wheel_act_up/down`, cap 8, cleared per poll). Once per poll: build the
+  device snapshot (keyboard state, mouse buttons only while captured, the
+  notches only outside a menu, the active pad handle), decide the wheel
+  context (menu -> the existing stick pulse; else scoped-zoom query == 1 ->
+  SCOPED; else PLAY), `sl_action_eval`, publish with `active = live &&
+  !menu`. Focus loss resets the edge history.
+- `src/game/bondview2.c` - "NATIVE ACTIONS" block right after the movement
+  seam, under its gates plus `g_CurrentPlayer == g_playerPointers[0]`; the
+  get consumes on every pass (frozen path included) so intro-camera presses
+  are dropped, not banked. INTERACT -> `moveData.btap = 1` +
+  `g_sl_interact_only`; after Rare's btap block (tank exit / tank enter /
+  `field_D0 = 1`) the native block takes `field_D0` into
+  `g_sl_interact_pressed` and clears `field_D0`. RELOAD ->
+  `g_sl_reload_pressed`. WEAPON_PREVIOUS/NEXT -> `weaponBackOffset` /
+  `weaponForwardOffset`. CROUCH -> `crouchDown` while held, `crouchUp` after
+  release while `g_sl_crouch_native` (only a crouch this key caused), both
+  behind the same DISABLE_CROUCH test as :5375. ZOOM_IN/OUT ->
+  `zoomIn/OutFovPersec = 1.0f` for the pulse tick, behind the same aiming +
+  stat-bit test as :5359. Accessors `sl_bond_pressed_interact` /
+  `sl_bond_pressed_reload` beside `bond_pressed_reload_activate`.
+- `src/game/lv.c` - beside :756 (`lvlRender`): the interact-only press calls
+  `bond_interact_object()` with the return ignored; the reload press calls
+  `attempt_reload_item_in_hand` for GUNRIGHT and GUNLEFT.
+
+CROUCH is HOLD-TO-CROUCH: down while Left Ctrl is down, up on release. That
+is the cartridge's own shape (aim + C-down held = down, C-down released while
+aiming = up) minus the aim requirement; the cartridge quirk of staying down
+after leaving aim mode is left intact for the pad by raising `crouchUp` only
+for a native crouch. Heights, SQUAT/HALF/STAND, the +/-2 step, the speed
+penalty and the cannot-crouch weapons are untouched.
+
+The pad is NOT in the default table (the kinds evaluate; no rows): B/A ->
+B, X -> A, aim + C-down crouch, A+Z previous weapon - all through the
+selected control style exactly as before. The remote-mine detonate chord
+(:5389) is a pad chord and cannot arm from an action.
+
+### Binding matrix
+
+| action | keyboard | mouse | gamepad | edge/held | consumer seam |
+|---|---|---|---|---|---|
+| INTERACT | E | - | - (B/A classic) | edge | btap -> Rare's tank branches; else lv.c `bond_interact_object()` only |
+| RELOAD | R | - | - (B classic) | edge | lv.c `attempt_reload_item_in_hand` both hands |
+| CROUCH | Left Ctrl | - | - (aim + C-down classic) | held | `crouchDown` held / `crouchUp` released -> `currentPlayerAdjustCrouchPos(-2/+2)` |
+| WEAPON_PREVIOUS | 1 | wheel up (play) | - (A + Z classic) | edge | `weaponBackOffset` -> `backstep_through_inventory` |
+| WEAPON_NEXT | 2 | wheel down (play) | - (X classic) | edge | `weaponForwardOffset` -> `advance_through_inventory` |
+| ZOOM_IN | - | wheel up (scoped) | - (C-up classic) | edge -> 2-tick pulse | `zoomInFovPersec = 1.0` -> `camera_sniper_zoom_in` |
+| ZOOM_OUT | - | wheel down (scoped) | - (C-down classic) | edge -> 2-tick pulse | `zoomOutFovPersec = 1.0` -> `camera_sniper_zoom_out` |
+| (unchanged) fire / aim / B / confirm | F, LMB / Q, RMB / Space / Enter | | RB,RT / LB,LT / A,B / - | N64 buttons | the style tables |
+
+Wheel context order: menu (stick pulse, unchanged) -> adjustable scoped
+aiming -> weapon cycling.
+
+### Proof and build
+
+`__sgi` verbatim (scratch qol1\sgi_proof.sh, `-E -P -fdirectives-only -x c`,
+includes stripped, master vs work): bondview2.c 362607 b == 362607 b
+(md5 6fd459293c52 both), lv.c 57879 b == 57879 b (f0c8011f7bb2 both);
+positive controls differ (1 line each); native arms differ by 185 / 28
+lines; sl_action / sl_bond_pressed / SL_ACTCH tokens in the `__sgi`
+expansion: 0 and 0. build.ps1 -Demo: 246/246 compiled, key carries
+SL_DEMO_BUILD; build.ps1 (LAST): 246/246, key lacks SL_DEMO_BUILD; test.ps1
+facility 300: PASS 1/1. inputtest.ps1: links again (two link stubs:
+`sl_mark_request`, `sl_move_replay_active`), action section 12/12 ok; 22/117
+pre-existing B-096-class failures unchanged in kind. `make trace-verify` NOT
+run (no MIPS toolchain); D-005 in docs/divergences.md records why the
+harness cannot see this change.
+
+### Behavioural evidence
+
+Windowed, posted WM_KEY* / WM_MOUSEWHEEL and real SendInput clicks and
+motion; SL_INPUT_DEBUG + SL_INV_DBG; scratch qol1\tA/tM/tB/tF.log.
+
+Facility, teleported to 6750,106,-2550 theta 90 facing door pad 132 (rooms
+68/63) at 168 units, PP7 (weap=5), one round fired first (ammo[1] 100->93):
+
+- R, door closed: `held=02 pressed=02 RELOAD+H+P | crouch=2 weap=5 anim=0/0
+  door=0/0.000@168` then `anim=10/0`, `anim=11/0`, `anim=12/0` (RELOAD_LOWER
+  / SWAP / RAISE) with `door=0/0.000` throughout - reload, door untouched.
+  (Same key with a FULL clip in an earlier run: `anim=0/9` for two polls then
+  `0/0` - the request is made and the game declines it; no state change.)
+- E at the door: `held=01 pressed=01 INTERACT+H+P | ... anim=0/0
+  door=0/0.000@168` -> next line `door=1/0.000` (DOORSTATE_OPENING) ->
+  `door=1/0.001 ... 1/0.179 ...` -> later `door=0/0.950` (open, at rest);
+  `anim=0/0` on every line - no reload animation.
+- Ctrl held 1.5 s: `CROUCH+H+P | crouch=2` -> `CROUCH+H | crouch=0` (SQUAT)
+  for the hold -> after release `held=00 ... crouch=0` then `crouch=2`.
+- 2 then 1: `WEAPON_NEXT+H+P ... weap=5` -> `anim=0/5`, `5/0` (switch) ->
+  `weap=29`; `WEAPON_PREVIOUS+H+P ... weap=29` -> `weap=5`. Inventory
+  (SL_INV_DBG) `items=[w1 w5 w29 w30] held=4`, order unchanged.
+- wheel down x2, up x2 in play: `WEAPON_NEXT+P weap=5` -> 29; `WEAPON_NEXT+P
+  weap=29` -> 30; `WEAPON_PREVIOUS+P weap=30` -> 29; `WEAPON_PREVIOUS+P
+  weap=29` -> 5. Each notch exactly one step, both directions.
+- the watch (Esc): wheel down/down/up and S/W -> `menu=1 ... stick=(0,-70)`,
+  `(0,-70)`, `(0,70)`, `(0,-70)`, `(0,70)` pulses on the pad line; every
+  `sightline action:` line in the watch reads `on=0`, no `pressed`, so the
+  #20 W/S/wheel 5:5:5 path is the same code and the same values.
+- combinations (pointer captured by a real click, `grab=1`): W + mouse
+  `walk=70 strafe=0 turn=70`; W + F `button=2000 ... walk=70`; Q + mouse
+  `aim=1 ... button=0010 ... walk=0 ... turn=-70` (walk withheld while
+  aiming, look live); Ctrl + W: `CROUCH+H | crouch=0 ... door=none` (Bond
+  walked off the door while crouched). theta 90.0 -> 113.3 -> 325.8 -> 334.0
+  -> 340.0 -> 80.7 across the motions (mission line).
+
+Surface, `SL_WEAPON=sniper` (weap=17, `items=[w1 w5 w17]`):
+
+- Q held -> `ctx=scoped`; wheel up: `ZOOM_IN+P zoom=15.00` -> `13.64` ->
+  `12.40` (two ticks of /1.1); again -> `11.27` -> `10.25`; wheel down:
+  `ZOOM_OUT+P` -> `11.27` -> `12.40`; again -> `13.64` -> `15.00`. `weap=17`
+  on every line - the inventory did not move. Q released -> `ctx=play`.
+- Ctrl with the sniper: `CROUCH+H+P | crouch=2` and `crouch=2` stays -
+  refused by the stat bit, as on the cartridge.
+- wheel down NOT aiming: `WEAPON_NEXT+P weap=17` -> `weap=1`; wheel up:
+  `WEAPON_PREVIOUS+P weap=1` -> `weap=17`.
+- one notch landed during the sniper's draw animation (ctx still play,
+  `WEAPON_PREVIOUS+P weap=0`): the one-frame-stale context the query
+  documents - it cycled nothing visible (the cheat's equip request won) and
+  is the worst case: a notch that does nothing.
+
+Front end (no SL_BOOT_LEVEL): Enter -> `button=8000` through the boot chain,
+menu 23 -> 0 -> 1 -> 2 -> 3 edges; S / W / wheel -> `menu=1 stick=(0,-80)`,
+`(0,80)`, `(0,-80)`, `(0,80)`; E and R there: `on=0`, no button. Mode select
+and the cursor menus are the same code path (no change under `menu`).
+
+### Not exercised / not hardware-tested
+
+- No physical controller attached (`sightline input: no gamepad found (0
+  joystick(s) seen)`); the pad path is untouched code and inputtest has no
+  pad rows; feel is the owner's.
+- The camera's zoom was not driven (`sl_cheat` has no camera name and
+  rejects `40`; Surface carries no camera). The query reads the same stat
+  bit the docs assign to it.
+- Mouse look feel, invert (#39) and the 1.2/2.x styles by hand: unchanged
+  code, not re-measured.
+- The #39 seam: `sl_action_bindings()` exposes the table read-only; mouse Y
+  invert stays where it is (map_kbm / g_mouse_invert) - nothing added.
+
+### Recorder debt (#7 / B-104 class, NOT fixed here)
+
+The `.input` stream carries the pad and the `.move` sidecar the four
+channels + linear look; the action channels have no sidecar. A live session
+that uses E / R / Ctrl / 1 / 2 / the wheel in play will therefore replay with
+those inputs MISSING (Space, F, Q, WASD and the mouse still replay). The
+`_peek` reader exists for the recorder to attach to; `_get` consumes and
+must not be used by it.
+
+## 2026-09-17 - Gitea #38 CLOSED on owner acceptance ("So far everything
+## works right", replayed on keyboard and mouse; comment id 301, state closed
+## read back). Recorder coverage of the actions stays #7 / B-104 debt.
+
+## 2026-09-17 - #39 Controls: native Invert Mouse Y - one state, one sign
+## point, mouse only; SL_LOOK_INVERT settled as STICK-ONLY (decision A) -
+## implemented on sightline/qol-controls, OPEN pending owner replay
+
+Persistence is #41's; nothing here reads or writes a config, the EEPROM or
+the `.style` sidecar. The setting is reachable this round through the
+existing developer seam only (`SL_MOUSE_INVERT=1`, play.ps1).
+
+### Architecture
+
+- `src/platform/sl_input.c` - `g_mouse_invert_y` is THE ONE native state
+  that answers "is mouse Y inverted"; `sl_mouse_invert_y_get()` /
+  `sl_mouse_invert_y_set(on)` (declared in `sl_input.h`) are #41's hook. An
+  explicit set wins over the env seed whichever runs first
+  (`g_mouse_invert_y_set_explicitly`, honoured by read_env), so a config
+  loaded before the first poll is not overwritten.
+- THE ONE SIGN POINT is the existing line in `read_mouse`, after the
+  platform dx/dy convention and before BOTH consumers: `g_raw_dy` (the
+  linear channel, `sl_mouse_look_set`) and `in->look_pitch` (the fallback
+  channel through `map_kbm`). Both paths therefore see the setting once and
+  agree; ordinary look and aiming look read the same two outputs.
+- REMOVED: `map_kbm` no longer applies `g_look_invert` to the mouse pitch.
+  That line was the second mouse sign-flip on the fallback path (it stacked
+  with SL_MOUSE_INVERT there and never reached the linear path). The only
+  negation left in `map_kbm` is the pre-negation that cancels the game's
+  Look Up/Down block (B-060), which still cancels it - the harness below
+  composes the game's block and reads UP for physical UP under both option
+  values.
+- `map_pad` / `map_pad_dual` untouched: `g_look_invert` still applies to the
+  pad stick there. bondviewProcessInput untouched (no src/game change; the
+  linear consumer at bondview2.c:6327 already inverts nothing).
+- Docs corrected: the sl_input.c env-knob header, play.ps1 help, play.sh
+  help. The one diagnostic extension: the SL_INPUT_DEBUG pad line now ends
+  `minv=<native state> upright=<game option>` and prints on their change.
+
+### Precedence (each device has one persisted option and one dev override)
+
+| inverts | applies to | does NOT touch |
+|---|---|---|
+| Look Up/Down (PLAYER_OPTION_LOOK, the watch, per-folder save) | pad stick | the mouse (linear: never passed through it; fallback: cancelled at map_kbm) |
+| native Invert Mouse Y (`g_mouse_invert_y`) | the mouse, both paths, aiming or not | the pad |
+| `SL_MOUSE_INVERT=1` | SEEDS the native state | anything else |
+| `SL_LOOK_INVERT=1` | pad stick only (dev override on top of Look Up/Down) | the mouse (decision A: the "every device" wording was wrong and is corrected) |
+
+No stacking: the mouse has exactly one switch on exactly one line; tree-wide
+`grep -rn "g_look_invert" src/` returns the declaration, read_env, map_pad
+and map_pad_dual only (map_kbm's use is gone).
+
+### Evidence (deterministic, scratch qol2\; nothing committed)
+
+Harness `padtest.c` linking the REAL sl_input.c + sl_action.c against stub
+SDL with one stub pad (right-stick Y) and a stub mouse, 7 env combinations x
+both Look Up/Down values, the game's block modelled for the fallback channel
+and the C buttons:
+
+- mouse phys UP -> linear pitch_deg +6.00 (UP) and fallback "game UP" with
+  the option REVERSE and with it UPRIGHT; SL_MOUSE_INVERT=1 -> -6.00 (DOWN)
+  under both; SL_LOOK_INVERT=1 alone -> unchanged (+6.00 UP); both env vars
+  on the fallback path -> DOWN (one inversion, no cancellation).
+- pad stick UP -> C-down (game UP) with REVERSE, game DOWN with UPRIGHT;
+  SL_LOOK_INVERT=1 flips it; SL_MOUSE_INVERT never changes the pad line.
+- `sl_mouse_invert_y_set(!get)` flips the next poll's linear and fallback
+  sign and reads back.
+
+Windowed Facility (teleport 6750,106,-2550 theta 90 room 68, real
+SendInput relative motion +/-40 counts, SL_INPUT_DEBUG + SL_MISSION_EVERY=1;
+Look Up/Down set to UPRIGHT through the watch by injected keys - Esc, left
+x2 to Game Options, S x2 to Look Up/Down, Enter, right, Enter, Esc - and
+witnessed as `upright=1` on the pad line):
+
+| case | minv | upright | mouse UP | mouse DOWN | aim held UP/DOWN |
+|---|---|---|---|---|---|
+| 1 | 0 | 0 | verta 0.0 -> +6.0 | -> 0.0 | +6.0 / 0.0 (run a0) |
+| 2 | 1 | 0 | 0.0 -> -6.0 | (grab lost, see below) | - |
+| 3 | 0 | 1 | 0.0 -> +6.0 | -> 0.0 | - |
+| 4 | 1 | 1 | 0.0 -> -6.0 | -> 0.0 | -6.0 / 0.0 |
+
+Fallback path (`SL_MOUSE_LINEAR_LOOK=0`): OFF UP -> +3.5, ON UP -> -3.5,
+DOWN returns to 0.0 in both - one inversion. Regressions: +40/-40 X ->
+theta 90.0 -> 96.0 -> 90.0 in every case (yaw sign and magnitude
+unchanged, ON or OFF); 0.15 deg/count both ways (sensitivity unchanged);
+W + mouse `walk=70 turn=..`; #38 quick pass in the same runs: E -> door
+0 -> 1/0.058 (opening), R -> anim 10/11 (reload), Ctrl -> crouch 2 -> 0
+while held, 2/1 -> weap 5 -> 29 -> 5, wheel -1/+1 -> 29 / 5; watch S/W
+`stick=(0,-70)/(0,70)` pulses and page changes on the 70 deflection (the
+#20 path); the front-end pointer code is untouched. `minv` never changed
+across a watch open/close.
+
+Hardware limitation: no physical controller attached (`no gamepad found`),
+so the pad half is the synthetic harness above; feel is the owner's. The
+windowed runs shared the desktop with a live user: real mouse motion and
+two focus losses (`grab=0`) appear mid-run in c1/c2/c3 after the measured
+pulses; every sign above is read from the isolated single-poll +/-70 pulses
+before the noise, and the a0/f0/f1/c4 runs are noise-free through the
+measured section.
+
+Build: build.ps1 -Demo (compile regression) then build.ps1 LAST, key lacks
+SL_DEMO_BUILD; test.ps1 facility 300 PASS 1/1; inputtest.ps1 22/117
+pre-existing B-096-class failures unchanged in kind and count. `make
+trace-verify` NOT run (no MIPS toolchain; no src/game change).
+
+Owner watch list: (1) feel of the ON state in the hands, aiming included;
+(2) whether the Look Up/Down option in the watch still feels right on a real
+pad (untouched code, not hardware-tested this round); (3) #41 must call
+`sl_mouse_invert_y_set` from the config load and expose the getter in the
+Options menu - the env seed stays as the developer override.
+
+### #39 addendum, same day - the owner's added requirement: Invert Mouse Y
+### MUST be changeable from the watch; env-only is not player UX. Watch row
+### added; #39 stays OPEN pending owner replay
+
+Scope correction posted on #39 (read back): the watch-menu control is
+mandatory; persistence across restarts remains #41; direct clicking of the
+row remains #40 (through the shared watch-item machinery, not built here).
+
+### The row
+
+- `src/game/options.h`, under `#ifndef __sgi`: `GAME_OPTIONS_INDEX_SL_MOUSE_INVERT
+  = 10` and `SL_GAME_OPTIONS_COUNT = 11`, appended AFTER the ten original
+  indices so nothing the original build sees moves. Not a
+  `game_options_entries` row (that table is the per-folder save's option
+  set, file2.c:1230) - the row holds NO value of its own; it is a view onto
+  the platform layer's one state through `extern sl_mouse_invert_y_get /
+  _set`, the same setter #41's store will call. No EEPROM bit, no `.style`
+  sidecar.
+- `src/game/options.c` (all native-only, `#ifndef __sgi`): the bounds in
+  `sub_GAME_7F0A5998` (`>= SL_GAME_OPTIONS_COUNT` wraps to Music; `< 0`
+  wraps to the new row; the original `>= 10` / `-> RATIO` arm is the `#else`,
+  verbatim); `game_options_music_volume_navigation` up-from-Music wraps to
+  the new row; the dispatch switch gains `case
+  GAME_OPTIONS_INDEX_SL_MOUSE_INVERT:` on the same `sub_GAME_7F0A5998` arm as
+  the other toggles; `draw_toggle_options` calls `sl_draw_mouse_invert_row`
+  once after its 8-row loop, at the loop's final `y_offset` (YOFFSET_1 +
+  8*YINC = y 200 on US, one YINC below RATIO; it clears the page-select bar,
+  see the sheets). Label "invert mouse y" (the text table's own convention:
+  lowercase, LF-terminated - assets/obseg/text/LoptionE.h "look up/down\n"),
+  values the table's own `OPTION_STR_1A_OFF_LF` / `OPTION_STR_19_ON_LF`;
+  colours, x positions (0xBE/0xC8 by j_text_trigger, 0xFA) and the
+  highlighted / selected / outlined states copied from
+  `draw_toggle_option_values`. Value change = `game_option_toggle_input`'s
+  shape exactly: A/Z select (the existing `watch_play_beep_sound` toggle at
+  draw_watch_current_page), then LEFT (C-left / L / d-pad left / latched
+  stick) = off, RIGHT = on, through `game_option_select_value` on a local so
+  the stick latch and the confirm sound are the rows' own. Effect is
+  immediate (read_mouse reads the state on its next poll; witnessed below).
+- "look up/down" (reverse / upright) is untouched and still means the
+  controller stick; the two rows read distinctly.
+
+`__sgi` verbatim (scratch qol2\sgi_proof.sh, `-E -P -fdirectives-only`,
+includes stripped, base HEAD and base master both): options.c 142251 b ==
+142251 b (md5 03f1ae2287fd both), options.h 20445 b == 20445 b
+(02410265a19d both); positive controls differ (1 line each); native arms
+differ by 94 / 9 lines; `sl_mouse_invert` / `SL_GAME_OPTIONS_COUNT` /
+`SL_MOUSE_INVERT` / "invert mouse" tokens in the `__sgi` expansion: 0 and
+0. (Method note: a bare `#ifndef __sgi ... #endif` group leaves one blank
+line in the expansion, so each block replaces an existing blank line.)
+
+### Watch evidence (windowed Facility, injected keys, real relative motion;
+### sheets qol2\sheet-ab1.png, sheet-ab2.png, sheet-c.png)
+
+- A. start OFF -> Esc -> A, A (Game Options, Music) -> W (wraps to the new
+  last row) -> Enter -> D -> `minv=1` on the pad line the same poll -> Enter
+  -> Esc -> mouse UP: verta 0.0 -> -6.0 (DOWN), DOWN -> 0.0. Sheet ab1: the
+  row drawn beneath RATIO, highlighted, selected (outlined), OFF -> ON.
+- B. re-enter (Esc, A, A, W): the row displays ON (sheet ab2) -> Enter -> A
+  -> `minv=0` -> Enter -> Esc -> mouse UP: 0.0 -> +6.0 (UP), DOWN -> 0.0.
+- C. `SL_MOUSE_INVERT=1` seed: the row displays ON on first entry; S, S to
+  Look Up/Down -> Enter -> D -> `upright=1`, `minv=1` unchanged (the row
+  still reads ON, sheet c); then S x8 steps AUTO-AIM, AIM CONTROL, SIGHT,
+  LOOK AHEAD, AMMO, SCREEN, RATIO, INVERT MOUSE Y - 8 presses, 8 steps (the
+  #20 latch on this page with the extra row) -> Esc -> mouse UP: -6.0
+  (still inverted), DOWN -> 0.0.
+- D. native ON + Look Up/Down changed: mouse stays inverted (C above); the
+  stick follows the option and never the native state (padtest harness,
+  first entry).
+- Regressions on this build (run r38 / rS): E door 0 -> 1/0.062, R anim 10 ->
+  11 -> 12, Ctrl crouch 2 -> 0 while held (22 polls), 2/1 weap 5 -> 29 -> 5,
+  wheel -1/+1 in play 29 / 5; Surface sniper: unscoped wheel 17 -> 1 -> 17,
+  Q held `ctx=scoped`, wheel up x2 zoom 15.00 -> 13.64 -> 12.40 -> 11.27 ->
+  10.25, down x2 -> 11.27 -> 12.40 -> 13.64 -> 15.00; watch S/W
+  `stick=(0,-70)/(0,70)`; Esc opens (`menu=1`) and closes (`menu=0`, grab
+  re-asserted) as before.
+
+Build: build.ps1 246/246, test.ps1 facility 300 PASS 1/1; final gate
+build.ps1 -Demo then build.ps1 LAST, key lacks SL_DEMO_BUILD.
+
+Owner steps (watch): Esc (or Tab) -> A twice (to GAME OPTIONS) -> W once
+(wraps to INVERT MOUSE Y; or S ten times) -> Enter -> D for ON / A for OFF
+-> Enter -> Esc. The value shows on re-entry; it applies the moment the
+watch closes. Persistence across a restart is #41 (this round the seed is
+`$env:SL_MOUSE_INVERT=1`).
+
+## 2026-09-17 - Gitea #39 CLOSED on owner acceptance (played the #39 build,
+## the separate "Invert Mouse Y" watch row included; comment id 322, state
+## closed read back). Persistence stays #41; clicking the row is #40.
+
+## 2026-09-17 - #40 UI: direct mouse interaction in the solo watch - hover
+## highlights, one click acts, page bar clickable, the game's own crosshair
+## at half size as the pointer - implemented on sightline/qol-controls,
+## OPEN pending the owner's hands-on pass (cursor already owner-verified:
+## "cursor works great in the menu")
+
+### Bounded recon (the eight questions)
+
+1. Pointer source: `read_pointer` (sl_input.c) samples SDL_GetMouseState
+   into the one pointer record (`g_ptr_x/y/w/h`, motion serial
+   `g_ptr_motion`, `g_ptr_valid`), `sl_input_pointer_get` publishes it,
+   `sl_menu_pointer_apply` (sl_menu_pointer.c) maps it through
+   `sl_gfx_present_rect` into the front end's 440x330 and writes
+   `cursor_h_pos/v_pos`. Modes FREE/SKIP/POINT/LOOK (sl_input.c:312-315);
+   the watch was FREE and never sampled (`read_pointer(ptr_menu)` only).
+2. Front-end hit-testing is per screen against that cursor (mode select
+   front.c:3080-3139 by cursor_v_pos thresholds; cheat rows :7925-7952 by
+   `i*0x14+0x35` bands and `cursor_h_pos >= 0xDC`); a click is one N64 A edge
+   only on `sl_game_pointer_menu_active` / `sl_game_click_advance_active`
+   screens (sl_menu_pointer.c:190-281, `sl_input_live_click`).
+3. In the watch (`sl_game_menu_mode()==1`) nothing about the pointer existed:
+   FREE, unsampled, clicks only armed the capture.
+4. The watch draws: text rows in FRAMEBUFFER space (textrelated.c:311
+   texrects at x*4,y*4, text_x/text_y = 0 - load_font_tables is the only
+   writer, tree-wide `grep -rn "text_x =\|text_y =" src/`): music/fx labels
+   at XOFFSET_1,YOFFSET_8/9; eight toggle rows at YOFFSET_1 + i*YINC with
+   values centred at 0xC8/0xFA (three-value rows 0xB4/0xE1/0x10E); the #39
+   row one YINC below; control page labels at XOFFSET_1,0x1A / 0x2B and the
+   style name at 0xAA,0x1A; abort:/cancel/confirm at 0x51/0x88/0xBD, y 0x4C;
+   the equipment list at 0x4E from y 0x8C, 12 px lines, offset
+   `watch_inventory_text_y`, five-line clip. Two things are 3D on the watch
+   face: the page bar (bondview2.c:3800, setup_watch_rectangles 100x20 at
+   x -0x12B + i*125, z 0x136) and the volume tracks (options.c:2696/:2747,
+   600x20 at z -275 / -205), drawn under the page matrix
+   draw_watch_current_page receives, the two guScale matrices
+   `gfx_background_8007B0A0/_8007B0E0` and bondviewRenderWatch's
+   guPerspective (zoominfovy, aspect 1.4545455, 10..300, bondview2.c:8939),
+   through the player viewport (fr.c:698-701). Interactive elements: the
+   toggle values, the tracks, the labels (A latch), the style name, the
+   abort row, the equipment rows, the bar. Briefing: nothing but the bar.
+5. State writers: `watch_screenN_navigation` (page + `sub_GAME_7F0A5210`
+   beep + `trigger_watch_zoom` per zoom table), `sub_GAME_7F0A5998` /
+   `controller_options_*_navigation` (row indices, latch reset),
+   `game_option_toggle_input` -> `game_option_select_value` (value + sound),
+   `watch_adjust_volume_slider` (stick), `sub_GAME_7F0A8378` (equip on
+   A/Z/START), `watch_play_beep_sound` (the A/Z latch :576),
+   `draw_abort_cancel_confirm` (D_800409A4 from stick X).
+6. Reuse: the window->presented-image mapping was factored out of
+   `sl_menu_pointer_apply` into `sl_menu_pointer_uv` and shared; nothing
+   else of the front end's cursor applies (the watch has no cursor state).
+
+MEASURED before trusting the projection: on the main page the page bar's
+five rectangles read from a 960x720 capture at fb x 96.33..117.67,
+123.00..144.33, 149.67..171.00, 176.33..197.67, 203.00..224.33, y
+186.0..190.33; the analytic projection gave 96.21..117.55 ... 202.88..224.22
+x 186.14..190.40 - sub-pixel agreement, and the same code then placed the
+options page's bar (fov 3.95) at 64.67..255.96 x 218.83..225.21 and the
+tracks at y 32.3..38.7 / 54.6..61.0, matching the capture (scratch qol3
+m1/m2 logs and sheets).
+
+### Architecture (native only; the IDO build is byte-identical)
+
+- `src/native/sl_watch_pointer.c` (new) - hit rects derived from the page's
+  own constants (options.h XOFFSET_1/YOFFSET_*/YINC, WATCH_SCREEN_SELECT_*,
+  the same literals draw_toggle_option_values / draw_abort_cancel_confirm /
+  draw_watch_control_options_page pass, text widths from the game's
+  textMeasure), the 3D elements projected through the same matrices the RSP
+  gets (guMtxL2F of the page matrix and the two scale Mtx globals,
+  guPerspectiveF with the player's zoominfovy, the fr.c viewport); hover and
+  click applied to the SAME globals the stick path writes (no second
+  highlight); the cursor drawn as gunDrawSight draws the sight
+  (gunfire.c:6337-6350: texSelect(crosshairimage) +
+  display_image_at_position) with the 16-unit half-extent HALVED
+  (`SL_WATCH_CURSOR_SCALE 0.5`, opaque), only while the pointer is captured.
+  One diagnostic (SL_INPUT_DEBUG: `sightline watch: hover|CLICK|after ...`).
+- `src/game/options.c` - three guarded seams: `sl_watch_pointer_frame(arg1)`
+  at the head of draw_watch_current_page's interactive branch,
+  `sl_watch_pointer_draw(gdl)` after the page switch, and
+  `if (!sl_watch_pointer_take_equip())` in front of sub_GAME_7F0A8378's
+  START test so a clicked list row equips through the game's own lines
+  once the list settles.
+- `src/native/sl_menu_pointer.c` - `sl_menu_pointer_uv` factored out.
+- `src/platform/sl_input.c` - the watch keeps gameplay's capture once a
+  click has armed it (owner request 2026-09-17: OS cursor hidden, relative
+  mode stays); `watch_pointer_integrate` sums the deltas into the one
+  pointer record (window pixels, clamped, per-platform dx/dy sign, never
+  the Invert Mouse Y state, seeded from the host cursor's last absolute
+  sample on the arming click, kept across open/close); unarmed the watch
+  is FREE and read_pointer samples the host cursor as before. The LEFT
+  edges go to `sl_watch_pointer_click/_release` (only while the watch is
+  interactive - state 5 - so a click during the level-start watch
+  animation is not banked); marked as a menu click so a press held across
+  the close cannot fire. No A edge, no double-click guard in the watch.
+  `sl_input_pointer_captured()` added (sl_input.h).
+- `tools/native/inputtest.c` - two link stubs; three assertions updated to
+  the new contract (the watch keeps the capture once armed; unarmed it
+  still releases). 117 checks, 22 failed - the pre-existing B-096 class,
+  same count and kind.
+
+### Click / hover rules (one rule per element type, every page)
+
+- LABEL click = what A does on that row: highlight it and toggle the select
+  latch (keyboard left/right then edit it). VALUE click = set that value
+  directly through game_option_select_value (its confirm sound), no latch.
+  TRACK click = volume at the click position; held, the track follows the
+  pointer (drag). PAGE-BAR click = that page, with the beep and zoom only
+  when the zoom changes (as the pad's neighbours do); any latch dropped.
+  EQUIPMENT row click = select + equip (no hover: the list scrolls the
+  selection to its centre line, so hover-select would run away). STYLE name
+  click = the next control style through cur_player_set_control_type.
+  abort: click = A; then confirm click aborts, cancel click clears.
+  Briefing: the bar only (W/S/wheel still page the briefing).
+- HOVER moves the highlight on pointer MOTION only (the front end's serial
+  rule, so a still mouse never fights W/S): Game Options rows (latch
+  dropped when the row changes, as sub_GAME_7F0A5998 does), Control
+  Options rows only while nothing is latched (the pad's rule), confirm /
+  cancel while abort: is latched. Empty space: nothing.
+
+### Evidence
+
+Machine-verified (windowed injection BEFORE the owner took the desktop;
+scratch qol3\t1..t4 logs, m1/m2 sheets, sheet-cursor.png /
+sheet-cursor-zoom.png): projection vs capture as measured above; hover
+follows rows (t2: rows 2..10 at x 74, values at x 200); value clicks
+(auto-aim 1->0->1, screen 0->1->2->0, invert mouse y minv 0->1->0 with the
+pad line following); music click t=0.25 -> 8107 then drag to 24894, fx
+click -> 16329; label click latch 1 -> 0; page bar all five pages in both
+directions with zoom; control style 0->1->2, controller label latch;
+equipment click row 1 then row 2 -> weap 5 -> 29 at close (SL_INV_DBG);
+abort: latch, hover confirm/cancel moves D_800409A4, cancel clears; confirm
+-> stage 90, aborted=1 (t3); briefing click nothing; empty space nothing;
+keyboard S,S -> row 2, Enter, D -> value 1, A -> 0, Enter, W -> row 1,
+wheel -> row 2, S x5 -> row 7 (one row per step); t4 (captured mode):
+integrated pointer landed on every injected target exactly, clamp at
+(0,0), the half-size crosshair drawn at the pointer (frames 26-42), #38
+E/R/Ctrl/1/2/wheel and #39 look sign unchanged after the watch (t2).
+One defect found in t4 and fixed after the owner took the desktop:
+read_pointer invalidated the record every poll while captured, so the
+motion serial never advanced and hover did not follow in captured mode
+(the fix skips read_pointer for the captured watch).
+OWNER-VERIFIED (hands-on, 2026-09-17): "cursor works great in the menu" -
+the small crosshair and its tracking/hover in the watch.
+NOT machine-verified after the last fixes - owner testing in progress:
+clicks, sliders, page bar, equipment, controller page, abort row, and the
+cursor re-seed on the arming click / after a focus loss.
+
+Build: build.ps1 247/247, test.ps1 facility 300 PASS 1/1; `__sgi` proof
+(qol3\sgi_proof.sh, base 6419ea1b and master): options.c 142251 b ==
+142251 b, md5 03f1ae2287fd both, control differs, native arm +24 / +118
+lines, `sl_watch_pointer` / `#40` tokens in the __sgi expansion: 0.
+`make trace-verify` NOT run (no MIPS toolchain; no __sgi change).
+
+Limitations: no physical controller (pad path untouched, not hardware
+tested); briefing sub-pages have no mouse target; JP/EU offsets mirrored
+from the draw code but untested; the cursor is the sight's own RGBA
+colour (red ring) - the front end's cursor is the same image.
+
+Owner steps: `.\tools\windows\play.ps1` (or the demo package) -> click once
+in play to capture -> Esc -> move the mouse: the small crosshair is the
+pointer; hover a Game Options row (highlight follows), click a value
+(changes at once), click and drag the music/fx track, click the page bar
+segments, click an equipment row (equips), click the control style's name
+(next style), abort: -> confirm (aborts - confirm ends the mission). W/S/
+Enter/A/D and the wheel still work as before. Alt-tab: the OS cursor
+returns; the next click re-captures under it.
+
+## 2026-09-17 - Gitea #40 CLOSED on owner acceptance ("I accept the changes.
+## we can move onto the other options" - the watch pointer and the small
+## crosshair cursor included; comment id 332, state closed read back).
+
+## 2026-09-17 - #41 Phase A: unified Options in the front end (Controls /
+## Cheats / Back), the native settings store, global control defaults -
+## implemented on sightline/qol-controls (dec235c3, 54360ce1, 75be950a),
+## OPEN pending the owner's pass
+
+Phase A only: the persistent native settings foundation and the Options
+hierarchy the later rounds (#42 sprint toggle, #43 graphics mode, key
+rebinding) will land in. No Gameplay / Display / Audio pages, no rebinding
+UI, no sensitivity or deadzone rows.
+
+### Bounded recon (the ten questions, file:line at db2ec1e1)
+
+1. Main rows: constructor_menu06_modesel front.c:3233 - numeral x 0x96, label
+   x 0xAA, rows y 0xDC/0xFC/0x11C, highlight box (0x94, y-2)..(width+0xAF,
+   y+0xE); interface_menu06_modesel :3049 hit-tests cursor_v_pos >= 275 (row
+   3, only while is_cheat_menu_available) / >= 243 (row 2, only with two
+   controllers) / else row 1, confirm START|Z|A, B = PREVIOUS;
+   setCursorPOSforMode :3224 re-places the cursor at (126, mode*0x20+0xE2).
+   The docs' "menu 06 constructor" and "return positions.txt" give the same
+   constants (now routed: doc-routing.json `front-end-menus`).
+2. Cheat entry: gamemode = GAMEMODE_CHEATS at :3094 -> frontChangeMenu(
+   MENU_CHEAT) :3160; the menu itself interface_menu15_cheat :7898 (row bands
+   i*0x14+0x35, right column at cursor_h_pos >= 0xDC, A/Z toggles
+   g_CheatActivated, PREVIOUS -> MENU_MODE_SELECT + setCursorPOSforMode(
+   gamemode) :7983); init_menu15_cheat :7852 builds arrayUnlockedCheats from
+   cheat_available[], which interface_menu06_modesel fills every frame from
+   frontCheckIfCheatIsUnlocked :1076; the demo arm shadows that function's
+   four save queries with TRUE (:1040-1075, :1207-1214).
+3. Mouse in these rows: the one cursor (cursor_h_pos/v_pos) moved by
+   sl_menu_pointer_apply at the head of frontUpdateControlStickPosition;
+   a left click is one N64 A edge on the screens sl_game_pointer_menu_active
+   lists (sl_menu_pointer.c:190). No per-screen mouse code exists.
+4. `.style`: sl_ultra_shim.c sl_style_load :1973 (default 1 = Solitaire,
+   sidecar wins), sl_style_save :2019 at the EEPROM flush, sl_style_apply_once
+   :2066 from the pump once a player exists, all reached only through
+   sl_eeprom_init_rw. Tree-wide `grep -rn "\.style" src/ tools/`: no other
+   consumer (play.sh help text, the inputtest stub for sl_game_control_style).
+5. Look Up/Down: game_options_entries[PLAYER_OPTION_LOOK].current_value
+   (options.c:149, a process-wide global, 0 = reverse, 1 = upright), set by
+   set_cur_player_look_vertical_inverted :518, loaded from the folder save
+   at file2.c:1306, saved at :1230, consumed at bondview2.c:4932
+   (moveData.invertPitch = value == 0).
+6. Aim Control: game_options_entries[PLAYER_OPTION_AIM] (0 hold, 1 toggle),
+   cur_player_set_aim_control options.c:548, loaded file2.c:1308, saved
+   :1240, consumed bondview2.c:5058/:5259.
+7. #39: sl_mouse_invert_y_get/_set (sl_input.h:88-89), the one state
+   g_mouse_invert_y applied once in read_mouse; the env seed in read_env.
+8. Initialisation points: init_watch_at_start_of_stage (options.c:342,
+   called from lv.c:426 for EVERY non-title stage, direct boot included)
+   forces Honey then calls fileLoadSaveSettingsForSelectedFolder ->
+   fileLoadSettingsForFolder (file2.c:1283) - the one point after which a
+   player, the watch state and the save's options all exist. Direct boot
+   (SL_BOOT_LEVEL, sl_ultra_shim.c:2661) skips the front end but not this.
+   The commit point is fileSaveSettingsForFolder (file2.c:1221), reached on
+   every solo watch close (bondview2.c:3852 trigger_solo_watch_menu ->
+   deleteCurrentSelectedFolder) and abort confirm (options.c:788).
+9. Player-data root: %LOCALAPPDATA%\sightline (the save via play.ps1:233,
+   the demo save sl_ultra_shim.c:2172, asset overrides sl_asset_override.c:
+   113, libretro); ~/.sightline/runs (sl_main.c:230) is the developer run
+   capture, not player data. The config goes beside the save.
+10. No general native settings store existed: tree-wide `grep -rn
+    "config.ini\|settings" src/platform src/native` found only the trace and
+    demo bootstrap uses; `.style` was the only persisted native setting.
+
+### Architecture
+
+- `src/platform/sl_settings.c/.h` (host libc, the class the sidecar lived
+  in): table of four rows {key, default, lo, hi}; init resolves the path and
+  loads; get/set; set writes the file only on a real change, via `<path>.tmp`
+  + MoveFileExA(MOVEFILE_REPLACE_EXISTING); import of the legacy sidecar.
+  INACTIVE until init, which only sl_eeprom_init_rw calls (writable save =
+  player session), so replay / headless never read a config and stay
+  bit-identical. `-DSL_SETTINGS_SELFTEST` fixture, 27 checks
+  (tools/windows/settingstest.ps1, exit 0).
+- File: `%LOCALAPPDATA%\sightline\config.ini` (ladder LOCALAPPDATA ->
+  USERPROFILE\AppData\Local -> TEMP -> .); the -Demo core
+  `...\sightline\demo\config.ini` beside its own save. `SL_CONFIG=<file>`
+  developer override (tools/windows/README.md). Format:
+
+      # sightline settings - the front end's Options menu writes this;
+      # edit by hand only while the game is closed.
+      version=1
+      control_style=2
+      look_updown=1
+      aim_control=1
+      mouse_invert_y=1
+
+- `src/native/sl_settings_apply.c`: apply_player_defaults (style only for
+  one player - the folder load's rule - Look Up/Down and Aim Control always)
+  through cur_player_set_control_type / set_cur_player_look_vertical_inverted
+  / cur_player_set_aim_control; sync_from_game through the getters. Seams:
+  options.c init_watch_at_start_of_stage after fileLoadSaveSettingsForSelected
+  Folder (APPLY), file2.c fileSaveSettingsForFolder after `save->options`
+  (SYNC). Both `#ifndef __sgi`, both no-ops with the store inactive.
+- `src/native/sl_front_options.c`: MENU_SL_OPTIONS and MENU_SL_CONTROLS
+  (bondconstants.h, appended after MENU_SPECTRUM_EMU under `#ifndef __sgi`,
+  dispatched in front.c's four switches). Built as mode select / the cheat
+  menu: cursor bands, value columns, A/Z/START, B + PREVIOUS tab,
+  frontUpdateControlStickPosition, frontDrawCursor; sl_menu_pointer.c lists
+  both as pointer menus. Labels are native uppercase LF strings (the title
+  table's convention; the tables come out of the ROM); values that exist in
+  the table are the table's (TITLE_STR_277_11HONEY + ordinal, ON / OFF).
+- front.c native arms: SL_MODESEL_DY = -16 (half a row pitch) on every row
+  y, box, threshold and setCursorPOSforMode - the group moves as one; the
+  third row is "OPTIONS", always drawn, opens MENU_SL_OPTIONS (gamemode keeps
+  GAMEMODE_CHEATS so Rare's cursor-return path is untouched); the cheat
+  menu's PREVIOUS returns to the Options screen with the cursor on CHEATS.
+- `.style` DECISION: retired. Its only responsibility was this one integer;
+  no tool read it. The launch that finds no config imports `<save>.style`
+  into control_style and writes the config (witnessed on the demo core:
+  "imported control style 0 from ...\demo\eeprom.bin.style"); afterwards the
+  sidecar is never read and never written. sl_style_apply_once is gone -
+  had it stayed it would have re-applied a stale sidecar over the config.
+- Invert Mouse Y: still ONE state (sl_input.c g_mouse_invert_y). Startup:
+  config -> sl_mouse_invert_y_seed (no explicit flag). read_env: SL_MOUSE_
+  INVERT applies only when PRESENT (the old code assigned 0 when unset,
+  which would have cleared the seed). UI (front-end row and #39 watch row)
+  -> sl_mouse_invert_y_set -> state + sl_settings_set -> written. options.c
+  writes no file. PRECEDENCE: built-in 0 < config < SL_MOUSE_INVERT (dev,
+  startup) < explicit UI change (wins for the run, persists). No double
+  inversion: the sign is still applied once in read_mouse; the R1 run below
+  shows minv=1 from the config alone giving verta 0 -> -6.0 for physical UP.
+
+### Hierarchy and semantics
+
+    mode select      1. SELECT MISSION  2. MULTIPLAYER  3. OPTIONS
+    OPTIONS          1. CONTROLS  2. CHEATS (dimmed 0x70 + unselectable while
+                     no cheat is unlocked - Rare's disabled-row semantic, the
+                     cursor falls through to CONTROLS)  3. BACK   + PREVIOUS
+    CONTROLS         CONTROL STYLE <name>  (click/A: next style; 1.1-1.4, or
+                     1.1-2.4 with two controllers - the watch's rule)
+                     LOOK UP/DOWN  REVERSE UPRIGHT   (pad stick convention)
+                     AIM CONTROL   HOLD    TOGGLE
+                     INVERT MOUSE Y OFF    ON        (mouse only)
+                     BACK                            + PREVIOUS
+    CHEATS           Rare's cheat menu, unchanged, PREVIOUS -> OPTIONS
+
+Global default: the front-end Controls page edits the store directly; every
+stage start applies the store on top of the folder's options; every watch
+close mirrors the watch's values into the store. One default, two views -
+a change in the watch persists exactly like one in the front end (the
+cartridge's own commit point is the seam, so nothing new decides "when").
+Consequence, documented: a different save folder's stored style/look/aim
+no longer wins at stage start - the config does; the folder save is still
+written as before. Keyboard = the stick moves the cursor, Enter confirms,
+Esc/Space back; controller = the same code (no pad attached this round).
+
+### Evidence (scratch qol4\, posted-message injection verified against the
+### game's own witness lines before every press; nothing committed)
+
+Targeting correction (owner report mid-round, "you keep going into mission
+select"): the earlier runs (e1, k1 first pass) pressed a fixed number of
+Enters through the auto-advancing boot chain, so one extra Enter landed on
+mode select with the cursor at Rare's default and activated SELECT MISSION
+(row 0); the pointer moves never applied because the desktop was in use
+(GetLastInputInfo idle < 5 s across minutes, real motion in the log) and
+the window had lost focus. Corrected: `sightline front: menu a -> b`,
+`sightline front: highlight menu=.. row=.. col=.. cursor=(h,v)` and
+`sightline options: row=.. col=.. -> ...` witnesses (SL_INPUT_DEBUG only);
+the injector waits on them (boot chain until file select is witnessed,
+seek-by-tap until the highlight row matches, click only after the highlight
+is the intended row).
+
+Persistence witness, the twelve steps (SL_CONFIG scratch root, SL_FPS=60):
+1-2 k1: no file -> "config.ini (no file, defaults) control_style=1
+look_updown=0 aim_control=0 mouse_invert_y=0". 3 k1 keyboard: Options ->
+Controls; style 1->2 (Kissy), UPRIGHT, TOGGLE, ON, each `sightline options:`
+line followed by `settings: wrote`. 4 file: version=1 control_style=2
+look_updown=1 aim_control=1 mouse_invert_y=1. 5 frame-limit exit. 6-7 k3:
+"(loaded) control_style=2 look_updown=1 aim_control=1 mouse_invert_y=1";
+Controls page shows 1.3 Kissy / UPRIGHT / TOGGLE / ON (k3-reloaded.png).
+8-9 k4 front end -> Dam Agent: "applied player defaults control_style=2
+look_updown=1 aim_control=1 (players=1) -> game reads style=2 look=1 aim=1"
+at stage start, watch never opened; k2 direct boot Facility: the same line
+and the pad line `style=2 ... minv=1 upright=1`. 10 k5 (Facility): watch
+INVERT MOUSE Y -> OFF: `minv=0` the same poll and `settings: wrote`; LOOK
+UP/DOWN -> reverse: `upright=0`, then Esc closes the watch -> `settings:
+wrote` (the sync) -> file look_updown=0 mouse_invert_y=0. 11-12 k6 restart:
+"(loaded) control_style=2 look_updown=0 aim_control=1 mouse_invert_y=0",
+applied, pad line `minv=0 upright=0`. R1 (Facility, config style=3 look=1
+aim=0 minv=1, real pointer, desktop idle 226 s): physical mouse UP -> verta
+0.0 -> -6.0 (DOWN, minv=1 from the config alone), DOWN -> 0.0.
+
+Front end (sheets qol4\sheet-before-after.png, sheet-k1.png, sheet-m1.png,
+sheet-demo.png): mode select reads 1. SELECT MISSION 2. MULTIPLAYER
+3. OPTIONS with the group 16 units (35 px at 960x720) higher than db2ec1e1;
+Options and Controls pages as above; keyboard path k1 (every row reached by
+seek-taps, every value set); mouse path m1 (desktop idle, real pointer +
+SendInput clicks, every click on a witnessed highlight: OPTIONS -> 26,
+CONTROLS -> 27, style 2->3, UPRIGHT, HOLD, ON, BACK -> 26, CHEATS on the
+unlocked save -> 21, a cheat row click Invincible OFF -> ON, PREVIOUS ->
+26, BACK -> 6); demo core d1 (build -Demo, scratch config, owner's demo
+save sha256 D9F306E2... unchanged): Multiplayer dimmed, Options, CHEATS
+enabled by policy (23 rows), Enter toggles Laser ON, Esc returns.
+Regression R1: E door 0->1, R reload, Ctrl crouch, 2/1 weap 5->29->5, wheel
+29/5, Esc opens the watch with the capture kept (menu=1 grab=1) and closes.
+Controller path: same code, not hardware-tested (no gamepad found).
+
+Build: build.ps1 -Demo (250/250, key carries SL_DEMO_BUILD) then build.ps1
+LAST (250/250, key lacks it, stubs 29 unchanged); test.ps1 facility 300 PASS
+1/1; settingstest 27/27; inputtest 22/117 pre-existing B-096 class
+unchanged. `__sgi` proof (qol4\sgi_proof.sh, base master AND HEAD):
+front.c 305088 b == 305088 (md5 ad912f2a1b9f), options.c 142251 ==
+142251 (03f1ae2287fd), file2.c 52347 == 52347 (651c85ab163e),
+bondconstants.h 379103 == 379103 (a60091765b6c); controls differ (1 line
+each); native arms +66 / +129 / +10 / +5 lines; #41 tokens in the __sgi
+expansions 0. `make trace-verify` NOT run (no MIPS toolchain; no __sgi
+change).
+
+### Limitations / deferred
+
+- The Options / Controls pages have no MP-side or watch-side equivalent of
+  the Multiplayer control-style screen; multiplayer keeps controlstyle_player.
+- The style name's row is "click = next"; no left/right arrows.
+- Row labels are native strings (uppercase); JP/EU never exercised.
+- No physical controller; the pad's B/A confirm and stick cursor are the
+  existing code.
+- `sl_game_set_control_style` (sl_game_query.c) has no caller now that the
+  sidecar is gone; left as the writer half of the query pair.
+- #42 sprint and #43 graphics mode are one table row and one Controls /
+  Display row each, on this store; not started.
+
+Owner steps: `.\tools\windows\play.ps1` -> title -> pick a folder -> 3.
+OPTIONS -> 1. CONTROLS: click the style name (cycles), click REVERSE /
+UPRIGHT, HOLD / TOGGLE, OFF / ON; BACK. Start any mission: the pad reads
+the chosen style and Look Up/Down, the mouse the chosen Invert Mouse Y,
+without opening the watch. Change any of them in the watch and close it:
+the front-end page shows the change next time, and after a restart. The
+file is %LOCALAPPDATA%\sightline\config.ini; deleting it restores the
+defaults (1.2 Solitaire, reverse, hold, off).
+
+## 2026-09-18 - Gitea #41 CLOSED on owner acceptance ("This is accepted. We
+## can move onto the next issue."; comment id 346, state closed read back).
+
+## 2026-09-18 - #42 Gameplay: native Sprint (Left Shift, held), default OFF,
+## capped at the cartridge's own diagonal; OPTIONS -> SETTINGS with a tab
+## strip (CONTROL | GAMEPLAY) - implemented on sightline/qol-controls, OPEN
+## pending the owner's pass
+
+One objective: a genuine native SPRINT action plus an opt-in persistent
+gameplay setting. OFF (default): movement identical to the accepted
+movement, Left Shift does nothing. ON: Left Shift held while moving engages
+Sprint, whose magnitude is the magnitude the existing W+D diagonal already
+reaches and never more. Recorded as D-006 in docs/divergences.md.
+
+### Bounded movement recon (file:line at 62804cf3)
+
+1. Consumed seam: WASD -> `map_kbm` sl_input.c:2060-2061 (`channel()` clamps
+   each axis to +/-70 independently - W+D publishes walk=70 AND strafe=70, no
+   normalisation) -> `sl_move_channels_set` -> `sl_move_channels_get` at
+   bondview2.c:5625, applied to moveData.analogWalk/analogStrafe :5635-5636
+   (walk/strafe withheld while insightaimmode, :5633).
+2. Per-axis consumption: `speedsideways = analogStrafe / 70` :6011,
+   `speedforwards = analogWalk / 70` :6030, each clamped to +/-1 :6042-6060 -
+   a SQUARE, not a circle - then `speedforwards *= 1.08f; *= speedboost`
+   :6062-6063 (speedboost 1.0 -> 1.25 after THREE_SECOND_TICKS of analogWalk
+   > 60, :6093-6116; MEASURED at 180 ticks of the native clock).
+3. Translation: MoveBond bondview2.c:7644-7736 - forward is the head
+   animation's root motion scaled by percent_speed (bheadUpdate bondhead.c:
+   279-290, anim speed from maxspeed = max(|F|, 0.8|S|, 0.8|theta|) :7665-7695),
+   sideways is `speedsideways * speedMultiplier * 0.5 * delta` added to
+   m[3][0] :7645/:279; crouch halves both at :6862 (SQUAT only).
+4. MEASURED gains (Surface, teleported to the start pad, eye per tick):
+   forward 8.41 units/tick at F = 1.08, 10.52 at F = 1.35 -> 7.79 per unit
+   F, linear through the run-up; sideways 8.39-8.47 at S = 1.0 -> 8.42 per
+   unit S. Ratio 1.081 = Rare's 1.08: the un-boosted forward speed equals the
+   strafe speed by construction.
+5. The diagonal: 11.85-12.07 units/tick un-boosted (= sqrt(8.41^2 + 8.42^2) =
+   11.90, at 45.0 degrees), 13.47 boosted (at 38.7 degrees). So the diagonal
+   exceeds straight by sqrt(2) un-boosted and 1.28 boosted - the square
+   clamp is why, and it IS the hard upper bound.
+6. A channel multiply is neutralised by the +/-1 clamps (:6042), so the rule
+   sits after :6063 and scales the two scalars the physics reads.
+7. Safe scalar: (speedforwards, speedsideways) after :6063 affect locomotion
+   only - look, the menu stick and the crosshair read other fields.
+8. Existing restrictions used: aim mode withholds walk/strafe (:5633) and the
+   seam is gated on insightaimmode == 0 anyway; crouch: crouchpos ==
+   CROUCH_STAND gate (the cartridge halves SQUAT at :6862; HALF refused too).
+
+### Architecture
+
+- `src/platform/sl_action.h/.c` - `SL_ACT_SPRINT` (bit 7), a LEVEL bound to
+  `SDL_SCANCODE_LSHIFT` in the default table (no pad row; analog deflection
+  is not a sprint); `src/native/sl_action_channels.c` - `SL_ACTCH_SPRINT`,
+  count 8. Published on every live poll whatever the setting says.
+- `src/platform/sl_settings.c/.h` - `sprint_enabled` (default 0, 0..1), the
+  fifth row; no version bump (a #41 file lacks the key and reads as 0);
+  `src/native/sl_settings_apply.c` - `sl_sprint_enabled()`, the game's one
+  read (table default 0 while the store is inactive).
+- `src/game/bondview2.c` - `g_sl_sprint_held` set in the NATIVE ACTIONS
+  block under its gates (`sl_held & SL_ACTCH_SPRINT && sl_sprint_enabled()`);
+  the NATIVE SPRINT block after :6063: req = |(F, Q*S)|, cap =
+  |(1.08 * speedboost, Q)|, Q = SL_SPRINT_Q = 1.08 (measured, above); if
+  held and channels live and not aiming and standing and 0 < req < cap, both
+  scalars *= cap/req. Direction preserved (one scalar), W+D (req == cap)
+  untouched, W+D+Shift == W+D, W+Shift and A+Shift reach the cap and stay
+  straight / pure sideways; the cap uses THIS tick's speedboost so the
+  run-up ramps identically. `sl_bond_sprint_state()` for the witness.
+- `src/native/sl_game_query.c` - the SL_INPUT_DEBUG action witness gains
+  `sprint=<0 off/1 held/2 applied> spd=<speedforwards>/<speedsideways>/<boost>`.
+- OPTIONS -> SETTINGS / CHEATS / BACK (owner correction mid-round: "use tabs
+  in the options menu instead of adding more options"); `MENU_SL_SETTINGS`
+  (renamed from MENU_SL_CONTROLS, bondconstants.h, front.c's four native
+  arms, sl_menu_pointer.c's list) is ONE page with a TAB STRIP - `s_tabs[]`
+  in `src/native/sl_front_options.c`, a label plus a row list per tab:
+  CONTROL (the four #41 rows) | GAMEPLAY (SPRINT OFF/ON) - over one content
+  area, BACK always in the last slot, the PREVIOUS tab as before. A tab is a
+  hit band like a row (the band above the first content slot, columns at
+  each tab's x, 0x50 apart from the label column); confirm / a click on a
+  tab selects it; the selected tab is boxed and white, the others the
+  front end's dimmed 0x70, a hovered tab boxed like any element. Keyboard
+  and controller reach the strip as they reach anything on a cursor menu
+  (stick moves the cursor onto a tab, confirm selects) - the front end has
+  no page-switch button convention to borrow (every Rare screen here is
+  cursor + confirm, B / PREVIOUS back), so none was invented. A cursor in an
+  EMPTY slot of the current tab falls through to the slot above (the
+  disabled-row rule). Witness: `highlight menu=27 row=-2 col=<tab>` on the
+  strip; `sightline options: tab=.. row=.. col=.. -> ... sprint=..`.
+- `tools/native/inputtest.c` - SPRINT section, 8 checks (Left Shift ->
+  SPRINT held + one edge, no button/stick/walk; held across polls; W+Shift
+  walk=70 unchanged; W+D+Shift 70/70 unchanged; release -> not held, no
+  edge; Right Shift not bound; Shift in the watch / front end -> channels
+  off, no button, no stick). `sl_settings.c` self-test: 34 checks (default,
+  written, out-of-range refused, write-on-change, reload, malformed -> 0, a
+  #41 file without the key -> 0, "1" parsed, "2" refused).
+
+### Restrictions and deliberate non-restrictions
+
+- Cannot create motion (req > 0); no effect while the watch / front end owns
+  input (channels inactive there); not while aiming (insightaimmode, the
+  cartridge's own locomotion restriction); not while crouched (HALF or
+  SQUAT, so crouched speed is never raised); pad locomotion identical in all
+  states (g_sl_channels_live gate, no pad binding); tank untouched (the
+  block is inside the on-foot branch).
+- NOT restricted while firing: the cartridge has no fire-speed rule and none
+  was invented. Pure sideways Sprint never builds the run-up (:6032 needs
+  analogWalk > 60), so it is capped at the un-boosted diagonal (11.90).
+- No stamina, no animation change beyond what the higher scalar already
+  drives (Rare's `PTR_ANIM_sprinting` is the run animation, threshold 100),
+  no rebinding UI, no watch row.
+
+### Evidence (scratch qol5\, posted-message injection, window parked
+### off-screen; nothing committed)
+
+Shift injection: SDL's Windows pump releases any Shift whose
+GetKeyState(VK_LSHIFT) is up (WIN_PumpEvents, verified against the SDL
+2.32 source), so a posted WM_KEYDOWN alone lasts one pump; the injector
+shares the game thread's key state (AttachThreadInput + SetKeyboardState)
+and parks the window off-screen so the owner's pointer cannot cross it (a
+real WM_MOUSEMOVE re-synchronises that state). No real input, no foreground.
+
+Deterministic speed (Surface, teleport -10700.6/167.3/-25447 theta 90, the
+same start pose and frame windows, SL_VI_CATCHUP=0, SL_MISSION_EVERY=1,
+keys held 10 s; distances over the first 240 ticks of motion; per-40-tick
+segments in the logs):
+
+    A  W               2023.1  straight (dir 179.9)   steady 8.41 -> 10.52/t
+    B  W+D             2789.0  dir -136.5             11.85..12.07 -> 13.18/t
+    C  W+Shift  (ON)   2785.9  straight (dz = 0.0)    11.73..12.04 -> 13.36/t
+    D  W+D+Shift (ON)  2789.0  dir -136.5             every segment == B
+    E  D               1918.2  pure sideways          8.39..8.47/t
+    F  D+Shift  (ON)   ~2000   pure sideways (dx 0)   11.84..12.05/t (obstacle after)
+    G  W+Shift  (OFF)  2023.1  every segment == A; SPRINT+H published, sprint=0
+    I  Shift alone     no motion; SPRINT+H, sprint=1 (held, not applied)
+    H  release         spd 1.080 -> 1.527 the tick Shift lands, 1.729 ->
+                       1.350 the tick it lifts (sprint 2 -> 0 immediately;
+                       the world speed follows through the head filter)
+    J  Ctrl+W+Shift    crouch=0, SPRINT+H, sprint=1, spd 0.540 - 4.2-4.4/t
+                       throughout, no increase
+
+B/A = 1.379 (window mix of sqrt(2) and 1.28), C/B = 0.999, D/B = 1.000
+exactly; D is never above B. Sprint states in the D log: held 27 polls,
+applied 0 - the request was already at the cap.
+
+Persistence (SL_CONFIG scratch, keyboard, every press on a witnessed
+highlight): p1 no file -> OPTIONS -> SETTINGS (menu 27, CONTROL tab) -> W onto
+the strip -> D onto GAMEPLAY -> Enter (`tab=1 row=-2 col=1`) -> S onto SPRINT
+-> D onto ON -> Enter -> `settings: wrote` + `tab=1 row=0 col=1 -> sprint=1`
+-> file `sprint_enabled=1` -> A back onto CONTROL -> Enter (`tab=0`, the four
+rows again). p3 Facility direct boot on that file, no Options / watch:
+"(loaded) ... sprint_enabled=1", W 8.4/t, Shift+W spd 1.527 and 9.2 -> 10.7
+-> 11.3/t rising until the corridor's wall. p2 relaunch: GAMEPLAY tab reads
+ON; OFF pressed -> `sprint=0` -> file `sprint_enabled=0`. p5 Facility on
+that file: SPRINT+H published, sprint=0, spd 1.080, 8.2-8.6/t - Shift no
+longer changes movement. Sheets: sheet-p1-all.png (OPTIONS 1. SETTINGS
+2. CHEATS 3. BACK; SETTINGS CONTROL tab; GAMEPLAY tab OFF -> ON; CONTROL tab
+again), sheet-p2.png (relaunch ON, then OFF).
+
+Demo core (build -Demo, key carries SL_DEMO_BUILD, scratch SL_CONFIG, the
+owner's demo save sha256 D9F306E2... unchanged): OPTIONS -> SETTINGS ->
+GAMEPLAY tab -> ON (`sprint=1`, wrote) -> OFF (`sprint=0`, wrote).
+
+Regressions after sprinting (the Surface/Facility logs): E/R/Ctrl/1/2/wheel
+paths untouched (Ctrl crouch witnessed in J), #39 sign untouched (no change
+to read_mouse), #40 watch pointer untouched (no change to sl_watch_pointer.c),
+#41 Controls rows now live on the CONTROL tab with the same setters and the
+same `sightline options:` diagnostic.
+
+Build: build.ps1 -Demo (250/250) then build.ps1 LAST (250/250, key lacks
+SL_DEMO_BUILD); test.ps1 facility 300 PASS; settingstest 34/34; inputtest
+SPRINT 8/8, 22/125 pre-existing B-096 class unchanged in kind. `__sgi`
+proof (qol5\sgi_proof.sh, base HEAD and master): bondview2.c 362607 b ==
+362607 (md5 6fd459293c52), front.c 305088 == 305088 (ad912f2a1b9f),
+bondconstants.h 379103 == 379103 (a60091765b6c); controls differ (1 line
+each); native arms +122 / +5 / +4 lines; native tokens in the `__sgi`
+expansions 0. `make trace-verify` NOT run (no MIPS toolchain).
+
+### Not exercised / limitations / deferred
+
+- MOUSE: exercised once the desktop went idle (110 s measured before the
+  run; m1, real pointer + real clicks, every click on a witnessed
+  highlight): OPTIONS -> 26, SETTINGS -> 27, the GAMEPLAY tab (ow=-2
+  col=1, 	ab=1), ON (sprint=1, wrote), OFF (sprint=0), the CONTROL tab
+  (	ab=0), BACK -> 26 (sheet-m1.png). Posted WM_MOUSEMOVE does not drive
+  the pointer layer (as in the #41 round), so this is the one mouse run.
+- No physical controller (no gamepad found); the pad reaches the strip and
+  the rows through the same cursor code.
+- Speed measured on the native tick (run-up engages after 180 native
+  ticks, ~6 s at 30 ticks/s; the cartridge's THREE_SECOND_TICKS is 180
+  retraces) - a pre-existing shim clock observation, not changed here.
+- Sprint while firing is allowed (no cartridge rule); pure sideways Sprint
+  caps at the un-boosted diagonal (the run-up needs forward input).
+- Rebinding (Left Shift only), a pad binding, stamina: not in scope.
+
+## 2026-09-18 - Gitea #42 CLOSED on owner acceptance ("It feels right to me.
+## We can move onto the next task."; comment id 362, state closed read back).
+
+## 2026-09-18 - #43 Phase A: selectable ORIGINAL / MODERN presentation - the
+## persistent mode, the Settings DISPLAY tab, and the first MODERN enhancement
+## (mip pyramid + 16x anisotropic filtering on every world texture) -
+## implemented on sightline/qol-controls (1eda1849, b0aa67e7, defaaa42), OPEN
+## pending the owner's pass
+
+One objective: a real, persistent ORIGINAL / MODERN boundary in the native
+renderer, exposed through the tabbed Settings page, with MODERN carrying ONE
+genuine renderer-side enhancement and ORIGINAL rendering exactly as the
+accepted build rendered before #43. Not a remake. Recorded as D-007.
+
+### Bounded renderer recon (file:line at 5fce05ed)
+
+1. Active renderer: SDL2 + OpenGL compatibility context, sl_gfx_sdl.c
+   sdl_init :138-216 (SDL_GL_DEPTH_SIZE 24, STENCIL 8, no multisample
+   attribute; log "SDL window 960x720, GL "4.6.0 NVIDIA 591.86"", "window
+   depth 24 bits, stencil 8 bits"); the display-list interpreter is
+   sl_gfx_dl.c (sl_gfx_frame_dl :14190).
+2. Presentation: the window IS the framebuffer - sdl_begin :238-254 sets
+   glViewport(0, 0, w, h) to the window size every frame (SL_WINDOW_SIZE via
+   play.ps1 :166/:319, default 960x720), so 3D is already rasterised at
+   window resolution; the N64's 320x240 / 440x330 are the game's logical
+   coordinate spaces (the pointer layer's), not a render target. The B-124
+   16-bit FBO (:79-136) exists only under SL_Z_QUANT=1 (diagnostic).
+   Tree-wide `grep -rn "sl_gfx_present_rect" src/` is EMPTY - no such
+   present rect exists; the window is presented by SDL_GL_SwapWindow :648.
+3. Texture sampling: tex_acquire sl_gfx_dl.c :4199-4201 (pre-#43 numbering)
+   - GL_TEXTURE_MIN_FILTER = GL_LINEAR for every texture except the B-119
+   detail-blend far image (GL_LINEAR_MIPMAP_LINEAR, :3856 g_want_lodmips),
+   MAG_FILTER = GL_LINEAR always; no anisotropy anywhere (tree-wide `grep
+   -rn "ANISOTROP" src/` empty before this round); the 2D path :12336-12337
+   GL_LINEAR/GL_LINEAR. Wrap from the tile's clamp bits (:4209-4212). Depth:
+   window 24-bit, tolerant redraw path B-125. Blending / alpha equation:
+   B-051 / B-138 program. Fog: glFogi GL_LINEAR :7927. Gamma / post: none.
+   Multisampling: none requested, none used.
+4. Native-only and safe to vary: everything in 3 (the sampler state is GL
+   object state, never seen by src/game).
+5. Runtime-switchable without asset / geometry / dependency / context /
+   __sgi change: the texture filter (a property of the GL texture object,
+   decided per upload, already cache-keyed by has_enh / has_mips). MSAA
+   would need context attributes before window creation (restart boundary,
+   touches the B-125 stencil path) - rejected for Phase A.
+6. Fixed capabilities: internal resolution already = window; SL_TEX_ENHANCE
+   (B-116 Catmull-Rom upscale, :3762 enhance_option) is ON by default and is
+   part of the accepted ORIGINAL look - it stays a developer switch, not a
+   second mode; the B-119 mip pyramid exists for one family only; the
+   shade / fog / LOD switches are fidelity fixes, not candidates.
+7. The one branch: tex_acquire's eligibility line (want_modern), which enters
+   the cache key.
+8. Applies at each texture's next resolve = the next frame drawn; no restart.
+
+### Architecture
+
+- `src/platform/sl_settings.h/.c` - `SL_SET_PRESENTATION_MODE` /
+  `presentation_mode` (default 0, 0..1, sixth row, no version bump), `enum
+  sl_presentation_mode { SL_PRESENT_ORIGINAL, SL_PRESENT_MODERN }` and THE
+  ONE ACCESSOR `sl_presentation_mode()` (host class beside the table, so the
+  renderer includes it from its own layer and the self-test covers it).
+  Inactive store, missing / malformed / out-of-range key -> ORIGINAL.
+- `src/native/sl_front_options.c` - `s_tabs[]` gains DISPLAY { SR_PRESENT }:
+  `PRESENTATION  ORIGINAL  MODERN` + BACK, same hit bands / columns / pointer
+  as the other tabs; tab pitch 0x50 -> 0x5A (measured: GAMEPLAY ran into
+  DISPLAY at 0x50). Diagnostic `sightline options: ... present=<0|1>`.
+- `src/gfx/sl_gfx_dl.c` - `want_modern = g_tex_world && !g_cc_tex1lerp &&
+  sl_presentation_mode() == SL_PRESENT_MODERN` in tex_acquire, cache-keyed
+  (`has_modern`); MODERN upload = GL_LINEAR_MIPMAP_LINEAR + anisotropy
+  (`modern_aniso_max()`: GL_MAX_TEXTURE_MAX_ANISOTROPY queried once on the
+  first MODERN upload, capped 16, absent = trilinear alone; witness line
+  "presentation MODERN texture filter - trilinear mip pyramid on every world
+  texture, anisotropic 16x (granted by the context)") + the full pyramid
+  built from the uploaded level 0 (enhanced or decoded). Census
+  `g_tex_modern_res` (per frame) / `g_tex_modern_uploads` (cumulative) on
+  the `sl_dl` heartbeat: `present=ORIGINAL|MODERN modern-tex=<res>/<uploads>`.
+- ORIGINAL: `want_modern` 0, statements verbatim, counters 0/0.
+
+### Evidence (scratch qol6\, nothing committed)
+
+- Baseline BEFORE the renderer change: build.ps1 on 5fce05ed (compiled 0,
+  exe sha256 0CB0F3BE2E24A49D...), Facility catwalk (teleport 6750/106/-2550
+  theta 270 room 68, frame 601) and Dam intro camera (no teleport, frame
+  901), SL_VI_CATCHUP=0, SL_SHOT: each pose captured twice, byte-identical
+  run-to-run (2073600 bytes).
+- ORIGINAL negative control (post-#43 build, config without the key):
+  Facility frame 601 IDENTICAL to the baseline byte-for-byte; Dam frame 901
+  IDENTICAL; `present=ORIGINAL modern-tex=0/0` on every heartbeat.
+- MODERN (config presentation_mode=1): Facility 172471 / 691200 pixels
+  differ (24.95%, max channel delta 73), heartbeat `present=MODERN
+  modern-tex=3407/132`; Dam 68517 (9.91%), `modern-tex=2566/52`; the
+  anisotropic 16x witness line once per run. Sheets: sheet-fac.png (ORIGINAL
+  pre-#43 | ORIGINAL post-#43 | MODERN | ORIGINAL again, x3 crop of the
+  distant catwalk grating: solid mesh under MODERN, sparkle under ORIGINAL),
+  sheet-dam.png (dam wall and water resolving instead of streaking),
+  fac-crops.png / dam-crops.png.
+- Switch back (config 0 after MODERN): Facility frame 601 IDENTICAL to the
+  baseline again; counters 0/0.
+- Live switching in ONE process (k1, front end, the wallet Bond's 3D goes
+  through the world path): `modern-tex=0/0` -> MODERN pressed -> `30/4` ->
+  ORIGINAL pressed -> `0/4` -> MODERN -> `30/4`, each press followed by
+  `settings: wrote`.
+- Persistence (SL_CONFIG scratch, keyboard, every press on a witnessed
+  highlight): k1 no file -> `(no file, defaults) ... presentation_mode=0` ->
+  OPTIONS -> SETTINGS -> strip -> DISPLAY (`tab=2 row=-2 col=2`) -> MODERN
+  (`present=1`, file `presentation_mode=1`) -> ORIGINAL (`present=0`) ->
+  MODERN. k2 relaunch: `(loaded) ... presentation_mode=1`, the front end's
+  3D under MODERN before any Settings visit (`modern-tex=164/953`), DISPLAY
+  reads MODERN (sheet-k2.png), ORIGINAL pressed -> file 0. k3 relaunch:
+  `(loaded) presentation_mode=0`, DISPLAY reads ORIGINAL, 19 heartbeats
+  0/0. Direct boot Facility on presentation_mode=1 without visiting
+  Settings: the filter line and modern-tex non-zero (fac-modern).
+- Mouse (m1, desktop idle 27 min measured, real pointer + real clicks, every
+  click on a witnessed highlight): OPTIONS -> 26, SETTINGS -> 27, DISPLAY
+  tab (`row=-2 col=2`), MODERN (`present=1`), ORIGINAL (`present=0`), BACK
+  (`row=4`) -> 26.
+- Demo (build -Demo, key carries SL_DEMO_BUILD, scratch SL_CONFIG, owner's
+  demo save sha256 D9F306E2... unchanged before and after, no demo
+  config.ini created): OPTIONS -> SETTINGS -> DISPLAY -> MODERN (`present=1`,
+  `modern-tex=30/4`) -> ORIGINAL (`present=0`, `0/4`).
+- Regression under ORIGINAL (reg.ini, Facility, r1 after the intro camera,
+  r2 at the corridor pose): #38 INTERACT / RELOAD / CROUCH (crouch 2->0->2)
+  / WEAPON_NEXT / WEAPON_PREVIOUS (weap 5<->29, keys and wheel), E opens
+  the corridor door (door 0->1 @65); #39 minv=1: physical mouse UP -> verta
+  -4.0 -> -10.0 (inverted), back to -4.0; #40 Esc opens the watch (menu=1
+  grab=1, the wrist pitch to -40 and back) and closes; #41 CONTROL tab rows
+  unchanged (sheet-k1.png); #42 Shift+W with sprint OFF: SPRINT+H, sprint=0,
+  spd 1.080 - no boost. Heartbeat 0/0 throughout.
+- Build: build.ps1 -Demo (250/250) then build.ps1 LAST (250/250, key lacks
+  SL_DEMO_BUILD); test.ps1 facility 300 PASS 1/1; settingstest 50/50;
+  inputtest 22/125 pre-existing B-096 class unchanged (no input file
+  touched). No src/game edit this round (git status: sl_settings.c/.h,
+  sl_front_options.c, sl_gfx_dl.c), so no __sgi proof is needed; `make
+  trace-verify` NOT run (no MIPS toolchain).
+
+### Not exercised / limitations / deferred
+
+- MODERN mip-filters alpha-cutout textures too (fences, grilles); a distant
+  cutout averages toward translucent under the alpha test. Not yet judged
+  by the owner; the alternative (exclude cutouts from the pyramid, keep
+  anisotropy) is one eligibility term away.
+- The two-tile water / mip-lerp family keeps ORIGINAL sampling in both modes
+  (as the B-116 enhancement does); the B-119 far image keeps its own pyramid
+  in both modes.
+- No physical controller (no gamepad found); the pad reaches the DISPLAY tab
+  through the same cursor code.
+- build.ps1's header-change detection covers src/*.h, src/game/*.h and
+  include/; a src/platform or src/gfx header edit does not rebuild its
+  dependents (three stale objects were deleted by hand this round; the
+  enum was appended, so the stale objects were ABI-compatible anyway).
+  Tooling debt, not fixed here.
+- Deferred MODERN candidates, in the order the recon ranked them: MSAA on
+  the context (needs a restart boundary and a check against the B-125
+  stencil redraw path); a higher-quality presentation scaler for non-integer
+  window sizes; the mag filter for the 2D layer. Lighting, shadows,
+  replacement assets, post-processing: out of Phase A by definition.
+
+Owner steps: `.\tools\windows\play.ps1` -> title -> a folder -> 3. OPTIONS ->
+1. SETTINGS -> click DISPLAY on the tab strip -> click MODERN (or ORIGINAL);
+BACK; start Facility and look along the bottling-room catwalk or any
+corridor floor at a glancing angle - MODERN resolves the distant grating
+and floor tiles where ORIGINAL sparkles. The choice persists in
+%LOCALAPPDATA%\sightline\config.ini (`presentation_mode=0|1`); deleting the
+key or the file restores ORIGINAL.
+
+## 2026-09-18 - Gitea #43 PARKED / DEFERRED on owner decision; Phase A
+## RETIRED unshipped (474f6691). Not accepted.
+
+The owner compared ORIGINAL against MODERN on Dam and found the
+filtering-only MODERN not meaningfully distinguishable, and does not want to
+ship a filtering-only Original / Modern toggle. #43 is PARKED / DEFERRED
+until the dedicated graphics phase, where Modern is to carry substantial
+visible changes (textures, lighting); it stays OPEN as the tracking issue
+(parked = open, this project's convention). Comment id 377 posted and read
+back. No MSAA, no validator, no new Modern feature.
+
+Removed by explicit forward commit 474f6691 (no history rewrite):
+
+- `src/platform/sl_settings.h/.c` - the `presentation_mode` table row and
+  enum id, `enum sl_presentation_mode`, `sl_presentation_mode()`, and the
+  self-test rows for them (34 checks again, the #42 count). A config.ini
+  still carrying the key reads it as an unknown key and ignores it; the next
+  write drops it (the owner's own config carried `presentation_mode=1` from
+  the comparison session - harmless).
+- `src/native/sl_front_options.c` - the DISPLAY tab and its `PRESENTATION
+  ORIGINAL / MODERN` row, `SR_PRESENT`, the `present=` diagnostic field. The
+  strip is `CONTROL | GAMEPLAY` again at the #42-accepted 0x50 pitch (the
+  0x5A widening existed only to clear the third tab; measured this round:
+  two tabs at 0x50 read cleanly, sheet-p2.png).
+- `src/gfx/sl_gfx_dl.c` - restored to its pre-#43 content (5fce05ed): the
+  `has_modern` cache key, `want_modern`, `modern_aniso_max`, the MODERN
+  mip / anisotropy upload arm, the census counters and the `present= /
+  modern-tex=` heartbeat and `sl_tex` lines. B-116 / B-119 and every other
+  renderer fix untouched - the file is byte-identical to 5fce05ed.
+
+Retirement proof (scratch qol7): the Facility catwalk same-pose frame
+(teleport 6750/106/-2550 theta 270 room 68, frame 601, SL_VI_CATCHUP=0) on
+the retired build is byte-identical to the pre-#43 baseline capture
+(qol6\shots\fac-before-a, sha256 2B45EE02..., 2073600 bytes) and differs
+from the old MODERN capture by 24.95% of pixels (positive control); the
+heartbeat carries no present= / modern-tex field. `grep -rn -i
+"presentation_mode\|SL_PRESENT\|modern-tex" src/ tools/` -> 0. D-007 in
+docs/divergences.md is marked RETIRED / NOT SHIPPED with the record kept.
+
+## 2026-09-18 - #44 Watch: the SIGHTLINE page - a sixth solo-watch page for
+## the native-only settings (INVERT MOUSE Y, SPRINT); the #39 row moves here
+## from Game Options - implemented on sightline/qol-controls (7c5ec216), OPEN
+## pending the owner's pass
+
+Filed as #44 after a duplicate search over all 43 prior issues (state=all,
+titles and bodies: watch / sightline / native settings / tab / in-game /
+pause menu / sprint / invert) - #39 held one row on Game Options, #40 is
+the watch pointer, #41 the front end; no issue covered a dedicated watch
+page for native settings. #40 / #41 not reopened.
+
+### Bounded watch recon (file:line at 474f6691)
+
+1. Page identifiers: options.h:75-81 `WATCH_INDEX_MISSION_STATUS 0 ..
+   WATCH_INDEX_MISSION_BRIEFING 4`, `WATCH_NUMBER_SCREENS 5` (:44, sizes two
+   player-struct buffers: bondview.h:1241 vertices, :2182 DL; the player is a
+   FIXED 0x2A80 allocation, player.c:127, so the count cannot grow); the
+   docs' "solo watch menu.txt" gives the same ring (0x80040994 selected page,
+   0 main 1 inventory 2 control 3 options 4 brief) and the interface's
+   page-0..4 dispatch (7F0A6A80).
+2. The ring: `watch_screen0_navigation` options.c:747 (L -> BRIEFING with
+   WATCHZOOM1, R -> INVENTORY), `watch_screen1_navigation` :807, `_2` :884
+   (R -> GAME OPTIONS, silent), `_3` :909 (R -> BRIEFING), `_4` :934 (L ->
+   GAME OPTIONS, R -> MISSION STATUS with zero_D_800409A4 + WATCHZOOM2);
+   each on `L/R_CBUTTONS | L/R_TRIG | L/R_JPAD` or the stick past 0x2E
+   through the `controlstick_lr_enabled` latch (sub_GAME_7F0A4FB0/4FEC,
+   :643-652; the keyboard's A/D are +/-70 stick pulses, sl_input.c:2010),
+   only while `watch_item_is_actively_selected == 0`.
+3. The page bar: bondview2.c:3791-3804 builds five rectangles into the
+   player struct on open (setup_watch_rectangles 0x64 x 0x14 at -0x12B +
+   i*125, z 0x136; sub_GAME_7F0A3B40 = one gSPVertex + one tri pair per
+   rectangle, glass2.c:442); options.c:1870 draws that list under the two
+   scale matrices in draw_background_health_and_armor; :1696
+   set_page_rectangle_colors colours 20 vertices with the selected page's
+   four brighter (dimmer while latched).
+4. Per-page draw: draw_watch_current_page options.c:4299 (the A/Z latch
+   toggle for every page but inventory :4315, the switch :4320); the Game
+   Options page :3920 (background, sliders, music/fx labels at YOFFSET_8/9,
+   draw_toggle_options :3882 - 8 rows at YOFFSET_1 + i*YINC through
+   draw_toggle_option_values :3656 with values at 0xC8/0xFA).
+5. The navigation dispatch: sub_GAME_7F0A6A80's switch options.c:1617 (row
+   navigation per page, then watch_screenN_navigation).
+6. #40 hit-testing: sl_watch_pointer.c hit_page_bar :349 (projects each
+   bar rectangle through the page matrix, the two guScale matrices and the
+   watch perspective), hit_game_options :372 (labels / value columns per
+   row band), apply_hover :662 / apply_click :707 writing the same globals
+   the stick path writes, go_to_page :579 (row reset, zoom + beep only
+   when the zoom changes).
+7. Insertion seam: index 5 appended after the five originals under
+   `#ifndef __sgi` (the #39 pattern), the ring rewired at the two
+   neighbours' arms with the originals in `#else`, the bar rebuilt natively
+   with six segments in the per-frame dyn buffer (dyn.c:82/106 bump
+   allocator, the same one the green background uses at :1830-1833).
+8. The #39 row: options.h:108-109 (`GAME_OPTIONS_INDEX_SL_MOUSE_INVERT 10`,
+   `SL_GAME_OPTIONS_COUNT 11`), options.c sub_GAME_7F0A5998 :1023-1047
+   (native bounds), game_options_music_volume_navigation :1055-1061 (wrap),
+   the dispatch case :1656, sl_mouse_invert_row_input :3827,
+   sl_draw_mouse_invert_row :3851, the call at :3913; sl_watch_pointer.c
+   :407-437 (the ninth hit row) and :618-627 (the value set).
+9. The toggle-row helpers: game_option_select_value :3608 (write + stick
+   latch + OPTION_CHOOSE_SFX), game_option_toggle_input :3616 (latched
+   LEFT = lower value, RIGHT = higher), watch_play_beep_sound :604 (the A/Z
+   latch), the row step sub_GAME_7F0A5998 :1004 (U/D c-buttons, d-pad, the
+   stick's y latch sub_GAME_7F0A5088/50C4, wrap, latch dropped).
+10. Sprint's consumer: bondview2.c:5776 reads `sl_sprint_enabled()` on
+    every bondviewProcessInput pass (no cache); the front end wrote the
+    store through sl_settings_set(SL_SET_SPRINT_ENABLED) (sl_front_options.c
+    :410).
+
+### Placement and architecture
+
+- `src/game/options.h` (native block): `WATCH_INDEX_SL_SIGHTLINE 5`,
+  `SL_WATCH_NUMBER_SCREENS 6`, the six-segment bar from the SAME formula
+  as the five ((n+1)*width = 600 -> 85; spacer width/(n-1) = 17; step 102),
+  the rows `SL_SIGHTLINE_ROW_MOUSE_INVERT 0 / _SPRINT 1 / _COUNT 2`, the
+  layout (heading at XOFFSET_1, 0x1A - where Control Options puts "control
+  style"; rows from 0x2B, YINC apart). The #39 defines are gone.
+- Ring position: appended at the END - ... GAME OPTIONS <-> BRIEFING <->
+  SIGHTLINE <-> MISSION STATUS ... - so the bar's left-to-right order IS the
+  ring order with no slot remapping. Main page LEFT and briefing RIGHT reach
+  it (WATCHZOOM3, beep); its LEFT returns to the briefing (WATCHZOOM1), its
+  RIGHT wraps to the first page exactly as the briefing's RIGHT did
+  (D_800409A4 cleared, WATCHZOOM2). Consequence for muscle memory: Game
+  Options from the first page is now LEFT x3 (was x2).
+- `src/game/options.c`: `sl_sightline_row_index` + `sl_reset_sightline_row_
+  index` (reset on every entry, as reset_game_options_index is),
+  `sl_watch_sightline_navigation` (the row step of sub_GAME_7F0A5998 + the
+  page change of watch_screen4_navigation), the dispatch case, the draw
+  case, `sl_draw_watch_sightline_page` (draw_watch_game_options_page's
+  shape: background + bar, text once the zoom settles: heading "sightline",
+  rows "invert mouse y" / "sprint" with the table's own off / on strings,
+  the same colours / x positions / outlined-selected state as the toggles;
+  latched LEFT/RIGHT through game_option_select_value on a local, then the
+  one setter), the native bar (six setup_watch_rectangles /
+  sub_GAME_7F0A3B40 pairs into dynAllocateVertices(24) / dynAllocate(13
+  Gfx) per frame, coloured as set_page_rectangle_colors colours the five,
+  drawn under the same matrices in place of the player's list, which is
+  still built on open and not drawn - drawing it for page 5 would colour
+  past its 20 vertices into the static bar's). Game Options: original ten
+  rows, bounds and wrap the original code (the #39 native arms removed).
+- `src/native/sl_settings_apply.c`: `sl_sprint_enabled_set(on)` -
+  sl_settings_set(SL_SET_SPRINT_ENABLED). THE ONE SETTER both views call.
+- `src/native/sl_front_options.c`: SR_SPRINT reads / writes through
+  sl_sprint_enabled / _set (same store row, same write-on-change).
+- `src/native/sl_watch_pointer.c` (#40 machinery): hit_page_bar walks
+  SL_WATCH_NUMBER_SCREENS segments at the native step / width;
+  hit_sightline (labels at XOFFSET_1, the OFF / ON columns 0xC8 / 0xFA
+  centred, the Game Options row bands); hover -> sightline_highlight (latch
+  dropped on a row change); label click = A (latch toggle); value click =
+  sightline_set_value (game_option_select_value's sound + stick latch, then
+  the one setter); go_to_page resets the row; page_zoom WATCHZOOM3; the
+  Game Options hit rows are the eight table rows again; the debug line
+  gains slrow= / sprint=; ONE new witness under SL_INPUT_DEBUG: `sightline
+  watch: page a -> b (slrow=.. minv=.. sprint=..)` on every page change.
+
+Same-state paths: Invert Mouse Y - watch row / front-end CONTROL row ->
+`sl_mouse_invert_y_set` -> g_mouse_invert_y (read_mouse's one sign point)
++ the store (#41). Sprint - watch row / front-end GAMEPLAY row ->
+`sl_sprint_enabled_set` -> the store row -> `sl_sprint_enabled()` read by
+bondview2.c:5776 every tick. No watch-local value, no sync code (tree-wide
+`grep -rn "sl_sightline\|sl_sprint_enabled_set" src/` shows only the row
+index and the setter's callers).
+
+`__sgi` verbatim (qol7\sgi_proof.sh, base master AND HEAD; the control is a
+bare token now, because the old `/* CONTROL */` comment was being stripped
+by the preprocessor and read VACUOUS on the header): options.c 142251 b ==
+142251 (md5 03f1ae2287fd - the hash every earlier round reported),
+options.h 20445 == 20445 (02410265a19d); controls differ (1 line each);
+native arms +308 / +32 lines vs master (+223 / +32 vs HEAD); native tokens
+in the __sgi expansions 0 / 0. No renumbering of any original watch
+semantic in the __sgi build.
+
+### Evidence (scratch qol7\; posted-message injection on the game's own
+### witness lines, window parked off-screen; nothing committed)
+
+The desktop was IN USE for the whole round (GetLastInputInfo idle 0 s on
+every check), so no real pointer, foreground or SendInput was used.
+
+- K1 (k.ini both 0, Facility catwalk pose): Esc -> `page -1 -> 0` (the
+  interactive-watch witness; a stick pulse before it is ignored because the
+  navigation runs in state 5 only) -> A -> `page 0 -> 5 (slrow=0 minv=0
+  sprint=0)`; sheet k1 shot 4: SIGHTLINE / INVERT MOUSE Y OFF ON / SPRINT
+  OFF ON, both OFF, six-segment bar with the sixth lit. Enter (latch), D ->
+  `minv=1` on the pad line the same poll and `settings: wrote`; Enter; S
+  (row 1); Enter; D -> `settings: wrote` (sprint_enabled=1); Enter; Esc ->
+  menu=0; W+Shift 3 s -> `SPRINT+H sprint=2 spd=1.527/0.000/1.00` (31
+  polls; the #42 cap - Sprint applied at once after the close). Reopen ->
+  A -> `page 0 -> 5 (slrow=0 minv=1 sprint=1)`; sheet shot 12 reads ON /
+  ON; the ring by D: 5->0->1->2->3->4->5, one witness per press. Both OFF:
+  `minv=0`, `wrote`; Esc; W+Shift -> `SPRINT+H sprint=0 spd=1.080` (no
+  boost). Config after: mouse_invert_y=0 sprint_enabled=0, four writes.
+- Persistence chain (p.ini, no file): P1 watch sets both ON -> file
+  mouse_invert_y=1 sprint_enabled=1. P2 front end: `(loaded) ...
+  mouse_invert_y=1 sprint_enabled=1`; CONTROL tab reads INVERT MOUSE Y ON
+  (sheet-p2 shot 16), GAMEPLAY tab (`tab=1 row=-2 col=1 -> ... minv=1
+  sprint=1`) reads ON (shot 20); SPRINT OFF pressed -> `wrote`, `tab=1
+  row=0 col=0 -> ... sprint=0` (shot 25). P3 relaunch Facility: `(loaded)
+  ... mouse_invert_y=1 sprint_enabled=0`, watch `page 0 -> 5 (slrow=0
+  minv=1 sprint=0)`, sheet-p3 shot 4 reads ON / OFF (shot 3: the main page
+  with the six-segment bar, first lit).
+- Original watch regression (r1, r2, r3; sheet-r1 / sheet-r3): every page
+  renders with the bar (mission status, inventory, control options with
+  the pad diagram, Game Options with its TEN rows and no invert row,
+  briefing objectives and background pages by S/W); inventory S, S, Enter
+  -> weap 5 -> 29 (equipped); control style Enter, S -> style=2 through
+  the list; Look Up/Down Enter, D -> upright=1; S x10 on Game Options (the
+  original ten-row step and wrap, no per-press index witness - unchanged
+  code, the original bounds restored); abort: Enter latches, D/A move
+  confirm/cancel, Enter clears; Esc opens / closes twice. (A first pass
+  with 700 ms key spacing overlapped weapon-switch animations and read as
+  a scrambled weapon order - choreography, not a regression; r2/r3 with
+  1.5 s spacing are clean.)
+- #38-#42 quick pass after the watch (r2): E INTERACT (door at 168 units,
+  out of reach at this pose - pressed, no change, as expected), R RELOAD,
+  Ctrl crouch 2 -> 0 -> 2, 2 -> weap 5 -> 29, 1 -> 5, wheel -1 -> 29, +1
+  -> 5; #42 OFF: SPRINT+H sprint=0 spd=1.080; #39 sign path untouched
+  (read_mouse not edited).
+- Demo (build -Demo, key carries SL_DEMO_BUILD, scratch SL_CONFIG d.ini):
+  the SIGHTLINE page exists in the demo watch and toggles - `page 0 -> 5`,
+  `minv=1`, `wrote` (sprint), sheet-d1 OFF/OFF -> ON/ON; no DISPLAY /
+  PRESENTATION anywhere (the same s_tabs[]). CAUTION, measured: the demo
+  core saves to `%LOCALAPPDATA%\sightline\demo\eeprom.bin` regardless of
+  SL_EEPROM_RW, and closing the watch in a mission commits the folder
+  record (19 bytes of one folder's checksum/flags changed). The owner's
+  demo save was restored byte-for-byte from the pristine copy the earlier
+  rounds hashed (sha256 D9F306E2..., the same content as the owner's normal
+  save) and re-verified; the normal config / save were never opened by this
+  round (their mtimes predate its first run).
+- Build: build.ps1 -Demo (250/250) then build.ps1 LAST (250/250, key lacks
+  SL_DEMO_BUILD); test.ps1 facility 300 PASS 1/1; settingstest 34/34;
+  inputtest 22/125 pre-existing B-096 class unchanged (no input file
+  touched). `make trace-verify` NOT run (no MIPS toolchain; the __sgi arms
+  are byte-identical).
+
+### Not exercised / limitations
+
+- MOUSE on the new page (the sixth bar segment, row hover, OFF / ON clicks,
+  clicks not leaking into gameplay): NOT machine-exercised this round.
+  Posted WM_MOUSEMOVE / WM_LBUTTON* never reach the pointer layer while the
+  window is parked off-screen: read_pointer requires SDL_GetMouseFocus() ==
+  the window (sl_input.c:1857), and TrackMouseEvent yields an immediate
+  WM_MOUSELEAVE with the real cursor elsewhere - the same measured limit as
+  the #41 / #42 rounds; a real pointer needs an idle desktop, which never
+  came. The code is the #40 machinery (owner-accepted) with two additions
+  (hit_sightline, the sixth segment) built from the same constants the draw
+  uses; the owner's pass is the evidence.
+- The immediate-application witness for Invert Mouse Y is the pad line's
+  `minv=` flipping on the poll of the change (the state read_mouse applies
+  once per poll, unchanged since #39 / #41, where physical UP -> verta
+  negative was measured with real motion); no real relative motion was
+  available this round.
+- No physical controller (no gamepad found); L/R / C-left/right / d-pad
+  and A/Z reach the page through the same code the keyboard's stick pulses
+  and Enter exercised.
+- JP/EU text offsets mirrored from the draw code, untested.
+
+Owner steps: `.\tools\windows\play.ps1` -> any mission -> Esc -> A (or
+click the SIXTH bar segment): the SIGHTLINE page; W/S (or hover) pick a
+row; Enter then A/D set OFF/ON (or click OFF / ON); Esc. Sprint (Left
+Shift) and mouse inversion change the moment the watch closes; OPTIONS ->
+SETTINGS shows the same values, and they survive a restart. Game Options
+is now LEFT x3 from the first page (LEFT x1 is SIGHTLINE, x2 the briefing).
+
+## 2026-09-18 - Gitea #45 FILED and PARKED: "Display: selectable 4:3 / 16:9 /
+## 32:9 aspect ratios with correct FOV, culling and LOD" - foundational native
+## display functionality, independent of #43; #44 remains the active task
+
+Filed after a duplicate search over all 44 prior issues (state=all, every
+page, titles and bodies: aspect, 16:9, 32:9, widescreen, ultrawide, FOV,
+field of view, resolution, viewport, letterbox, stretch, display) - none
+owns the scope (#8 lists FOV/aspect only as mark fields, #38 only the scope
+zoom, the rest are display lists and the high-resolution rounds). Not #43
+(the parked ORIGINAL / MODERN graphics mode) and not dependent on it; no
+dependency on modern textures, lighting, MSAA, shadows or replacement assets.
+
+- Owner requirement: a selectable 4:3 / 16:9 / 32:9 aspect; the image must
+  NOT stretch horizontally; 16:9 and 32:9 expose a genuinely WIDER horizontal
+  view with the vertical composition preserved. Aspect is separate from
+  resolution - never hard-code 1920x1080 / 3840x1080; derive the aspect from
+  the active viewport / window or the selected policy, same behaviour across
+  resolutions of one aspect. Persisted through sl_settings; UI placement
+  decided at implementation against the then-current Settings structure.
+- FOV: determine the engine's convention FIRST (the world projection is
+  `guPerspectiveF(fovy, aspect)` at fr.c:709 fed by viSetFovY / viSetAspect;
+  bondview2.c:8504-8584 sets FOV_Y_F and the viewport-derived aspect; the
+  cartridge's SCREEN_RATIO_16_9 branch is the ANAMORPHIC squeeze, not a
+  wider view; currentPlayerSetCameraScale at bondview.c:649-664 derives
+  c_scalex / c_scaley / c_scalelod), then widen the horizontal FOV as the
+  aspect widens, vertical kept. A bounded persisted FOV setting only if
+  technically clean (the zoom paths scale by viGetFovY() / FOV_Y_F);
+  otherwise split it. Aspect is tested independently of any FOV preference.
+- Render frustum / culling: wide modes expose geometry outside the 4:3 view;
+  inspect the left / right frustum edges (terrain, buildings, rooms /
+  portals, props, guards, particles, sky, water) for loss, popping and
+  4:3-shaped culling; update the RENDER visibility boundary where it assumes
+  the old shape (look at B-143 portal-window / scissor, #25 SL_CULL, the
+  bondview.c frustum planes, sl_gfx_present_rect).
+- LOD audit at 16:9 and 32:9: premature low detail, side popping, wrong
+  distance calcs; no blanket draw-distance increase, no LOD disable; classify
+  each decision (distance / projected size / FOV / viewport) and fix only
+  what widescreen breaks. Protected: B-133 prop policy (#26), Surface
+  tree / LOD work (#25), B-118 / B-144 texture LOD.
+- 2D / HUD / watch / front end: no horizontal stretch of any 2D element;
+  the 3D world uses the full aspect, the legacy 2D composition stays
+  proportioned and centred, derived from the 440x330 / 320x240 logical spaces
+  and the present-rectangle mapping (sl_menu_pointer.c), and the #40 / #44
+  watch face projection; 32:9 readability / placement verified explicitly.
+  Multiplayer split-screen viewports verified per aspect later; first pass
+  may be single-player.
+- Guard / NPC (AI) line of sight, detection distance, shooting logic and
+  mission scripting are explicitly UNCHANGED by the monitor shape; render
+  visibility and gameplay LOS are distinct, and any shared code / data is
+  documented before it is touched (rules 1 and 5).
+- Validation: deterministic same-pose 4:3 / 16:9 / 32:9 comparisons on Dam
+  terrain / mountains, a Facility corridor / room, and a props-and-guards
+  scene near the widened edges; no stretch, no vertical crop, wider view,
+  no side-frustum loss, no new pop-in, sane LOD, HUD undistorted. Owner
+  replay is the acceptance.
+
+Status: PARKED - not to be implemented now. #44 (the watch SIGHTLINE page)
+remains the active engineering task; #43 stays parked and independent.
+
+## 2026-09-18 - Gitea #44 CLOSED on owner acceptance ("#44 is accepted.";
+## comment id 410, state closed read back). The SIGHTLINE watch page and its
+## mouse targets are accepted on the owner's own replay.
+
+## 2026-09-18 - #46 Controls: persistent keyboard / mouse / controller
+## gameplay remapping - the binding registry, both editors (front end and the
+## watch's nested child), controller BUTTON MODE - implemented on
+## sightline/qol-controls (35326dac .. e41d8652), OPEN pending the owner's pass
+
+Filed as #46 after a duplicate search over all 45 prior issues (state=all,
+titles and bodies: bind, rebind, remap, mapping, keyboard, mouse button,
+controller, gamepad, pad button, trigger, wheel, custom, editor,
+config.ini, persist): #38 named "a later rebinding UI (#41)", #41 provided
+"the home and the persistence, not the action layer", #44 is the page the
+watch entry point lives on; all three closed, none owned this scope.
+
+### Bounded input recon (file:line at 1ccb8b5c)
+
+1. In the action layer already (#38 / #42): INTERACT, RELOAD, CROUCH,
+   WEAPON_PREVIOUS, WEAPON_NEXT, ZOOM_IN, ZOOM_OUT, SPRINT (sl_action.h:55-70),
+   from a compiled read-only table (sl_action.c:52-68), evaluated in
+   sl_input_live_poll after the mapping (sl_input.c:2264-2302).
+2. Bypassing it: W/A/S/D as scancodes (read_keyboard sl_input.c:860-863 ->
+   the intent's move axes -> map_kbm channel() +/-70 at :2060-2061 ->
+   sl_move_channels_set :2325); F / Q (:876-877) and LMB / RMB / MMB
+   (read_mouse :1070-1073) -> intent fire / aim -> N64 Z / R (map_kbm
+   :1992-1993); the pad's fixed buttons (read_pad :1352-1363 -> map_pad
+   :1511-1515 / map_pad_dual :1593-1599) and then the game's control-style
+   tables (bondview2.c:5175-5187 onward).
+3. The #38 representation: SL_SRC_KEY scancode, SL_SRC_MOUSE_BUTTON index,
+   SL_SRC_WHEEL dir + ctx, SL_SRC_PAD_BUTTON, SL_SRC_PAD_AXIS half; several
+   rows per action; no override, no names, no persistence.
+4. Persisted overrides can be applied before the first poll: sl_settings_start
+   (sl_ultra_shim.c:1993, from sl_eeprom_init_rw at configure time) loads
+   the store; the first poll runs from the SDL pump after the window is up.
+5. Front end: sl_front_options.c - SET_SLOTS 5 with BACK last (the CONTROL
+   tab's four rows filled it), tabs as hit bands, values on cursor_h_pos,
+   MENU_SL_OPTIONS / MENU_SL_SETTINGS dispatched by front.c's four switches
+   (:9084 / :9128 / :9161 / :9269) and listed in sl_menu_pointer.c:223;
+   fonts: ZurichBold everywhere on these pages, BankGothic on the difficulty
+   page and the MP stage list (front.c:3888, :6540).
+6. Watch: options.c sl_watch_sightline_navigation :1010 (row step + the
+   ring's L/R), sl_draw_watch_sightline_page :4038 (draw_options_labels
+   rows, the A/Z latch through sl_sightline_row_input :3982),
+   sl_reset_sightline_row_index :1005 on every entry; sl_watch_pointer.c
+   hit_sightline :466, hover :741, click :809, go_to_page :622, the frame
+   hook's state-5 gate :909; the abort sub-state (D_800409A4) is the
+   precedent for a page keeping a child state without a new ring index.
+
+### Architecture
+
+- `src/platform/sl_bindings.h/.c` - THE REGISTRY. Per action two
+  KEYBOARD/MOUSE slots and two CONTROLLER slots (`sl_bind_source` kind /
+  code / dir); the ONE compiled default table `g_defaults` (the accepted
+  E / R / Left Ctrl / 1 / 2 / wheel rows, plus W S A D, mouse 1 + F, mouse 2
+  + Q, and a CUSTOM-mode pad layout: RT + RB fire, LT + LB aim, A interact,
+  X reload, B crouch, Y next weapon, L3 sprint, R3 previous weapon); the
+  token tables (`key:<NAME>` over a fixed key table - letters, digits,
+  F1-F7 / F10-F12, arrows, the six modifiers, Caps Lock, punctuation, the
+  keypad; `mouse:LEFT|RIGHT|MIDDLE|X1|X2`; `wheel:UP|DOWN`;
+  `pad:A|B|X|Y|LB|RB|LS|RS|LT|RT`; `none`) with display names (W, LEFT
+  SHIFT, UP ARROW, CAPS LOCK, MOUSE 4, WHEEL UP, PAD RT, ---); get / set /
+  reset / is_default; the conflict policy; the capture state machine.
+  Excluded from capture on purpose: Escape, Tab, Return / keypad Enter,
+  Space (the fixed classic N64 B), Backspace / Delete (clear), F8 / F9
+  (marks), the pad's Start / Back / Guide / d-pad, every stick axis.
+- CONFLICTS are context-aware from action metadata: a level source (key,
+  mouse button, pad button, trigger half) is exclusive - setting it on a
+  slot STEALS it from any slot holding it (the other slot of the same
+  action included) and the editors say TAKEN FROM <action>; a WHEEL source
+  carries its action's wheel context (ZOOM IN / OUT scoped, everything
+  else play), so wheel up on PREVIOUS WEAPON and on ZOOM IN coexist (the
+  accepted #38 default) and a wheel source is stolen only within its
+  context.
+- PERSISTED FORM: config.ini gains `bind.<action>.<device>.<slot>=<token>`
+  lines for NON-DEFAULT slots only (`bind.move_forward.kbm.1=key:UP`,
+  `bind.fire.kbm.2=none` after a steal); a slot back at its default loses
+  its line; malformed or wrong-device tokens leave THAT slot at its
+  default; lines naming unknown actions / sources are kept and ignored;
+  old files load unchanged; no version bump. `src/platform/sl_settings.c`
+  carries the bounded extension (at most 64 `bind.` lines kept verbatim,
+  written after the scalars, never parsed by the store), the
+  `pad_button_mode` scalar (0 ORIGINAL / 1 CUSTOM) and batch begin / end
+  so a steal is one write. Self-test 34 -> 62 checks.
+- `src/platform/sl_action.c` evaluates the registry; the enum gains
+  MOVE_FORWARD / MOVE_BACK / STRAFE_LEFT / STRAFE_RIGHT / FIRE / AIM after
+  the eight published bits (sl_action_channels counts 14); the state says
+  which device class holds an action.
+- `src/platform/sl_input.c` - the action layer now runs BEFORE the mapping
+  and feeds it: in play the four movement actions become the keyboard
+  intent's move axes (the same channel() +/-70 and sl_move_channels; in
+  MENUS W/A/S/D and the arrows stay hard-wired so the stick the menus
+  navigate on cannot be bound away); FIRE / AIM become fire / aim (the
+  same N64 Z / R) under the two gates the mouse had (pointer captured, no
+  menu; a LEFT press a menu spent is not a press until released). The
+  middle button is no longer a default aim alias (two slots per device).
+  Controller BUTTON MODE read every poll: ORIGINAL (default) = read_pad
+  and the evaluator's pad handle exactly as before (the registry's pad
+  slots inert, the style decides); CUSTOM = read_pad skips its four fixed
+  buttons and the pad slots (buttons, LT / RT as digital halves) raise the
+  actions; sticks, Start, d-pad, the mark untouched in both. A capture
+  owns the devices: notches go to it, a click is its answer (never a
+  confirm or a watch click), Escape cancels, Tab is ignored, both intents
+  are neutralised until the captured source is released; focus loss
+  abandons it. Escape inside the watch's child steps back to SIGHTLINE.
+- `src/platform/sl_bindings_editor.c/.h` - the shared editor MODEL (device
+  tab, editor order, slot text with the PRESS A KEY / BUTTON prompt,
+  capture start / cancel, BUTTON MODE, RESET DEFAULTS - bindings only -
+  the message). Both shells render it; no shell holds a binding, nothing
+  syncs.
+- FRONT END: `MENU_SL_BINDINGS` (bondconstants.h native block; front.c's
+  four switches; sl_menu_pointer.c), opened from the CONTROL tab's fifth
+  row BINDINGS (SET_SLOTS 5 -> 6: BACK moves down one slot on both tabs),
+  BACK returns with the cursor on BINDINGS. `src/native/sl_front_bindings.c`:
+  tabs KEYBOARD/MOUSE | CONTROLLER (ZurichBold), the table in BankGothic
+  (PRIMARY at 0xC0, SECONDARY at 0x120; on the controller tab the header
+  is BUTTON MODE ORIGINAL / CUSTOM), fourteen rows at a 16-unit pitch,
+  RESET DEFAULTS / BACK footer, a message line under it (TAKEN FROM ...;
+  SELECT CUSTOM TO USE THESE while dimmed under ORIGINAL); hit bands and
+  columns as the Settings page, confirm / click on a slot captures.
+- WATCH: the SIGHTLINE page's third row BINDINGS is an ACTION row - its
+  A/Z latch opens a NESTED CHILD VIEW (`src/native/sl_watch_bindings.c`)
+  that draws in the page's place and owns its navigation until BACK; the
+  bar keeps the six-page ring, L/R do nothing while it is open, a bar
+  click / the ring / the watch closing close it, BACK returns to SIGHTLINE
+  and only there. Rows: DEVICE (KEYBOARD / CONTROLLER), SLOT (PRIMARY /
+  SECONDARY - the one value column shows and edits that slot; two full
+  columns do not fit the round face's top rows at ~7.5 fb units a glyph),
+  BUTTON MODE on the controller tab, the fourteen actions, RESET DEFAULTS,
+  BACK; nine visible, scrolling to the row; the watch's own idiom (row
+  step, the A/Z latch, LEFT / RIGHT on the two-value rows; on an action row
+  the latch IS the capture). Text through wb_label (draw_options_labels'
+  shape with the VIEW as textRender's clip box - the measured box dropped
+  the Q glyph whole). sl_watch_pointer.c hit-tests the child's rows.
+- STRNCPY: the native link resolves strncpy to the decomp's src/str.c,
+  whose loop writes n + 1 bytes for a source shorter than n (Rare's, kept
+  per rule 5); strncpy(tok, "none", 32) zeroed the key beside it and the
+  stolen slot's line never reached the file. The registry and the model
+  use sl_bind_copy and no strncpy; inputtest now links src/str.c so the
+  harness runs the same string routines the game runs.
+
+### Defaults (keyboard / mouse | controller CUSTOM)
+
+    MOVE FORWARD    W            | -             SPRINT           LEFT SHIFT          | PAD LS
+    MOVE BACK       S            | -             PREVIOUS WEAPON  1, WHEEL UP         | PAD RS
+    STRAFE LEFT     A            | -             NEXT WEAPON      2, WHEEL DOWN       | PAD Y
+    STRAFE RIGHT    D            | -             ZOOM IN          WHEEL UP (scoped)   | -
+    FIRE            MOUSE 1, F   | PAD RT, RB    ZOOM OUT         WHEEL DOWN (scoped) | -
+    AIM             MOUSE 2, Q   | PAD LT, LB
+    INTERACT        E            | PAD A         (Space stays the classic N64 B; the
+    RELOAD          R            | PAD X          menus navigate on fixed keys; BUTTON
+    CROUCH          LEFT CTRL    | PAD B          MODE defaults to ORIGINAL)
+
+### Evidence (scratch qol8\; posted-message injection on the game's own
+### witness lines, window parked off-screen; the OWNER'S GAME WAS RUNNING
+### the whole round - PID 82072 since 12:19 - so every run used a scratch
+### link of the compiled objects, found by PID, and nothing was posted to
+### the owner's window; nothing committed)
+
+- Harness (tools/native/inputtest.c): 225 checks, 100 new, the 22
+  pre-existing B-096 failures identical in name and detail; settingstest
+  62/62; headless Facility 300 frames on the new binary: "survived 300
+  pumped frames", exit 0, no store / registry line (inactive headless).
+- W1 (Facility, the door pad, w.ini fresh): default negative control E ->
+  INTERACT+H+P then door=1 (opening), F -> button=2000, W -> walk=70. Watch
+  -> A -> page 0 -> 5 -> S S Enter -> `bindings-watch: open` -> S x8 onto
+  INTERACT -> Enter -> `capture interact kbm 1` -> F -> `persist
+  bind.fire.kbm.2=none (stored, 1 line)`, `persist
+  bind.interact.kbm.1=key:F (stored, 2 lines)`, `settings: wrote`,
+  `interact kbm 1 = key:F (taken from fire)`; the action line at that poll
+  reads `on=0 ... INTERACT+H+P` (evaluated, not published - no gameplay
+  reaction inside the watch). S x9 -> BACK -> `close -> sightline` -> D ->
+  `page 5 -> 0`, A -> `page 0 -> 5` (the ring resumes) -> Esc -> menu=0 -> F
+  -> `on=1 INTERACT+H+P ... door=0/0.950` then `door=2/0.950` (the open
+  door starts CLOSING: F interacts, no button=2000 line after the rebind);
+  E -> no action line; R -> RELOAD+H+P anim=10/0; Ctrl -> CROUCH+H crouch=0.
+  Frames: INTERACT "PRESS A KEY" (shot 24), "F" + "TAKEN FROM FIRE" (25),
+  the list scrolling to RESET DEFAULTS (31). File: the two lines above.
+- W2 (w2.ini): DEVICE latched, RIGHT -> `device=1`; BUTTON MODE latched,
+  RIGHT -> `padmode=1` (file pad_button_mode=1); SLOT -> SECONDARY shows
+  PAD RB / PAD LB; the wheel in the child pulses the stick (rows) and
+  publishes no action; Escape -> `close -> sightline`, Escape -> menu=0.
+  Second live witness: CROUCH latch -> `capture crouch kbm 1` -> X ->
+  `crouch kbm 1 = key:X` -> BACK -> close -> X -> CROUCH+H+P crouch=0; Ctrl
+  -> no CROUCH line.
+- F1 / F2 (front end, f.ini fresh): OPTIONS (menu 26) -> SETTINGS (27) ->
+  BINDINGS row 4 -> menu 28; RELOAD -> `capture reload kbm 1` -> T ->
+  `settings: wrote`, `reload kbm 1 = key:T`; MOVE FORWARD -> UP ->
+  `move_forward kbm 1 = key:UP`; CROUCH -> C; SPRINT -> CAPSLOCK; NEXT
+  WEAPON -> 3; the CONTROLLER tab (`device=1`), BUTTON MODE CUSTOM
+  (`padmode=1`, wrote) and back to ORIGINAL; footer BACK -> menu 27 with
+  the cursor on BINDINGS. File: five bind lines. Sheets: the table before
+  and after each capture, the controller tab dimmed under ORIGINAL with
+  SELECT CUSTOM TO USE THESE, undimmed under CUSTOM.
+- R1 (Facility direct boot on f.ini): `bindings: loaded (5 override(s))`;
+  T -> RELOAD+H+P; R (tapped) -> no RELOAD line; UP -> walk=70 (button=0800,
+  the d-pad bit as ever); W held 1.2 s -> no walk line; C -> CROUCH+H;
+  CAPS LOCK -> SPRINT+H+P; 3 -> WEAPON_NEXT+H+P anim=0/5. The watch child
+  shows T / UP ARROW / C / CAPS LOCK / 3 (front end -> watch). RESET
+  DEFAULTS from the watch -> `reset to defaults`, `settings: wrote`, rows
+  read R / LEFT CTRL / LEFT SHIFT / 2 and DEFAULTS RESTORED; BACK -> Esc ->
+  W -> walk=70, T tapped -> nothing, R -> RELOAD+H+P, E -> INTERACT+H+P;
+  file: zero bind lines.
+- P2 (front end on w.ini: interact=F, fire.2=none): the BINDINGS table
+  reads INTERACT F, FIRE MOUSE 1 / --- (watch -> front end); FIRE capture
+  -> a POSTED WM_XBUTTONDOWN did not reach SDL's button state off-screen
+  (as posted pointer messages never have, the #41 / #44 limit), Escape
+  cancelled; footer RESET DEFAULTS -> `reset to defaults`, wrote, rows back
+  to E / F, DEFAULTS RESTORED; file: zero lines.
+- P3 (Surface, SL_WEAPON=sniper): wheel down -> WEAPON_NEXT+P weap 17 ->
+  1; wheel up -> WEAPON_PREVIOUS+P -> 17; Q -> ctx=scoped; wheel up ->
+  ZOOM_IN+P zoom 15.00 -> 13.64 -> 12.40 with weap=17 on every line (no
+  cycle); wheel down -> ZOOM_OUT+P -> 13.64 -> 15.00; release ->
+  ctx=play. Inside the watch child three notches pulse the stick twelve
+  polls and publish no action.
+- `__sgi` verbatim (qol8\sgi_proof.sh, base master AND HEAD; bare-token
+  control): options.c 142251 b == 142251 (md5 03f1ae2287fd), options.h
+  20445 == 20445 (02410265a19d), front.c 305088 == 305088 (ad912f2a1b9f),
+  bondconstants.h 379103 == 379103 (a60091765b6c); controls differ (1 line
+  each); native arms differ vs HEAD by 44 / 12 / 7 / 2 lines; native
+  tokens in the __sgi expansions 0 / 0 / 0 / 0. `make trace-verify` NOT
+  run (no MIPS toolchain; the __sgi arms are byte-identical).
+
+### Not exercised / limitations / deferred
+
+- NO PHYSICAL CONTROLLER (no gamepad found): the ORIGINAL / CUSTOM split,
+  the pad steal, trigger capture and the stick never capturing are
+  asserted on the harness's synthetic pad (inputtest, the controller
+  section) - not hardware-tested. Feel is the owner's.
+- MOUSE REBINDING IN PLAY (FIRE = MOUSE 4, the old button silent) is
+  harness-witnessed only: posted button messages never reach SDL's button
+  state with the window parked off-screen, and a real pointer needed an
+  idle desktop that never came (the owner's game ran throughout).
+- AIM's middle-button alias is gone from the defaults (two slots per
+  device); one capture restores it.
+- A key pressed while a capture waits binds - that is the contract; the
+  keyboard's menu navigation is neutral meanwhile, so a stray S cannot
+  also move the cursor.
+- The official build\win32\sightline.exe could not be relinked while the
+  owner's game held it (see the round's end for the final build order);
+  every windowed run used the scratch link of the same objects.
+- Demo core: `build.ps1 -Demo` compile / link only, NOT run (the demo
+  save redirect is parked tooling debt).
+- Analog remapping (mouse X/Y, stick axes), sensitivity, deadzones, gyro,
+  menu-navigation rebinding, per-weapon binds, macros: out of scope,
+  deliberately deferred.
+
+Owner steps: `.\tools\windows\play.ps1`. Before a mission: 3. OPTIONS ->
+1. SETTINGS -> CONTROL -> BINDINGS: the KEYBOARD/MOUSE tab, click (or
+Enter on) an action's PRIMARY or SECONDARY cell, press the key / mouse
+button / wheel direction; Escape cancels, Backspace empties; the
+CONTROLLER tab, BUTTON MODE CUSTOM, then the same with pad buttons and
+triggers; RESET DEFAULTS; BACK. In play: Esc -> A (LEFT) onto SIGHTLINE ->
+S S onto BINDINGS -> Enter: DEVICE / SLOT rows (Enter, then A / D), an
+action row (Enter = capture), RESET DEFAULTS / BACK (Enter); Escape steps
+back to SIGHTLINE, Escape again closes the watch and the new binding is
+live at once. Bindings live in %LOCALAPPDATA%\sightline\config.ini as
+bind.* lines; deleting them (or RESET DEFAULTS) restores the accepted
+mapping.
+
+## 2026-09-18 - Gitea #43 RE-SCOPED to "Display: Original / Modern
+## world-detail profile for LOD and render visibility"; textures (#47) and
+## lighting (#48) split into their own parked issues; all three PARKED
+
+On the owner's clarification (2026-09-18) #43 is no longer a broad
+"original / modern graphics modes" roadmap. Title patched, body rewritten
+as the authoritative scope (the old body summarised in a History section;
+the filtering-only Phase A stays RETIRED / NOT SHIPPED, D-007), comment id
+452 posted; title, body and state (open) read back.
+
+- Future DISPLAY row `WORLD DETAIL  ORIGINAL / MODERN`, ORIGINAL default
+  (not "PRESENTATION").
+- ORIGINAL: the exact current accepted behaviour - N64 visibility and LOD
+  tuning preserved, deterministic same-pose image equality where the
+  renderer permits, never "improved".
+- MODERN: PC-oriented render visibility - geometry visible farther /
+  earlier, high-detail LOD retained farther, obvious pop-in reduced, with
+  sensible culling and LOD retained (not disable-all-culling, not
+  always-highest-LOD, not infinite draw distance) and sane performance.
+- Render-vs-gameplay boundary: rendering only - no change to guard / NPC
+  line of sight, detection, hearing, shooting range, scripting, collision,
+  prop activation, objectives, spawns, simulation range or timing; a shared
+  render / gameplay value is a stop-and-document point, split render-only
+  first (rules 1 and 5).
+- Independent of #45 (widescreen = the visible frustum area; world detail =
+  how much geometry / detail stays eligible at distance); not merged; the
+  final acceptance of both includes the 4:3 / 16:9 / 32:9 x ORIGINAL /
+  MODERN combination matrix.
+- Recon when active is the ten-question list in the issue (what submits
+  world geometry, portal / room visibility, prop culling, the LOD systems
+  per class, hardware vs fidelity thresholds, asset residency at pop-in,
+  gameplay consumers of render distances, the one demonstrated first-wrong
+  pop-in, the smallest render-only seam, stop). Late appearance is not
+  called "streaming" unless on-demand loading is proven. No single global
+  LOD multiplier. Candidate witnesses: B-140, B-143, #25, #23, B-133 / #26.
+
+Split out after a duplicate search over all 46 prior issues (state=all,
+every page, titles and bodies: texture, texture pack, upscale, filtering,
+lighting, shadow, light model, vertex colour, LOD, pop-in, draw distance,
+culling, world detail) - #15 is the shipped enhancement layer (part of
+ORIGINAL), #9 mentions HD textures only as a caution, no issue owned either
+scope:
+
+- #47 "Display: Original / Modern textures (texture quality, packs,
+  filtering)" - modern / upscaled / replacement textures and packs (no
+  XBLA / commercial assets, rule 2 provenance), filtering quality (where
+  the retired Phase A filtering may return), ORIGINAL = current accepted
+  textures; render-only; independent of #43 and #45.
+- #48 "Display: Original / Modern lighting" - ROADMAP goal 2 "Real
+  lighting": light model, dynamic / static upgrades, shadows, material
+  response, original vertex colours retained as the baked indirect
+  baseline; ORIGINAL = current; render-only; Phase 3 work; independent.
+
+DISPLAY roadmap model: ASPECT RATIO 4:3 / 16:9 / 32:9 (#45); WORLD DETAIL
+ORIGINAL / MODERN (#43); later, independently, TEXTURES (#47) and LIGHTING
+(#48) - no single "everything" switch. Status: #43, #47, #48 PARKED, no
+implementation, owner replay acceptance later. Critical path unchanged:
+#46 remapping (owner replay), then #45 widescreen. No source change.
+
+## 2026-09-18 - Gitea #47 RE-SCOPED as the texture-sets roadmap issue:
+## "Graphics: selectable Original / Community HD / user-supplied XBLA
+## texture sets"; one canonical texture manifest; permission and
+## no-distribution gates recorded; PARKED
+
+On the owner's definition of the texture roadmap (2026-09-18) the #47
+placeholder ("Display: Original / Modern textures (texture quality, packs,
+filtering)", filed earlier the same day) is converted in place rather than
+duplicated: title patched, body rewritten as the authoritative scope (the
+placeholder origin kept in a History line), comment id 462 posted; title,
+body and state (open) read back, body round-trips byte-for-byte. Duplicate
+search first, over all 48 issues (state=all, every page, titles and
+bodies: texture pack, HD texture, replacement texture, community, XBLA,
+texture source, asset import, GLideN64, texture set, Community HD,
+upscale): #15 is the shipped enhancement layer (part of ORIGINAL), #9
+mentions HD textures only as a caution, #36 is an unrelated Aztec defect,
+#43 / #48 are the siblings; no other issue owns the scope. One primary
+issue; no child issues (the body stays readable as one document).
+
+- Three sets through one abstraction. ORIGINAL = the game's own N64
+  artwork as the accepted build renders it today (#15 layer included),
+  derived from the user-supplied ROM as now, never "improved", and
+  represented as canonical id -> ORIGINAL provider like the others - no
+  special case. COMMUNITY HD = reference
+  https://github.com/GhostlyDark/GoldenEye-007-HD (GLideN64 pack by
+  intermissionfb, fonts by GhostlyDark, per the owner's README reading);
+  import-time mapping from the pack's identifiers, no renderer dependency
+  on its layout. XBLA = user-supplied source only: validate (hashes,
+  signatures, structure - mechanism from recon), extract only the needed
+  texture data locally, convert to the native cache, then the option
+  appears.
+- Canonical texture manifest / provider intent: one stable Sightline id
+  per logical texture; each set supplies id -> artwork where it has it;
+  the renderer consumes (active provider, canonical id) only - no
+  if-original / if-community / if-xbla forks; resolve and import once, no
+  per-frame filename or hash matching. Deterministic local cache (source
+  -> validation -> extractor -> conversion -> versioned cache in user data,
+  outside Git and outside shipped assets), no reconversion when source
+  hash + importer version + cache format are unchanged.
+- Fallback policy: no set assumed complete; selected alternative present
+  -> use it, missing -> ORIGINAL; coverage report later; no faked
+  mappings. Persisted set unavailable at launch -> ORIGINAL and report; no
+  crashes or checkerboards as normal behaviour. Switching needs no
+  rebuild; immediate vs reload vs restart decided by the cache
+  architecture. Authored UVs preserved; fundamentally different UVs /
+  atlases / materials in a set = stop and document (separate adaptation
+  layer).
+- Community HD permission release gate (prerequisite, not engineering):
+  the linked repository exposed no obvious LICENSE / COPYING file at
+  inspection; public availability is not redistribution permission;
+  bundling is contingent on obtaining / confirming permission from the
+  rights holders / creators. Preferred plan: ship once permitted;
+  fallback: optional user-installed pack, same importer, no renderer
+  change. No pack assets copied into the repository at any stage (rule 2).
+  (This bullet is superseded by the entry of 2026-09-18 (upstream
+  response) below: direct redistribution was declined; no bundling.)
+- XBLA no-distribution rule (hard): never shipped, committed or packaged;
+  Sightline neither downloads nor locates the source (no network
+  acquisition, torrents, links, automatic retrieval); no XBLA bytes in
+  Git, no extraction output in releases, the importer contains no source
+  bytes. Test fixtures are hashes / metadata / synthetic only, for every
+  set.
+- Independence: no dependency either way on #43 (WORLD DETAIL), #48
+  (LIGHTING), #45 (aspect) or window mode. TEXTURES = COMMUNITY HD implies
+  nothing about the other axes. Filtering quality (retired Phase A, D-007)
+  stays historical and is not the set selector.
+
+Graphics roadmap model: WORLD DETAIL ORIGINAL / MODERN (#43); TEXTURES
+ORIGINAL / COMMUNITY HD / XBLA (#47); LIGHTING ORIGINAL / MODERN (#48);
+other renderer options independently later. All future / parked. Critical
+path unchanged: #46 remapping (owner replay), then #45 widescreen. No
+source change.
+
+Reserved binding (2026-09-20, #63 / #64 round 6, the owner: "Mark will
+eventually become the button to change textures later, but we can worry
+about that later"): the pad's View / Create button - today MARK, the run
+mark (sl_input.c read_pad) - is reserved for switching texture sets in play
+when #47 ships. Note only; no implementation, no registry change.
+
+## 2026-09-18 - Gitea #47 Community HD model UPDATED on the upstream
+## response: direct redistribution declined; externally maintained
+## optional pack, adapted locally; PARKED
+
+Permission to bundle the GoldenEye-007-HD pack with Sightline was
+requested (2026-09-18); the maintainers declined direct redistribution of
+the texture files in any form and suggested three directions: a script /
+mapping that adapts the official pack to what Sightline uses; direct
+consumption of the GLideN64 pack without modifying or distributing it, if
+technically possible; and, if Sightline reaches sufficient quality, the
+maintainers possibly maintaining Sightline-specific release files
+themselves. #47 body edited in place (no duplicate), comment id 468
+posted; title, body and state (open) read back, body round-trips, the
+superseded bundling phrases confirmed absent and the new boundary sentence
+present.
+
+- Model now: "Community HD is an externally maintained optional texture
+  pack. Sightline will not redistribute it. Compatibility will be provided
+  through direct pack support or a local importer/mapping." The user
+  obtains the official upstream release (authoritative); Sightline may
+  recognise, map, import / convert and cache it locally; Sightline must
+  not vendor, commit, package, mirror or pre-convert-and-redistribute it.
+  No Community HD asset bytes in Sightline Git or releases. The earlier
+  "ship once permitted" plan and the LICENSE / COPYING observation are
+  history only, no longer a gate.
+- Direct pack support vs one-time local import: recorded as a
+  future-sprint recon (how GLideN64 identifies textures, whether filenames
+  encode texture / palette hashes, whether Sightline can derive the same
+  identities deterministically, palette / CI matching, runtime lookup cost
+  vs cache); approach not chosen now. The adapter may understand the
+  upstream format; the renderer keeps consuming canonical Sightline
+  identities; no per-frame filename matching.
+- Upstream-maintained Sightline release: recorded as a potential future
+  collaboration, conditional on quality - not current permission, not a
+  commitment; the architecture does not depend on it and must adapt the
+  normal official pack regardless.
+- Unchanged: ORIGINAL (user's own ROM), XBLA (user-supplied, never
+  distributed), canonical manifest / provider, fallback-to-ORIGINAL,
+  independence from #43 / #48 / #45, the modular graphics model. Status
+  PARKED. Critical path unchanged: #46 remapping (owner replay), then #45
+  widescreen. No source change.
+
+## 2026-09-18 - #46 owner replay: "Keybindings persist after restart. Invert
+## Mouse Y does not." - FIRST WRONG STAGE was the runtime seed at the first
+## poll: SL_MOUSE_INVERT=1, left in the owner's shell from the #39 steps,
+## displaced the parsed config every launch (a #41 precedence, not a #46
+## change); FIXED on sightline/qol-controls, #46 stays OPEN
+
+Owner observation on the rebuilt normal exe (comment id 474 on #46, read
+back): the BINDINGS UI is present and `bind.*` lines persist; INVERT MOUSE Y
+toggled, exit / restart, returns to its previous state. Recorded as a #46
+acceptance failure (the issue that changed the persistence layer); not
+split.
+
+### The measurement first (owner data, no code read)
+
+The owner's three real runs today carried `SL_MOUSE_INVERT=1` in their env
+sidecar (`~/.sightline/runs/20260918-142039 / -142432 / -142716-lvlboot/env`,
+every one) while the config loaded `mouse_invert_y=0`
+(`config.ini (loaded) ... mouse_invert_y=0 sprint_enabled=1 ... bind-lines=2`
+in the run log). The #39 owner steps had said "this round the seed is
+`$env:SL_MOUSE_INVERT=1`", and the PowerShell session kept it.
+
+### Bounded causal trace (scratch qol9\, the PUBLIC workflow: the real
+### build\win32\sightline.exe through tools\windows\play.ps1
+### -NoConsoleCapture, scratch SL_CONFIG `version=1` + `mouse_invert_y=0`,
+### scratch SL_SAVE, SL_INPUT_DEBUG; posted-message injection waiting on the
+### game's own witness lines; exit = WM_CLOSE, the window's own close)
+
+Control, CLEAN env (A1 / B1, pre-fix HEAD 3c613a84): loaded
+`mouse_invert_y=0` -> first poll `minv=0` -> watch SIGHTLINE (`page 0 -> 5
+(slrow=0 minv=0 ...)`) -> Enter, D -> `minv=1` the same poll -> Esc ->
+`settings: wrote` -> `window closed at frame 1061` -> file `mouse_invert_y=1`
+-> relaunch: `(loaded) ... mouse_invert_y=1`, first poll `minv=1`, the page
+line `minv=1` (the row reads ON). Every stage right: the chain works when no
+variable is set.
+
+The OWNER'S env (C1 / D1, `SL_MOUSE_INVERT=1`, same file at 0, pre-fix):
+loaded `mouse_invert_y=0` (parse right) -> first poll `minv=1` (WRONG: the
+env displaced the seed at read_env) -> the page line `minv=1` (the UI shows
+ON although the file says OFF) -> Enter, A (OFF) -> `minv=0` and NO
+`settings: wrote` (the store already held 0 while the live state was 1 - the
+toggle changed the file's value by nothing) -> exit -> file still 0 ->
+relaunch: loaded 0, first poll `minv=1`, page `minv=1` - ON again. That is
+the owner's report, reproduced end to end. ON persisted (the file went to
+1, and 1 is what the env re-applied anyway); only OFF could never survive,
+which reads from the chair as "it returns to its previous state".
+
+FIRST WRONG STAGE: "next process -> runtime setting receives it". The parse
+was right, the seed was right, and read_env's first poll overwrote the seed
+from the env. Not the store, not the `bind.` writer (both scalars survive
+every rewrite - measured below), not the UI, not the consumer.
+
+WHY KEYBINDINGS PERSISTED AND MOUSE INVERSION DID NOT: no env variable
+shadows the `bind.` lines, `sprint_enabled` or the three #41 scalars; INVERT
+MOUSE Y was the one setting with a developer override ABOVE the config in
+#41's precedence (`built-in < config < SL_MOUSE_INVERT < UI`), and that
+override was set in the shell that launched every run. `git diff
+1ccb8b5c..HEAD -- src/platform/sl_input.c src/platform/sl_ultra_shim.c`
+touches the invert path only in the debug line's `padmode` field; the seed
+and the env order are dec235c3 (#41). Independent of #46's code, recorded
+on #46 as instructed.
+
+### The fix (smallest change at that stage)
+
+`src/platform/sl_input.c` read_env: `SL_MOUSE_INVERT` is honoured only while
+the settings store is INACTIVE (trace replay, headless health, the harness -
+no config governs); with the store active (a player session) it is reported
+on stderr - `sightline input: SL_MOUSE_INVERT=1 ignored - the persisted
+config governs this session (invert mouse y off)` - and ignored, so the seed
+from the config stands and the store and the live state can never disagree.
+Precedence is now `built-in < SL_MOUSE_INVERT (store inactive) < config <
+UI`. Absent, the variable still assigns nothing. ONE state, one setter, one
+store, no new global, no startup special case (one removed); the comments in
+sl_input.c / sl_input.h / sl_ultra_shim.c, play.ps1's help and play.sh's
+help say so. No src/game change; no `__sgi` arm touched.
+
+### Acceptance on the fixed real exe (build.ps1 -Demo then build.ps1 LAST,
+### `.build_key` without SL_DEMO_BUILD; every run below through play.ps1
+### with `SL_MOUSE_INVERT=1` PRESENT - the owner's environment - unless
+### marked clean)
+
+- WATCH PATH W1..W4 (Facility): loaded 0, `SL_MOUSE_INVERT=1 ignored ...
+  (invert mouse y off)`, first poll `minv=0`; SIGHTLINE Enter, D -> `minv=1`,
+  `settings: wrote`; WM_CLOSE -> file `mouse_invert_y=1` (full file:
+  version=1 control_style=1 look_updown=0 aim_control=0 mouse_invert_y=1
+  sprint_enabled=0 pad_button_mode=0). W2 relaunch: `(loaded) ...
+  mouse_invert_y=1`, `... ignored ... (invert mouse y on)`, first poll
+  `minv=1`, page `(slrow=0 minv=1 sprint=0)`. W3: Enter, A -> `minv=0`,
+  `settings: wrote`, file `mouse_invert_y=0`. W4 relaunch: loaded 0, first
+  poll `minv=0`, page `minv=0`.
+- FRONT-END PATH F1..F3: F1 boot -> mode select row 2 OPTIONS (26) ->
+  SETTINGS (27) -> seek S to row 3 INVERT MOUSE Y -> Enter -> `sightline
+  options: tab=0 row=3 col=-1 -> ... minv=1`, `settings: wrote`, file 1. F2
+  gameplay (Facility) on that file: loaded 1, first poll `minv=1`, page
+  `minv=1`. F3 front end again: the same row's Enter prints `-> minv=0`
+  (the restarted front end read ON and toggled it), file 0.
+- MIXED KEYBIND + INVERT + SPRINT, clean env, M1 / M2: negative control E ->
+  `INTERACT+H+P`, F -> `button=2000`; SIGHTLINE row 0 -> `minv=1`, row 1
+  SPRINT D -> `settings: wrote`; BINDINGS child -> INTERACT -> `capture
+  interact kbm 1` -> F -> `persist bind.fire.kbm.2=none (stored, 1 line(s)
+  held)`, `persist bind.interact.kbm.1=key:F (stored, 2 line(s) held)`,
+  `settings: wrote`, `interact kbm 1 = key:F (taken from fire)`; BACK, Esc
+  -> F -> `INTERACT+H+P`; WM_CLOSE. FILE: version=1 control_style=1
+  look_updown=0 aim_control=0 mouse_invert_y=1 sprint_enabled=1
+  pad_button_mode=0 / bind.fire.kbm.2=none / bind.interact.kbm.1=key:F. M2
+  relaunch: `(loaded) ... mouse_invert_y=1 sprint_enabled=1 ... bind-lines=2`,
+  `bindings: loaded (2 override(s))`, `interact key:F none pad:A none`,
+  first poll `minv=1`; F -> `INTERACT+H+P`, E -> no INTERACT line (0 between
+  F's release and the watch); page `(slrow=0 minv=1 sprint=1)`.
+- SPRINT SIBLING: `sprint_enabled=1` written before the bind lines survived
+  the bind rewrite and the reload (M1 / M2 above) - the scalar path was never
+  the bug.
+- CONSUMED DIRECTION: the desktop was in use throughout (GetLastInputInfo
+  idle < 5 s), so no real-pointer run; the sign is asserted on the real
+  sl_input.c in the harness below (physical UP -> linear pitch + at state
+  0, - at state 1, + again at 0), the same channel bondview2.c consumes
+  without inverting (#39; R1 of #41 measured verta 0 -> -6.0 in-game from
+  the config alone).
+
+### Tests
+
+- inputtest (tools/native/inputtest.c, inputtest.ps1): two new cases, each
+  its own PROCESS (the store is a once-only singleton, read_env runs once) -
+  `INPUTTEST_CASE=mouse-invert-store`: config 0 loaded, seed 0,
+  SL_MOUSE_INVERT=1, first poll -> state stays 0, the setter's ON / OFF
+  write 1 / 0 and the state follows, later polls never re-apply the env,
+  the consumer sign as above (9/9); `mouse-invert-nostore`: the env seeds
+  the state, an explicit set wins, no file (5/5). NEGATIVE CONTROL: the
+  store case against HEAD's unfixed sl_input.c fails exactly one check,
+  "first poll: the env does NOT displace the config" (qol9\negctl.ps1). The
+  main run stays 225 checks with the 22 pre-existing B-096 failures,
+  unchanged in name and count.
+- settingstest: the mixed case - start 0 -> setters write 1 (invert, sprint)
+  -> a bind line written, two rewritten in a batch -> both scalars in the
+  file -> reload 1 / 1 / two lines -> write 0 -> sprint and the lines kept ->
+  reload 0 / 1 / two lines; 62 -> 69 checks, 0 failed.
+- build.ps1 -Demo (254 objects, key with SL_DEMO_BUILD, not run) then
+  build.ps1 LAST (key without it); test.ps1 facility 300 PASS 1/1. `make
+  trace-verify` NOT run (no MIPS toolchain; no src/game change).
+
+Owner steps: `.\tools\windows\build.ps1`, then `.\tools\windows\play.ps1` -
+with `$env:SL_MOUSE_INVERT` still in the shell or not, it no longer matters
+(the console prints `SL_MOUSE_INVERT=1 ignored - the persisted config
+governs this session` if it is; `Remove-Item Env:SL_MOUSE_INVERT` clears it).
+Toggle INVERT MOUSE Y in the watch (Esc -> A onto SIGHTLINE -> Enter -> A /
+D -> Enter -> Esc) or in OPTIONS -> SETTINGS -> CONTROL; close the window;
+relaunch: the row shows the value you left and the mouse follows it; the
+bindings, Sprint and the rest persist as before. The file is
+%LOCALAPPDATA%\sightline\config.ini.
+
+## 2026-09-18 - Gitea #46 CLOSED on owner acceptance ("This appears to be
+## fixed. We can move onto what is next on the list."; comment id 482, state
+## closed read back). Bindings, both editors, keybinding / Invert Mouse Y /
+## Sprint persistence and the shared setting state are OWNER ACCEPTED on the
+## owner's own replay of the rebuilt normal build (40fbbccb). Next: #45.
+
+## 2026-09-18 - #45 Display: selectable 4:3 / 16:9 / 32:9 - the renderer's
+## projection / viewport / 2D seam, the aspect_ratio setting and DISPLAY tab,
+## the room traversal's wide draw set with the script / spawn tests kept at
+## 4:3 - implemented on sightline/qol-controls (f73db2c2, 057bf539, b6b0c4cd,
+## 5881dc9a), OPEN pending the owner's pass. Recorded as D-008.
+
+Boundary comment (id 485) posted first: #45 owns only aspect-ratio
+correctness and any culling / visibility changes required for the wider
+camera; general PC-oriented farther LOD / render-distance tuning belongs to
+#43 (not renamed). The body's "adjustable FOV" paragraph is NOT implemented:
+this round establishes the projection seam only; a user FOV preference, if
+wanted, is a later split.
+
+### Bounded projection recon (file:line at 40fbbccb)
+
+1. The world projection: fr.c:709 `guPerspectiveF(g_viProjectionMatrixF,
+   &g_viPerspNorm, fovy, aspect, znear, zfar, 1.0f)` in
+   viSetupCurrentPlayerView, fed by viSetFovY / viSetAspect / viSetFov
+   (fr.c:902-927), each of which also calls currentPlayerSetPerspective and
+   currentPlayerSetCameraScale. The per-level setup bondview2.c:8507-8585
+   sets FOV_Y_F and `aspect = viewport width / height` (320/240 or 440/330
+   = 4:3; the cartridge's SCREEN_RATIO_16_9 branch :8568-8571 multiplies
+   by 0.75 * WIDESCREEN_ASPECT = the anamorphic squeeze, not a wider view;
+   untouched). lv.c:719-720 re-applies the player's fovy / aspect each
+   render. libultra guPerspectiveF (src/libultra/gu/perspective.c:17): the
+   first angle is the VERTICAL FOV, x scale = cot(fovy/2) / aspect.
+2. Camera scale: bondview.c:649-687 currentPlayerSetCameraScale - c_scaley =
+   tan(fovy/2) / halfheight, c_scalex = c_scaley * aspect * halfheight /
+   halfwidth (= c_scaley at 4:3), c_scalelod / c_lodscalez from c_scaley
+   ONLY (LOD is vertical-FOV based, unaffected by any widening), the
+   frustum half-planes from c_halfwidth * c_scalex (:682, :979 in
+   bondviewUpdateFrustumPlanes, :1157 / :1174 in camIsPosInScreenBox).
+3. The original is FIXED VERTICAL FOV (60 deg), horizontal derived from the
+   aspect: 75.2 deg at 4:3. Horizontal-plus is therefore the engine's own
+   convention: tan(hfov/2) = tan(30) * aspect -> 91.5 deg at 16:9, 128.1 deg
+   at 32:9.
+4. The renderer's viewport: sl_gfx_sdl.c:238-254 sdl_begin glViewport(0, 0,
+   w, h) every frame from SDL_GetWindowSize (SL_WINDOW_SIZE, sl_gfx.c:37);
+   sl_gfx_dl.c reads it at the frame reset (glGetIntegerv GL_VIEWPORT) as
+   g_win_vp and scales every logical coordinate by g_win_vp / g_scr_w,h
+   (vp_derive, sciss_gl_apply, the 2D ortho glOrtho(0..g_scr_w, g_scr_h..0)).
+   sl_gfx_present_rect (:9126) reports that rectangle to the pointer
+   layers (the #43-round note claiming a tree-wide grep found no
+   sl_gfx_present_rect was wrong; it exists and is the pointer contract).
+5. Before #45 the scene at a non-4:3 window was the 4:3 image STRETCHED
+   non-uniformly (sx = w/320, sy = h/240 independently). Measured: at the
+   4:3 window 960x720 every capture is byte-identical run to run.
+6. Frustum builders: bondview.c:949-1003 (the five world-space planes from
+   viewtoworldmtxf and c_scalex / c_scaley, used by camIsPosInScreen :1090)
+   and camIsPosInScreenBox :1131 (planes from a screen-space box); the
+   room traversal bg.c bgUpdateCurrentPlayerScreenMinMax :5204-5263 (the
+   root rectangle = the view clamped by bgViewRelated {1,1,-1,-1}, :191),
+   bgQueuePortalTraversal :5059 (screenbounds), the portal box
+   sub_GAME_7F0B5864 :1839 (in-front points projected through
+   transform3Dto2DWithZScaling, bbox), the per-room scissor
+   bgScissorCurrentPlayerView :1517-1550 (clamped to the view); the
+   renderer's software clipper reads g_proj (the wide projection).
+7. Width-dependent culling: the traversal root (6), the room apertures
+   (bgGet2dBboxByRoomId :607 -> camIsPosInScreenBox for props, posIsOnScreen
+   propobj.c:13815), the scissor (B-143), the sky band clamped to the
+   viewport (sky.c:819, :1300, :2209 / :2212).
+8. Gameplay consumers of the same values - the SHARED-HELPER finding:
+   getROOMID_isRendered is read by the AI command list (chrai.c:1841
+   AI_IFMyRoomIsOnScreen, chraction.c:9685 check_if_room_for_preset_loaded
+   for AI_IFRoomWithPadIsOnScreen), by the spawn placement test
+   chrIsPosOffScreen (chraction.c:10571 -> chrAdjustPosForSpawn) and by
+   the "magic" travel decisions (chraction.c:2930 chrlvStanRoomRelated);
+   PROPFLAG_ONSCREEN (set from the draw decision propobj.c:5948-5958 and
+   chr.c:2436-2528) is read by AI_IFImOnScreen (chrai.c:1827), the magic
+   travel (chraction.c:3837, :9164, :9311), hit registration
+   (propobj.c:4732), slot recycling (loadobjectmodel.c:527,
+   propobj.c:11655 / :11765) and the HUD objective markers
+   (objective_status.c:495); CHRFLAG_HAS_BEEN_ON_SCREEN (chr.c:2529) by
+   AI_IFIveNotBeenSeen (chrai.c:1814) and chrSpawnAtChr
+   (chraction.c:10755). Guard perception itself (chrai / chraction sight
+   and hearing) is guard-centric and reads none of these. So the render
+   set and the rules share helpers -> the split below.
+9. 2D coordinates: the 320x240 (level) / 440x330 (front end,
+   front.c:8638) logical spaces; texrects and fills are framebuffer
+   coordinates drawn through the renderer's 2D ortho; sl_menu_pointer.c:375
+   sl_menu_pointer_uv maps window pixels through sl_gfx_present_rect to
+   [0,1] and the game's view rect; sl_watch_pointer.c:1019-1029 reuses it
+   and hit-tests the watch through its own perspective mirror.
+10. Every 2D system scales to the presented rectangle (one formula in
+    sl_gfx_dl.c); nothing scales to the physical window independently.
+11. Settings seam: the typed table in src/platform/sl_settings.c (the
+    retired #43 row's shape: one enum id, one row, one accessor).
+12. Multiplayer: per-player viewports across the ONE logical framebuffer
+    (fr.c:757 viSetupScreensForNumPlayers, bondview2.c
+    bondviewGetCurrentPlayerViewportWidth / Height, per-player aspect from
+    their own width / height). Widening each about its own centre would
+    overlap the halves - so the aspect is gated to single player
+    (sl_aspect_active: sl_game_player_count() <= 1); split-screen keeps
+    the 4:3 layout, fitted (pillarboxed in a wide window, never stretched).
+    Recon only; no smoke run (no direct-boot path into split-screen).
+
+### Architecture (the pipeline order: camera -> projection -> view /
+### frustum -> world visibility -> viewport -> 2D -> window)
+
+- `aspect_ratio` (0 / 1 / 2, default 0; missing / malformed / out-of-range
+  -> 0) in sl_settings; `src/platform/sl_display.h/.c`: enum, names,
+  ratios, THE ONE accessor sl_aspect_ratio(), sl_display_rects (framebuffer
+  + logical size + selection -> content rect = the selected shape fitted,
+  centred; safe rect = the logical 4:3 image fitted inside it; k = content
+  / safe = 1, 4/3, 8/3), the pointer transforms, sl_aspect_active (the
+  split-screen gate), sl_view_scale() (k by selection, for bg.c through the
+  extern idiom). Aspect and window size are separate: 16:9 in a 960x720
+  window is letterboxed 960x540, 4:3 in a 1280x720 window is pillarboxed
+  960x720, 32:9 in 1280x720 is 1280x360 - never a stretch.
+- Renderer (src/gfx/sl_gfx_dl.c): three rectangles at the frame reset
+  (rects_update, re-derived when the logical size changes); the projection
+  seam do_matrix -> proj_apply_aspect: g_proj = g_proj_game with clip x
+  (indices 0, 4, 8, 12) divided by k - a post-scale that survives a later
+  G_MTX multiply and equals guPerspective(fovy, aspect * k); every software
+  mirror (NDC census, clipper, near guard, fog) reads g_proj; the B-118 /
+  B-144 texel-per-pixel estimate reads g_proj_game (the N64's own pixel
+  density, which the safe rect keeps). vp_derive: the RSP viewport onto
+  the safe rect, widened by k about its centre. mode2d_begin: the ortho
+  spans the content rect with logical [0, w] on the safe rect. Backdrops
+  (a full-width fillrect, a sky / sea polygon corner on a framebuffer
+  edge) are extended to the content edges - the same planes evaluated
+  further out. sciss_gl_apply: an edge on the framebuffer edge (tolerance
+  the traversal's 1-px inset, measured [1,10]-[319,230] with
+  SL_SCISSOR_DBG) extends to the content edge. bars_clear paints the bars
+  black. sl_gfx_present_rect returns the SAFE rect: the menu and watch
+  pointers needed no edit. Heartbeat `sl_display: aspect=... k=...
+  window=... content=... safe=... logical=... extended=<fills>/<polys>`.
+- Game side (src/game, native arms only): bg.c widens the traversal root
+  by the band after the original clamps and keeps the 4:3 box
+  (sl_view43); sl_roomIsOnScreen43 (reached AND the aperture meets the 4:3
+  box - the 4:3 traversal's own answer, an aperture being an intersection
+  down a path inside the widened root) and sl_clampBoxToView43;
+  sl_propIsOnScreen43 (propobj.c: the drawn flag AND the clamped aperture /
+  the game's 4:3 frustum planes, with the model-size margin). Readers kept
+  at 4:3 - the RULES: AI_IFImOnScreen, AI_IFMyRoomIsOnScreen,
+  AI_IFRoomWithPadIsOnScreen, chrIsPosOffScreen (spawn placement),
+  CHRFLAG_HAS_BEEN_ON_SCREEN (AI_IFIveNotBeenSeen, chrSpawnAtChr). Readers
+  following the DRAWN set on purpose - what the player would otherwise SEE
+  wrong: animation ticks for characters in view, the "magic" off-screen
+  travel (a guard standing in the band must walk, not teleport), slot
+  recycling, scorch / impact drawing, hit registration on a drawn
+  character. Consequence recorded for the owner: a scripted "spawn
+  off-screen" placement still means off the 4:3 screen, so at 32:9 a
+  character may be placed in a band, in view (the hard rule kept spawn at
+  4:3; the alternative is a later decision, not silently taken).
+- Front end (src/native/sl_front_options.c): DISPLAY tab, `ASPECT RATIO
+  4:3 16:9 32:9` (set_three_value_row, columns 0x33 apart), strip pitch
+  0x5A for three tabs; a press writes the store and the very next frame is
+  drawn at the new shape (the renderer reads the selection at its frame
+  reset) - the page itself included.
+
+### Evidence (scratch qol10; nothing committed; the pre-#45 exe copied to
+### qol10\bin-base for the baseline, sha256 BB651601...)
+
+- 4:3 NEGATIVE CONTROL (960x720, SL_VI_CATCHUP=0, frame 301, SL_SHOT):
+  Facility catwalk (teleport 6750/106/-2550 theta 270 room 68) sha256
+  EF09C9FB... on the baseline exe, run-to-run identical, and IDENTICAL on
+  the new exe after every commit (renderer, then the game-side split);
+  Dam room 121 (16500/60.25/4500 theta 105) 4F8DE0D7... identical; Surface
+  intro (spawn, frame 301) 7EF5F4AD... identical. `sl_display: aspect=4:3
+  k=1.000 window=960x720 content=0,0 960x720 safe=0,0 960x720 extended=0/0`.
+- 16:9 (1280x720, aspect_ratio=1): `k=1.333 content=0,0 1280x720
+  safe=160,0 960x720`; Facility C28AA415..., Dam 0F01D32F..., Surface
+  FD8E04E0.... The safe-rect crop [160,1120) against the 4:3 frame:
+  interior differs by GL sub-pixel rasterisation only (delta <= 4 on 96.6%
+  of the differing pixels, 100 px by 9-16, max 55 at 3 px); the rest is
+  the outer 12 columns where the 4:3 frame's own 1-px scissor inset was.
+  More world left and right (the guard cut by the 4:3 edge is whole; the
+  window room's scientist appears on the right), the HUD ammo in the same
+  place, the sky band and letterbox strips full width.
+- 32:9 (2560x720, aspect_ratio=2): `k=2.667 content=0,0 2560x720
+  safe=800,0 960x720`; Facility 2EC5193C... (renderer-only) then
+  E22D8B93... (with the traversal widened), Dam E699E76A..., Surface
+  19BC33AE.... Same vertical composition, the far-left stair room and the
+  right window room in view; Dam: the running guard on the left, the
+  buildings on the right, sky continuous.
+- FIRST-WRONG VISIBILITY at 32:9 (rotation theta 240 / 255 / 270 / 285 /
+  300 / 315 at the Facility pose, sheet-rot329.png vs sheet-vrot329.png):
+  before the game-side commit the left band at theta 285 / 300 and the
+  right band at theta 255 showed the fog-colour backdrop where the tank
+  hall / window room stand - rooms the 4:3 traversal never reached. With
+  the widened root they are drawn (theta 285: the tank hall and a guard in
+  the band; theta 255: the window room with the scientist and desk).
+  RESIDUAL, recorded not fixed: at theta 240 the last ~130 px of the right
+  band read black beyond the pillar; SL_PORT_DBG at that frame shows
+  portal 82 from room 68 projecting to box=[592.1,592.1] (its in-front
+  points only, sub_GAME_7F0B5864 drops points behind the camera before
+  the bbox) against the widened root [-272.1,592.1] - Rare's portal-box
+  approximation for a portal straddling the camera plane, which the wide
+  view exposes at the extreme edge; changing that projection would change
+  the 4:3 room set too, so it is a follow-up decision, not this round's.
+- MISMATCHED WINDOW / ASPECT: 32:9 in a 1280x720 window -> `content=0,180
+  1280x360 safe=400,180 480x360 k=2.667`, letterboxed, no stretch
+  (mm-fac-329in169); 4:3 in a 1280x720 window -> `content=160,0 960x720`,
+  pillarboxed (mm-fac-43in169).
+- HUD / WATCH / FRONT END at 4:3 / 16:9 / 32:9 (sheets sheet-w43c /
+  w169c / w329c, sheet-f1 / f2): the ammo counter at the same place in
+  the 4:3 image; the watch face centred and unstretched with the sixth
+  bar segment; the front end's paper and text centred, its 3D backdrop
+  filling the content rect; the crosshair at the content centre in aim
+  mode at all three (the off-centre alignment holds by construction - the
+  sight texrect and the aim ray are the same 4:3 screen-space fact mapped
+  the same way - and is on the owner checklist: aim, move the sight, fire
+  at a near wall).
+- POINTER / HIT-TEST at all three (real pointer on the idle desktop,
+  measured 986 s idle before the first real-pointer run): the watch
+  SIGHTLINE page's INVERT MOUSE Y ON at safe-mapped fb (256,48) reads
+  `hover ptr=(257,49) page=5 hit=value row=0 value=1` at 4:3 (client
+  768,144), 16:9 (928,144) and 32:9 (1568,144) - the same logical point -
+  and the click applies (`after ... minv=1`) at all three. Front end: the
+  DISPLAY tab at safe-ui (235,54) -> `highlight menu=27 row=-2 col=2` at
+  the 4:3-in-16:9 safe rect (160,0,960,720) and again at the 32:9
+  letterboxed safe rect (400,180,480,360) -> `cursor=(238.3,57.8)`; the
+  16:9 / 32:9 / 4:3 values hover and click (`options: tab=2 row=0 col=1 ->
+  aspect=1(16:9)`, `col=2 -> aspect=2(32:9)`, `col=0 -> aspect=0(4:3)`);
+  BACK at row 5.
+- PERSISTENCE: F1 (no key) -> DISPLAY 16:9 -> 32:9 -> exit -> file
+  `aspect_ratio=2`; F2 relaunch: `sl_display: aspect=32:9` from the first
+  frame before any Settings visit, DISPLAY reads 32:9, 4:3 clicked ->
+  `aspect_ratio=0`; the #46 scalars and bind lines untouched (settingstest
+  case 9). Malformed / missing: displaytest + settingstest (aspect_ratio=
+  wide / 7 / -2 / absent -> 4:3).
+- AI / LOS NEGATIVE CONTROL: the same Facility session (direct boot, no
+  input, 1500 pumped frames) at 4:3 and 32:9 with SL_TRACE_OUT: 749
+  per-tick records, every one of the 65 character entity hashes and the
+  player hash identical on every tick; only the props digest (0xFFFE)
+  differs (ticks 0-360, the intro camera); SL_TRACE_DETAIL at tick 200:
+  4 of 1050 detail lines differ, all `flags=04` -> `flags=06` (the
+  on-screen bit of an object and a door drawn in the bands), positions,
+  object state, door fractions and the player identical.
+- REGRESSION: the settings file after the runs carries the #46 scalars
+  unchanged; inputtest 225 checks with the 22 pre-existing B-096
+  failures (unchanged), the two invert cases 9/9 and 5/5; settingstest
+  82/82; displaytest 53/53; test.ps1 facility 300 PASS 1/1.
+- PERFORMANCE SANITY (heartbeat at frame 301, the Facility pose): 4:3
+  cmds=7771 tris=3407; 32:9 with the widened traversal cmds=8491
+  tris=4043 (+9% / +19%, the extra rooms); the paced 700-frame runs take
+  the same wall time (16.2-16.3 s) at both. No optimisation attempted.
+- CUTSCENES at 32:9: the Facility intro camera (frames 100-430, the dark
+  tank beside the camera occupies the left band - authored geometry, as
+  the 4:3 frame's left edge shows) and the Surface intro (the treeline
+  continues, the mission title centred) widen normally; the outro was not
+  exercised.
+- MULTIPLAYER: recon only (12 above); gated to 4:3; not claimed.
+- Build: build.ps1 -Demo (compile / link only) then build.ps1 LAST (key
+  without SL_DEMO_BUILD); __sgi proof (qol10\sgi_proof.sh, base 40fbbccb):
+  bg.c / bg.h / chr.c / chrai.c / chraction.c / propobj.c / propobj.h
+  token-identical under __sgi (raw diff: empty lines where a guarded block
+  stood), bare-token control differs, native arms +95 / +5 / +5 / +4 /
+  +11 / +27 / +1 lines, zero #45 tokens in any __sgi expansion. `make
+  trace-verify` NOT run (no MIPS toolchain).
+
+### Not exercised / limitations / parked
+
+- #43 (parked, untouched): LOD switching distance, rooms / terrain
+  appearing late, the N64-limited draw distance, any global LOD or
+  draw-distance change - none observed as an aspect defect; the Surface
+  intro's near tree quad at the far right of the 32:9 frame is authored
+  geometry, not popping.
+- The theta-240 portal residual above (Rare's in-front-points portal box).
+- Split-screen at 16:9 / 32:9 (gated to 4:3; a per-player content layout
+  is a later design).
+- The crosshair off-centre alignment (by construction; owner check).
+- The mission outro at 32:9; JP/EU text offsets; no physical controller.
+- A user FOV preference: not implemented (the seam exists: k is the one
+  horizontal factor; a vertical FOV change would be a game-side value).
+- SL_SCISSOR_DBG (the scissor rectangle witness) stays as a diagnostic.
+
+Owner steps: `.\tools\windows\build.ps1`, then `.\tools\windows\play.ps1
+-Size 2560x720` (or 1280x720 for 16:9; the size and the aspect are
+separate settings - the selected shape is fitted inside the window with
+bars, never stretched) -> title -> a folder -> 3. OPTIONS -> 1. SETTINGS
+-> DISPLAY -> 32:9 (the page widens at once) -> BACK -> start Facility or
+Dam. Expect: the same vertical framing as before, much more world to the
+left and right, the HUD, watch and menus in the centred 4:3 area, no
+stretch. Aim (right mouse), push the sight off-centre, fire at a near wall:
+the impact lands under the sight. 4:3 must look exactly as before; deleting
+`aspect_ratio` from %LOCALAPPDATA%\sightline\config.ini restores it.
+
+## 2026-09-18 - #45 owner replay, round two: "4:3 should basically be the
+## original aspect" - the fit-inside-the-window rule rejected; CORRECTED
+## CONTRACT (the aspect is the SHAPE at the CURRENT HEIGHT - the window
+## widens); then "Cursor doesn't reach the visible area of the game. It
+## stops a bit away from the top edge." and "Window sizes change, but the
+## game is the same size."; then the owner's scope additions (21:9, a FIELD
+## OF VIEW slider with a horizontal cap, the viewmodel, the overlays) -
+## implemented on sightline/qol-controls 89265519 window contract + witnesses, 4b78a715 21:9 / FIELD OF VIEW / cap / viewmodel, OPEN pending the owner's
+## pass
+
+### The corrected window contract (sl_gfx_sdl.c sdl_apply_aspect)
+
+The owner launched the first build and saw 16:9 and 32:9 drawn as
+letterboxed strips inside the 4:3 window with the front end shrunk - the
+"fit the selected aspect inside the framebuffer" rule applied to a window
+NARROWER than the shape. Rejected. Now: the selected aspect defines the
+shape at the current vertical size. In windowed mode the SDL backend keeps
+the client height and sets the width to height x aspect - 960x720 stays
+960x720 at 4:3, becomes 1280x720 at 16:9, 1680x720 at 21:9, 2560x720 at
+32:9 - live when the setting changes (SDL_SetWindowSize on the same
+context, the window re-centred on its display) and at the first frame from
+the persisted setting (`sightline gfx: aspect 32:9 -> window 960x720 ->
+2560x720 (height kept, width = height x 32:9)`). Precedence: SL_WINDOW_SIZE
+/ play.ps1 -Size name the INITIAL window; its height is kept and its width
+stands only while it agrees with the aspect - the aspect wins on the width.
+Applied once per change of the selection; the window has no
+SDL_WINDOW_RESIZABLE, so nothing fights the player. NOT resized: a
+fullscreen / fullscreen-desktop / maximised / minimised window (the
+framebuffer cannot be resized) and the SL_Z_QUANT diagnostic arm - there
+the fit rule of sl_display_rects applies: a framebuffer wider than the shape
+is pillarboxed (full height), one narrower keeps the FULL WIDTH and is
+letterboxed top and bottom (the alternative would crop the wide view; the
+content is never narrower than the framebuffer). The 2D layer (front end,
+watch, HUD) is the logical 4:3 image at the CONTENT HEIGHT - the same pixel
+size as today at 720 tall - centred horizontally; it never shrinks with the
+aspect. 4:3 at 960x720: nothing moves, byte-identical (below).
+
+### "Cursor doesn't reach the visible area of the game" - measured, not a
+### regression
+
+Pointer probes (SL_POINTER_PROBE, a developer witness added to
+src/platform/sl_input.c: window pixels fed in place of SDL at named frames,
+with a confirm edge on request; each held for the frame) in the windows the
+SETTING produced from a 960x720 start, on the SETTINGS page:
+
+- 16:9 (1280x720, safe rect 160,0 960x720): the safe rect's corners map
+  to `pointer (0.000,0.000) -> cursor (0.0,0.0)`, `(0.999,0.000) ->
+  (439.5,0.0)`, `(0.000,0.999) -> (0.0,329.5)`, `(0.999,0.999) ->
+  (439.5,329.5)`; the DISPLAY tab at safe-ui (235,54) = window (673,118)
+  -> `cursor (235.1,54.1)`, the click -> `options: tab=2 row=-2 col=2 ->
+  ... aspect=1(16:9)`; the four WINDOW corners (0,0) (1279,0) (0,719)
+  (1279,719) are in the pillar bands and are ignored (no pointer line) -
+  the front end is 2D and lives in the 4:3 image.
+- 32:9 (2560x720, safe rect 800,0 960x720): the same four safe corners ->
+  the same four logical points; the DISPLAY tab at window (1313,118) ->
+  `cursor (235.1,54.1)`, the click -> `options: tab=2 row=-2 col=2 ->
+  ... aspect=2(32:9)`.
+
+So the mapping reaches the top edge (v = 0.000 at the safe rect's top,
+which is the window's top). What stops the drawn cursor "a bit away from
+the top edge" is the front end's own inset, unchanged since 1997 and the
+same at 4:3: front.c:1319-1341 clamps cursor_h_pos to [left + 20, left +
+width - 20] and cursor_v_pos to [top + 20, top + height - 20] in 440x330
+units (20 units = 44 px at 720 tall) - the probe lines show exactly that:
+`cursor (0.0,0.0)` from the pointer, then `highlight ... cursor=(20.0,20.0)`
+after the game's clamp. Every hit target (the tab strip at y 48, the rows
+from 80) lies inside the inset, as the DISPLAY-tab clicks show. Not a #45
+change; recorded so it is not chased again.
+
+### "Window sizes change, but the game is the same size" - the front end is
+### 2D and stays its 4:3 size on purpose; the WORLD widens
+
+Stated plainly: the front end (folders, options, the settings page, the
+briefing) is the game's 2D composition in the 440x330 logical space and,
+by the HUD rule, keeps its 4:3 size at the window's height, centred, with
+the pillar bands beside it; its 3D backdrop (the folder scene) fills the
+width. What widens is the WORLD in a mission: the same pose at the windows
+the setting produces from 960x720 - Facility catwalk, frame 301 -
+4:3 stays 960x720 and the frame is sha256 EF09C9FB... - byte-identical to
+the pre-#45 baseline on the FINAL build (every game-side arm, the FOV, the
+viewmodel bracket at their defaults); 16:9 resizes to 1280x720
+(6BDA455D...), 21:9 to 1680x720 (9EC615B1...), 32:9 to 2560x720
+(E22D8B93...): the same vertical composition, the world filling the whole
+window width with no pillars in gameplay - the guard beside the tanks
+whole, the far-left stair room and the right window room in view at 32:9
+(sheet-quad.png). The `sl_display:` line names each: `aspect=21:9 k=1.750
+window=1680x720 content=0,0 1680x720 safe=360,0 960x720 ... total=106.8`.
+
+### 21:9
+
+Added as SL_ASPECT_21_9 = 3. The persisted ids are APPEND-ONLY: the owner's
+real config.ini already carried `aspect_ratio=2` (= 32:9, read read-only,
+never modified) when 21:9 was added, so 21:9 took the next id rather than
+the slot between - a renumbering would have silently turned the owner's
+32:9 into 21:9. The DISPLAY row orders the four by width (sl_aspect_by_order
+/ sl_aspect_order_of: 4:3, 16:9, 21:9, 32:9 over ids 0, 1, 3, 2); window
+width 720 x 21/9 = 1680; total horizontal at the default 106.8 degrees.
+
+### FIELD OF VIEW (the slider), the cap, the viewmodel
+
+- STORED: `fov_vertical`, the VERTICAL field of view - the engine's own
+  invariant, the fovy fr.c:709 hands guPerspectiveF - in hundredths of a
+  degree; default 6000 = 60.00 = FOV_Y_F exactly, so the default is a
+  no-op; range 3598..7756 (the store row's bounds), which is exactly h16
+  60..110 below. Missing / malformed / out of range -> 6000. RESET DEFAULTS
+  in the bindings editors removes `bind.` lines only and leaves it alone
+  (settingstest case 10).
+- DISPLAYED: the 16:9-equivalent horizontal FOV in whole degrees, the
+  players' convention: h16 = 2 atan(tan(v/2) 16/9); 60.00 vertical reads
+  91 (91.49). The row `FIELD OF VIEW  -  91  +` (DISPLAY tab): `-` steps
+  the displayed value down one degree, `+`, the number and the label step
+  it up; each step stores the converted vertical rounded to hundredths
+  (92 -> 60.44, 90 -> 58.72), and a step onto 91 stores the exact 6000 so
+  a round trip returns to the original, not to 59.79 (sl_fov_step). Range
+  60..110 clamps at both ends. Keyboard / controller reach the three
+  columns as any row; no text entry.
+- APPLIED by the renderer only, to the player's WORLD projection: fr.c
+  viSetupCurrentPlayerView names its matrix's address to the renderer
+  (native arm, sl_gfx_note_world_projection) and bondview2.c names the
+  view-folded copy (field_10E0, the one props / explosions / glass load,
+  sl_gfx_note_world_projection2); a G_MTX_PROJECTION load of either
+  address gets clip x and y scaled by s = tan(30) / tan(v_eff / 2) on top
+  of the aspect's 1/k on x - a uniform zoom-out about the viewport centre
+  that puts more world in the same viewport. The watch, the options screens
+  and the title load their own matrices and are untouched, so their
+  pointer mirrors and 2D text stay aligned. In the front end (no level)
+  and in split-screen s is 1. Applies at the next frame reset - live.
+- WHAT STAYS RARE'S: the aim ray, auto-aim, spread and the look rate read
+  the game's own 60-degree fovy (nothing in the look path reads the
+  setting): the mouse stays degrees per count at every slider value, and
+  the sniper zoom's fovy-scaled rate (bondview2.c:3996-4091, :6452-6553,
+  viGetFovY / FOV_Y_F) is the cartridge's, relative to the game's own
+  zoominfovy. The crosshair sight is a 2D image the game places in its
+  60-degree screen space, so gunDrawSight (gunfire.c, native arm) moves its
+  DRAWN position by s about the view centre and it stays over the aim ray.
+- THE CAP: the total horizontal FOV 2 atan(tan(v/2) ratio) never exceeds
+  SL_FOV_H_CAP_DEG = 140 - beyond that a rectilinear projection's edge
+  magnification (1/cos^2 of the half angle: 8.5x at 70 degrees) is past
+  what any shipped game tolerates. When the slider and the aspect would
+  exceed it, the EFFECTIVE vertical FOV for that aspect is reduced so the
+  total lands on 140 (sl_display_fov_effective) and the `sl_display:` line
+  says `cap=engaged`. Which settings reach it: 32:9 from h16 108 (75.5
+  vertical -> 140.1 total); 21:9 never (110 -> 123.9); 16:9 never (110 ->
+  110); at the default nothing (4:3 75.2, 16:9 91.5, 21:9 106.8, 32:9
+  128.1 total).
+- VIEWMODEL: GoldenEye draws the first-person weapon under the world
+  projection (gunfire.c gunRenderFirstPersonGunModels loads no projection
+  of its own - tree-wide `grep -n "G_MTX_PROJECTION\|guPerspective"
+  src/game/gunfire.c` is empty), so under the slider the gun would shrink
+  with the world. Seam: bondview2.c maybe_mp_interface brackets the call
+  with two tagged no-ops (gDPNoOpTag 'SVM1' / 'SVM0', native arm - a no-op
+  is what the RDP sees, and the matching build never emits them); the
+  renderer's OP 0xC0 case switches the FOV scale off inside the bracket
+  (the aspect's 1/k stays: Hor+ applies, the slider does not) and re-loads
+  the projection at each edge. At the default the bracket changes nothing.
+- The sky / sea band (raw RDP polygons in the game's screen space): drawn
+  through the same zoom about the viewport centre, corners that sat on a
+  viewport edge pushed back out to the edge, attributes evaluated at the
+  corner's position in the game's space (draw_rdp_tri ex/ey) - the same
+  planes continued. The traversal root widens vertically by 1/s as it
+  widens horizontally by k/s (sl_view_scale, sl_view_scale_y).
+
+### Screen-space overlays at 32:9
+
+- The level-intro fade at 32:9 (Facility direct boot, frames 2-50 every
+  12): the band pixels at x 5 and 400 are as dark as the safe rect's at
+  800 on every frame and brighten together (000000 -> 0d0d0d at x 800 vs
+  010101 -> 040404 in the band, the room behind lit unevenly) - the
+  full-width fill is extended to the content edges (`extended=3/0`).
+- The watch (pause) at 32:9: the page fills the window, the dark backdrop
+  covering the bands (sheet-w329c panel 3).
+- The letterbox strips (rows 0-10 / 230-240) and the sky / sea band:
+  extended (every 32:9 frame above).
+- NOT exercised: the sniper scope overlay (no sniper rifle on the Facility
+  catwalk pose; the scope is a texrect - it stays a centred 4:3 image by
+  the HUD rule, and the world outside it is the world), the damage flash
+  and the death overlay (full-width fills, the same extension path as the
+  fade; not triggered this round), the mission-failed / outro fades.
+
+### Evidence, round two (scratch qol10)
+
+- Windowed contract: `sightline gfx: aspect 16:9 -> window 960x720 ->
+  1280x720 (height kept, width = height x 16:9)`, `21:9 -> 1680x720`, `32:9
+  -> 2560x720`, back `4:3 -> 960x720` (f3 / f4 runs, the setting changed
+  from the DISPLAY tab by keyboard; the page re-drawn in the new window on
+  the next frame, its paper and text the same size, the rock backdrop
+  filling the width: sheet-f4.png). At launch from a persisted `aspect_ratio=2`
+  the window is 2560x720 at the first frame.
+- Front end at 4:3 / 16:9 / 21:9 / 32:9: sheet-f4 - `ASPECT RATIO 4:3 16:9
+  21:9 32:9` with the current one lit, `FIELD OF VIEW - 91 +`; the presses
+  `options: tab=2 row=0 col=1 -> aspect=1(16:9)`, `col=2 -> aspect=3(21:9)`,
+  `col=3 -> aspect=2(32:9)`, `row=1 col=2 -> fov=6044(h16=92)`, again
+  `fov=6131(h16=93)`, `row=1 col=0 -> fov=6044(h16=92)`; the file after:
+  `aspect_ratio=2` `fov_vertical=6044`.
+- FOV, same pose, windows by the setting (sheet-fov.png): 16:9 at h16 60
+  (`fov=35.98(h16=60) eff=35.98 total=60.0 cap=off s=1.7780`, 23616C72...)
+  zoomed in; h16 91 the default (s=1.0000, identical to the quadruplet's
+  16:9 frame 6BDA455D...); h16 110 (`fov=77.56(h16=110) eff=77.56
+  total=110.0 cap=off s=0.7186`, EB3B76AF...) zoomed out, more ceiling
+  and floor, the horizon where it was, the gun the same size (the viewmodel
+  bracket); 32:9 at h16 110: `eff=75.39 total=140.0 cap=engaged s=0.7472`
+  (C20E0F0F...) - the cap engaged, more world than at 128 and no further;
+  4:3 at h16 110: `total=93.9 cap=off` (D14896A2...).
+- AI / LOS on the FINAL build: the 4:3 trace is byte-identical to the
+  first round's (sha equal), and 32:9 at h16 110 against 4:3 over 749
+  ticks: every character entity and the player identical, only the props
+  digest (the drawn flag) differs - as before.
+- The 4:3 pointer corners could not be probed with the off-screen,
+  never-activated capture window (the pointer path needs window focus);
+  at 4:3 the presented rectangle is the whole 960x720 window, the pre-#45
+  identity mapping the real-pointer runs of #41 / #44 / #46 and this
+  round's F1 exercised; the 16:9 / 32:9 probes above were taken with
+  on-screen windows.
+- Capture harness: SL_WINDOW_POS=x,y (developer) parks the window and
+  disables activation-on-show and the resize re-centre, so a capture run
+  takes nothing from a desktop in use; SL_POINTER_PROBE as above. Neither
+  is set in a player launch (play.ps1 does not set them).
+
+### Tests
+
+settingstest 93/93 (aspect_ratio 0..3, fov_vertical default / bounds /
+malformed / RESET DEFAULTS untouched); displaytest 87/87 (21:9 name /
+value / order / 1680 width, the window-width rule, h16 <-> vertical round
+trip, the step semantics with the default snap and the clamps, the cap
+arithmetic at 32:9 / 21:9 / 16:9 / default, the renderer scale and the
+traversal scales, the front-end and split-screen gates); inputtest 225
+checks with the 22 pre-existing B-096 failures unchanged; test.ps1
+facility 300 PASS. __sgi proof (base 40fbbccb) over bg.c, bg.h, chr.c,
+chrai.c, chraction.c, propobj.c, propobj.h, gunfire.c, bondview2.c, fr.c:
+token-identical, non-vacuous, zero #45 tokens in any __sgi expansion.
+
+### Follow-ups recorded
+
+- A HUD safe-area / scale setting (edge-anchored elements at the physical
+  edge on request): not now.
+- Non-rectilinear (Panini / cylindrical) projection for very wide ratios:
+  roadmap only; the 140-degree cap is the rectilinear answer.
+- The theta-240 portal residual (Rare's in-front-points portal box).
+- Split-screen at wide aspects (gated to 4:3).
+- The scripted spawn-off-screen placement at 4:3 semantics (an owner
+  decision, recorded above).
+
+## 2026-09-18 - #45 owner replay, round three: "It doesn't look like the top
+## and bottom of the screen work well with 16:9 and higher set at FOV 90" -
+## a light strip across the top of the window, a dark one along the bottom
+## (Dam, 16:9 / 21:9). FIRST WRONG STAGE: the sky band's vertical edge
+## extension - FIXED on sightline/qol-controls (c340b113)
+
+Measured (Dam room 121 pose, frame 301, windows sized by the setting):
+rows 0-29 of the 720-tall window carried the sky colour (avg 68,93,130) at
+16:9 at FOV 90 AND at the default 91, and at 4:3 at FOV 90; the pre-#45 4:3
+frame and the 4:3 default have them black. Rows 690-719 are black in EVERY
+frame, the pre-#45 one included: the dark bottom strip is GoldenEye's own
+letterbox - the one player is drawn into y[10,230] of 240 (B-046, "sl_vp:
+... x[0,320] y[10,230]") and the game paints the ten rows above and below
+black itself. The light top strip was the #45 sky extension in
+draw_rdp_tri (src/gfx/sl_gfx_dl.c): a sky corner that sat on the
+viewport's TOP edge was pushed to framebuffer row 0 (bottom corners to row
+240), and the sky, drawn after the black fill, covered the strip whenever
+the extension ran - any aspect above 4:3, or any FOV off the default (at
+4:3 / default the block never runs, which is why the negative control held
+while the defect existed). Not the projection (s applied once), not the
+viewport / scissor (the 3D pass fills y[10,230] at every FOV: no uniform
+row inside it), not the traversal (no missing rows), not a 330/240 mapping.
+
+Fix (c340b113): the vertical push goes to the viewport's own top / bottom
+(t_vp / b_vp - the RSP viewport's logical rows the corner already sat on);
+horizontally the content edges as before. Re-measured at 16:9 and 32:9 for
+FOV 60 / 90 / 91 / 110 (scratch qol10 band-* captures, bands2.py): rows
+0-29 and 690-719 black in every frame - exactly the original letterbox -
+and zero uniform rows inside the viewport (the world fills it); 4:3
+default Dam 4F8DE0D7... and Facility EF09C9FB... byte-identical to the
+pre-#45 captures on this build. Sheet: sheet-bands.png. The "HUD ammo in
+the dark strip" reading: the ammo counter sits at logical y 177-205, just
+above the bottom letterbox, where the original draws it.
+
+## 2026-09-19 - #45 owner request: "Can we add those settings to the watch
+## too under SIGHTLINE?" -> STRUCTURE CHANGE: the SIGHTLINE watch page
+## becomes SUB-MENUS - GRAPHICS (parked, dimmed), GAMEPLAY, DISPLAY,
+## CONTROLS - with BINDINGS moved under CONTROLS. On sightline/qol-controls
+
+The SIGHTLINE page (watch page 5, src/game/options.c) no longer lists its
+settings flat. It presents four action rows in the owner's order - GRAPHICS,
+GAMEPLAY, DISPLAY, CONTROLS - and each opens a nested child view exactly as
+the #46 BINDINGS child did: a heading, a row list, a BACK row. The children:
+
+- GAMEPLAY: SPRINT OFF / ON, BACK.
+- DISPLAY: ASPECT RATIO `-` 4:3 / 16:9 / 21:9 / 32:9 `+` (the front end's
+  DISPLAY-tab order; the window's width follows the height on each step,
+  live: 960x720 -> 1280 -> 1680 -> 1280 witnessed), FIELD OF VIEW `-` h16
+  `+` (60..110, one per press; the value stepped 91 -> 95 wrote
+  `fov_vertical=6309`), BACK.
+- CONTROLS: INVERT MOUSE Y OFF / ON, BINDINGS (the #46 grandchild, its own
+  BACK returns to CONTROLS), BACK.
+- GRAPHICS: NOTHING ships there yet (#43 WORLD DETAIL / #47 LIGHTING / #48
+  TEXTURES are parked), so the row is drawn DIMMED and is unselectable - the
+  CHEATS-row convention (the cursor falls past it up and down; the pointer
+  gets no hit). This is a CHOICE the owner can override: the alternative,
+  an empty GRAPHICS child holding only BACK, is a one-line table change
+  (`SL_WROW_SUBMENU` instead of `SL_WROW_DIMMED`, plus a fifth view).
+
+The machinery is generic and data-driven: `sl_watch_views[]` (options.c) is
+the table of views {heading, rows[4], count}, a row is {label, kind, arg}
+with kind in SL_WROW_SUBMENU / DIMMED / TOGGLE_MINV / TOGGLE_SPRINT /
+VALUE_ASPECT / VALUE_FOV / BINDINGS / BACK (options.h). One back stack:
+`sl_wview` (the view in force), `sl_wview_parent_row` (the SIGHTLINE row to
+return the cursor to), `sl_wview_back_req` (Escape asked for one level up -
+routed from sl_input.c through sl_game_watch_child_open / _back in
+src/native/sl_game_query.c, so Escape steps BINDINGS -> CONTROLS ->
+SIGHTLINE -> watch closed; witnessed at both depths). The keyboard /
+controller path is the page's own row step (one row per press, the latch
+dropped on a row change, the ring's L/R only on the SIGHTLINE page itself,
+Enter on an action row opens / returns); the #40 pointer hit-tests every
+child's rows by KIND (src/native/sl_watch_pointer.c: toggle cells, the
+`-` / value / `+` cells, action labels; a DIMMED row nothing) and a label
+click opens / returns through the same `sl_sightline_click`. Opening or
+returning re-centres the cursor and clears the latch WITHOUT
+watch_play_beep_sound (that helper TOGGLES the latch - measured: the
+child's first row came up latched and SPRINT's D did nothing) - the beep is
+played directly. Persistence unchanged: the same settings store rows the
+front end writes; a relaunch on the watch-written file shows INVERT MOUSE Y
+ON, SPRINT ON, 16:9, 95 on the front end's CONTROL / GAMEPLAY / DISPLAY tabs
+and in the watch's DISPLAY child.
+
+Evidence (scratch qol10, keyboard-driven, window parked off-screen; the
+owner was at the desktop): sheet-w6.png / sheet-w6-steps.png (the page with
+GRAPHICS dimmed, every child, the BINDINGS grandchild, 20 row steps one per
+press across all four views, `down/up -> view=N(...) row=R` witnesses),
+sheet-w7.png (the persisted file relaunched: DISPLAY child 16:9 / 95, the
+back stack BINDINGS -> CONTROLS -> SIGHTLINE, the original pages 0-4
+unchanged at 16:9, the world at FOV 95 after the watch closed), sheet-w8.png
+(SL_POINTER_PROBE: the ASPECT `+` clicked at 4:3 client (783,144) -> 16:9
+and the window 1280 wide; the FOV `+` clicked at its NEW 16:9 position
+(943,195) -> 92; BACK's label -> SIGHTLINE; the left bar -> no hit),
+sheet-f5.png (front end reflecting the watch's writes), sheet-fov95.png
+(16:9 FOV 95 vs 91: 763996 of 921600 px differ, the viewmodel untouched).
+Negative control on this build: 4:3 Facility EF09C9FB..., Dam 4F8DE0D7...,
+Surface 7EF5F4AD... byte-identical. __sgi proof extended to options.c /
+options.h: token-identical to 40fbbccb, non-vacuous, native arms +302 / +50
+lines, zero #45 tokens in the __sgi expansion. settingstest 93/0,
+displaytest 87/0, inputtest 225 checks / 22 pre-existing B-096 failures
+unchanged (three link stubs added to tools/native/inputtest.c), test.ps1
+PASS. One capture note: the w6 run's shots went black from its 196th frame
+on (the owner was active at the desktop at that moment; the log's witnesses
+and the DL census continued normally) - re-run as w7 with no recurrence;
+recorded as a capture artefact, not a defect.
+
+## 2026-09-19 - Release infrastructure issue filed (#49): versioned GitHub
+## releases with a single Windows ZIP artifact. PARKED until #45 is
+## owner-accepted and the QoL branch is merged. Issue administration only:
+## no tooling, build, packaging or publication script changed.
+
+Issue #49, "Releases: versioned GitHub releases with a single Windows ZIP
+artifact", holds the full plan (version model, artifact, ZIP contents,
+validator, launcher, provenance, the 17-step publication transaction,
+failure safety, notes, docs). Read-only recon recorded there and summarised
+here so the implementation round starts from measured facts:
+
+- **Publication commit.** The public mirror's master is `4d6148d8`, equal to
+  the staging repository's master, subject `Publish 90e74995: [P1] docs:
+  point the public mirror at the wiki and project board`. Public chain:
+  `3a02af7a` Initial public release -> `98538bd6` -> `186593f8` ->
+  `3c11885f` -> `4d6148d8`. No tags and no releases exist on the public
+  mirror, the staging repository or the canonical repository (measured
+  2026-09-19).
+- **Canonical commit.** `90e74995` is in canonical history (the local
+  master; `origin/master` is two commits further, both touching only the
+  excluded `.gitea/workflows/publish-public.yml`, so the public tree is
+  unchanged and the public HEAD correctly names `90e74995`). It is the
+  pre-QoL master: `sightline/qol-controls` forks from `dbda7e77`.
+  `publish_public.py` records the canonical SHA only in the publication
+  commit subject (`tools/publish/publish_public.py:406`); no provenance
+  file is written into the published tree.
+- **v0.1.0 reproducibility verdict: buildable from the exact source, not
+  byte-reproducible, and two build inputs live outside Git** -
+  `build\u\ge007.u.map` from `make matching` (`build.ps1:162-170`) and
+  `bin\aspboot.data.bin` extracted from the user's ROM
+  (`scripts/extract_asp_gsp_rsp.sh` -> `tools/native/gen_resample_tab.py`
+  -> `build/native/sl_resample_tab.h`, 528 bytes of RSP microcode data
+  COMPILED INTO the exe, `build.ps1:202`). The second is also a distribution
+  question against `readme.md:150-151` ("nothing ROM-derived is committed or
+  distributed"). Toolchain versions (gcc 16.2.0, SDL2 2.32.10 measured) are
+  not pinned; `.build_key` records flags only. v0.1.0 therefore STOPS at two
+  owner rulings (the microcode table; the map) and a provenance file that
+  records both input hashes and the toolchain identity - then a detached
+  worktree at `90e74995`, never a relabelled newer build.
+- **Launcher / ROM findings.** `sightline.exe` with no environment is
+  headless (`src/gfx/sl_gfx.c:22-25`, `SL_WINDOW` unset selects the null
+  backend); the ROM is found through `SL_ROM` only, else the cwd-relative
+  source path `build/u/ge007.u.z64` (`src/platform/sl_ultra_shim.c:1167-1169`;
+  tree-wide search for `SL_ROM|\.z64|ge007\.u` over `src/` returns only that
+  and comments - no exe-adjacent ROM search); the save persists only with
+  `SL_EEPROM_RW` set (`sl_ultra_shim.c:2575-2578`). Config and player data
+  are repository-independent under `%LOCALAPPDATA%\sightline`
+  (`src/platform/sl_settings.c:240-262`); the packaged layout
+  `<exe dir>\data\asset-overrides` is already searched
+  (`src/native/sl_asset_override.c:87-88, 209-212`); nothing under `tools\`
+  or `src\` is read at run time (tree-wide search for `"tools/`, `"src/`,
+  `"build/`, `"data/`, `"assets/`, `"bin/` literals in `src/**/*.c`).
+  `play.ps1` assumes a Git checkout (`$repo`, Python, `levelstage.py`,
+  `build\win32`), so the ZIP ships a minimal `Sightline.cmd` that finds the
+  first `*.z64` beside it (or honours `SL_ROM`) and sets `SL_WINDOW`,
+  `SL_WINDOW_SIZE`, `SL_EEPROM_RW`, `SL_RUN=0`. Runtime DLL set measured
+  from the import table: `SDL2.dll`, `libwinpthread-1.dll`.
+- **Mirror-path constraint.** The staging repository pushes to GitHub
+  through a Gitea push mirror (sync on commit, 10-minute interval, mirror
+  semantics), so a release tag is created on the staging repository and
+  read back on GitHub before the GitHub Release is created; a tag created
+  on GitHub directly would be removed by the next sync.
+
+Nothing was built, packaged, tagged, released, merged or pushed to the
+staging repository or the public mirror in this round. The QoL branch
+received only this file.
+
+## 2026-09-19 - Future QoL roadmap issues filed (#50-#62) and the tiered
+## implementation order recorded. Issue administration only: no source,
+## tool, asset or build script changed; nothing closed; #43-#49 untouched.
+
+Thirteen focused issues, each with owner intent, explicit in / out scope, the
+accepted current behaviour as the default, an acceptance intent, real
+relationships only, and a Home line (front-end SETTINGS tab + watch
+SIGHTLINE sub-menu). Every create and cross-link patch was read back
+title- and body-identical (sha256 of the sent body against the readback).
+Duplicate search first: all 49 prior issues, state=all, titles and bodies.
+No prior issue owned any of these scopes; what came closest is recorded
+inside each issue (#39 "no sensitivity work", #46 "sensitivity, deadzones,
+curves, analog axes, per-weapon binds out of scope", #44 "no sensitivity /
+deadzone rows", #45's HUD safe-area / scale follow-up).
+
+### ROADMAP (issue - title - status / tier)
+
+CURRENT
+- #45 - Display: 4:3 / 16:9 / 21:9 / 32:9 + FIELD OF VIEW - OPEN, owner review.
+
+NEXT - Tier 1, controls completion
+- #50 - Controls: mouse sensitivity and scoped sensitivity - filed.
+- #51 - Controls: controller sensitivity, deadzones and response tuning - filed
+  (bounded recon before any response model).
+- #56 - Controls: configurable Hold / Toggle behavior for Crouch and Sprint - filed.
+
+PLANNED - Tier 2, baseline PC display
+- #45 - done pending acceptance (the window contract the tier inherits).
+- #52 - Display: resolution, window mode, fullscreen, VSync and frame pacing - filed.
+- #53 - Display: HUD/UI scale and widescreen/ultrawide safe area - filed
+  (#45's recorded follow-up; final acceptance after #45's).
+- #60 - Display: native brightness/gamma setting - filed (audit true gamma /
+  post-scale / renderer-native first).
+
+PLANNED - Tier 3, gameplay convenience
+- #54 - Gameplay QoL: restart mission and return to mission select from the
+  watch - filed (the existing ABORT sub-state is the seam).
+- #55 - Gameplay QoL: skippable mission cinematics - filed (opt-in, audited
+  per cinematic kind).
+- #57 - Display/Controls QoL: configurable crosshair size and visibility - filed.
+
+PLANNED - Tier 4, controller polish (after #46; after Tier 1)
+- #58 - Controls: native controller rumble - filed (SDL recon first, OFF default).
+- #59 - Controls: controller hot-plug, reconnect and seamless input-device
+  switching - filed (a contract over the rescan that already exists).
+
+PLANNED - Tier 5, optional
+- #61 - Controls QoL: optional direct weapon / weapon-category bindings -
+  filed, lower priority, depends on #46's registry.
+- #62 - Accessibility QoL: native control and readability convenience
+  options - filed, coordination umbrella only; primitives ship through
+  their focused issues.
+- #49 - Releases: versioned GitHub releases with a single Windows ZIP -
+  infrastructure, after #45 acceptance + merge.
+
+PARKED - graphics phase
+- #43 - Display: Original / Modern world-detail profile.
+- #47 - Graphics: selectable texture sets.
+- #48 - Display: Original / Modern lighting.
+
+Relationships recorded where real: #46 -> #61; #45 -> #53 (final ultrawide
+acceptance); #43 independent of #52 / #53 / #60 and of #45; #46 before #58
+/ #59 are complete; the focused issues -> #62.
+
+### FOV: no issue filed
+
+User FOV shipped inside #45 (vertical stored as `fov_vertical`, h16
+displayed 60..110, the 140-degree total-horizontal cap; the mouse stays
+degrees per count). A dedicated issue only if later tuning is requested:
+per-weapon / scoped FOV, or a viewmodel FOV.
+
+### Audit-only group: what is and is not covered (nothing created)
+
+- Subtitles / text readability: no issue; GoldenEye has no spoken dialogue
+  to subtitle, and mission / briefing / objective text readability is inside
+  #53's element-by-element audit. Filed only if a need survives that audit.
+- Audio volumes beyond the cartridge's own music / sfx rows: no issue; no
+  owner request on record.
+- Screenshot key / native capture: no user feature and none filed; `SL_SHOT`
+  and the F8 owner mark (#8) are developer evidence tooling.
+- Pause on focus loss / configurable auto-pause: no issue; today focus loss
+  disarms the pointer capture and clears the action edge history
+  (sl_input.c) and does not pause.
+- Confirmation on destructive menu actions: no separate issue; the
+  cartridge's ABORT confirms and #54 reuses that shape.
+- Save / profile selection UX: no issue; the cartridge's folders.
+These six are also listed under "Gaps noted, not filed" in #62 so the
+umbrella carries the audit.
+
+Combined: none. Each group filed as one issue; RESTART and RETURN share #54
+(one seam, the abort sub-state) and no recon has shown they need two.
+
+## 2026-09-19 - #45 owner-accepted and CLOSED ("Aspect Ratio is accepted.");
+## #49 (releases) stays parked until the QoL Phase 1 set is scope-frozen for
+## v0.2.0. Issue administration: comments read back, no body edited.
+
+#45 comment 630 records the owner replay and the shipped scope (4:3 / 16:9 /
+21:9 / 32:9, Hor+ FOV, the watch SIGHTLINE sub-menus); state read back
+`closed`. #49 comment 632: "#45 is now owner-accepted." / release
+implementation intentionally parked until the owner-approved QoL Phase 1
+feature set is complete and scope-frozen for v0.2.0. The mouse-sensitivity
+search (state=all: mouse / scoped / aim / ADS sensitivity, mouse look speed)
+found #50 "Controls: mouse sensitivity and scoped sensitivity" already
+carrying exactly this scope, so #50 is the issue and no duplicate was filed.
+
+## 2026-09-19 - #50 MOUSE SENSITIVITY and SCOPED SENSITIVITY: two persisted
+## percents at the one gameplay mouse-look seam; rows on the front end's
+## CONTROL tab and the watch's CONTROLS child; default 100 / 100 = the
+## accepted look bit for bit (D-009). Owner replay pending; #50 stays OPEN.
+
+### Recon (file:line at cc3a418a)
+
+- Raw SDL relative dx/dy enter at src/platform/sl_input.c:1095
+  (`SDL_GetRelativeMouseState` in read_mouse); the platform sign convention
+  at :1183-1184; INVERT MOUSE Y, the one sign point, at :1203-1204; the raw
+  counts kept at :1211-1212; the fallback +/-70 channel at :1190 / :1215.
+- The gameplay consumer: the linear publish `sl_mouse_look_set(on,
+  g_raw_dx * dpc, -g_raw_dy * dpc)` at :2562-2570 with `dpc = g_sens *
+  0.025f` (:2563), read by bondview2.c:6443 (pitch) and :6523 (yaw) into
+  speedverta / speedtheta. ONE constant for both axes (g_sens; y differs by
+  the screen sign and the invert only), so a single percent is correct.
+- The scoped predicate the wheel already uses: `sl_game_scoped_zoom_active`
+  (src/native/sl_game_query.c:275 - insightaimmode AND the right-hand
+  item's WEAPONSTATBITFLAG_DISABLE_CROUCH stat bit, the sniper rifle and
+  the camera; goldeneye_docs "weapon statistics bitflags.txt"), evaluated
+  at sl_input.c:2350 into the wheel context. Wheel precedence (:169-172):
+  a menu -> the stick pulse; adjustable scoped aiming -> ZOOM_IN / OUT;
+  otherwise WEAPON_PREVIOUS / NEXT. Plain AIM / right-click without such
+  an item is NOT scoped - the same predicate answers 0 (measured below).
+- g_sens is read at exactly four sites (:838-840 the env, :1190, :1215,
+  :2563; `grep -n "g_sens\b" src/platform/sl_input.c`), none of them on
+  the pad's map_pad / map_pad_dual path, the watch pointer
+  (watch_pointer_integrate :1060-1061), read_pointer or the bindings
+  capture - so a factor on g_sens at the mouse lines is the smallest seam.
+- UI infrastructure: sl_front_options.c set_short_value_row / SR_FOV (the
+  `-` value `+` idiom, cols 0 / 1 / 2); the watch's SL_WROW_VALUE_FOV row
+  (options.c sl_draw_sightline_value, sl_sightline_value_step; hit rects in
+  sl_watch_pointer.c hit_sightline by KIND). Default magnitude: 0.15
+  deg/count (dx 40 -> 6.000000 deg, MEASURED through the inputtest stubs).
+
+### Implementation
+
+- Store (src/platform/sl_settings.c/.h): `mouse_sensitivity` and
+  `scoped_mouse_sensitivity`, integer percent, default 100, range 10..300,
+  UI step 10 (SL_MOUSE_SENS_*). Derivation: 10% = 0.015 deg/count sits
+  under the slowest rate the old stick-curve path ever produced (0.018,
+  measured); 300% = 0.45 deg/count = 400 counts per half turn, past which
+  a 1600-dpi mouse turns 180 degrees in a quarter inch; the product at the
+  ceiling (9x, 1.35 deg/count) is far from any float or int limit; zero
+  would freeze look and is refused by the row's lo; negatives are refused
+  (the sign is Invert Mouse Y's); malformed / missing -> 100; no migration
+  (a #45 file reads 100 / 100 with every other key intact - selftest 11).
+- Seam (src/platform/sl_input.c): `g_scoped_now` = `!menu &&
+  sl_game_scoped_zoom_active(0) == 1`, asked ONCE per poll before
+  read_mouse and shared with the wheel context; `mouse_sens()` = g_sens x
+  msens/100 x (scoped ? ssens/100 : 1), read from the store every poll (as
+  pad_button_mode is - no live copy, no drift); used at the two mouse
+  lines in read_mouse and the linear publish, nowhere else. SL_MOUSE_SENS
+  stays the developer BASE the percents multiply. `sl_mouse_sens_get /
+  _step` (sl_input.h) are the editors' two calls: a step lands on the
+  10-grid (a hand-edited 105 -> 110 / 100) and clamps. SL_INPUT_DEBUG's
+  input line gained `msens= ssens= scoped=`.
+- Front end (src/native/sl_front_options.c): SR_MSENS / SR_SSENS after
+  INVERT MOUSE Y on the CONTROL tab, `-  <pct>%  +` in short-value columns
+  1..3 (one column right of FOV's, so the eighteen-glyph label clears
+  them); SET_SLOTS 6 -> 8 with BACK on the slot after a tab's last row and
+  never above slot 5 (GAMEPLAY / DISPLAY keep the accepted BACK position;
+  CONTROL's BACK is slot 7 at y 0x130, inside the bindings editor's own
+  footer band). The `%` glyph is the Zurich Bold table's (the 007-mode
+  sliders print `100%` with it, front.c:4470).
+- Watch (src/game/options.c / options.h, native arms; src/native/
+  sl_watch_pointer.c): SL_WROW_VALUE_MSENS / SSENS rows in the CONTROLS
+  child between INVERT MOUSE Y and BINDINGS (SL_WVIEW_ROWS_MAX 4 -> 5),
+  SL_WROW_IS_VALUE(k) for the four `-` value `+` kinds (step, click, latch,
+  pointer hit); the value cell prints `<pct>%` (the small font's
+  0x21..0x7E table, chars[c - 0x21], textrelated.c:427). __sgi proof:
+  options.c / options.h expand byte-identically to cc3a418a (md5
+  7bb753c2d90d / 89af0a83a899), control differs, native arms +25 / +9,
+  zero #50 tokens (scratch qol11\sgi_proof.sh).
+
+### Witnesses (MEASURED)
+
+- Default identity: the real sl_input.c through the inputtest stubs,
+  built at cc3a418a BEFORE the edit and again after: dx 40 -> yaw
+  6.000000, dy -40 -> pitch 6.000000, (13,-7) -> 1.950000 / 1.050000, one
+  count -> 0.150000, scoped identical, fallback turn 70 / 68 / 5 -
+  byte-identical tables (qol11\witness-pre.txt vs witness-post-defaults).
+- Numeric controls (inputtest INPUTTEST_CASE=mouse-sens, 30 / 0): 50 ->
+  3.0 (both axes), 200 -> 12.0, base 100 / scoped 50 -> play 6.0 and scope
+  3.0 (plain AIM without a scope 6.0), base 200 / scoped 50 -> 12.0 / 6.0,
+  step grid / floor / ceiling, the file persists, invert ON at 50 -> pitch
+  -3.0 with yaw +3.0 (independent composition), wheel ZOOM_IN in scope /
+  WEAPON_PREVIOUS in play unchanged, the watch pointer (20,10) counts ->
+  (20,10) pixels at 50 and (-20,-10) at 300 / 300 with no look published,
+  a pad stick deflection the same N64 stick (43,54) at 100 / 100 and 50 /
+  50. Also 300 / 300 -> 18.0 / 54.0 and 10 / 10 -> 0.6 / 0.06 (witness).
+- Windowed (scratch config, window parked off-screen, posted messages and
+  the SL_POINTER_PROBE witness only - the owner was at the desktop): F1
+  the CONTROL tab shows the two rows at 100% with BINDINGS and BACK below
+  (sheet-f1.png); keyboard: the label -> 110, `+` -> 120, `-` -> 110 (the
+  cursor resolved col 2 at x 327.3 and col 0 at 269.8), SCOPED `-` x3 ->
+  70, each `sightline settings: wrote`; the file holds 110 / 70. W1 (Dam,
+  sniper rifle via SL_WEAPON, coverage cheats): the gameplay poll reads
+  `msens=110 ssens=70` from the front-end-written file; Q held with the
+  sniper -> `aim=1 ... scoped=1`, wheel up -> `ctx=scoped ZOOM_IN+P`; Q
+  up -> `scoped=0`, wheel up -> `ctx=play WEAPON_PREVIOUS+P`; the watch
+  CONTROLS child shows 110% / 70% (sheet-w1.png), D on the latched row ->
+  120, A on SCOPED -> 60 (wrote each); BACK; Esc; the next gameplay poll
+  reads `msens=120 ssens=60`; Q held with weapon 5 (the notch had cycled
+  the sniper away) -> `aim=1 ... scoped=0` - plain aiming is not scoped.
+  W1p (probe): client (783,189) -> fb (261,63) -> row 1 value 2 (`+`) ->
+  wrote 110; (783,234) -> row 2 -> 110; (750,144) -> the INVERT `on` cell
+  -> minv=1 (the toggle row's hit test unchanged). F2: the watch-written
+  file relaunched shows 120% / 60% on the front end; GAMEPLAY and DISPLAY
+  tabs unchanged with BACK at slot 5 (sheet-f2.png).
+- NOT measured here: the hand feel (visibly slower / faster) - a real
+  relative-mouse stream cannot be injected without moving the owner's
+  pointer (SDL raw input; the warp diagnostic would SetCursorPos). The
+  front-end pointer probe at 4:3 does not move the front-end cursor (the
+  same in qol10 probe43.log: the click landed on the keyboard-highlighted
+  row) - a pre-existing limit of the witness, not a #50 regression; the
+  cell geometry is the cursor's, exercised by the keyboard.
+- Gates: build.ps1 (normal, LAST), settingstest 111 / 0, displaytest 87 /
+  0, inputtest 225 checks with the 22 pre-existing B-096 failures
+  unchanged plus the invert cases 9 / 5 and mouse-sens 30 / 0, test.ps1
+  facility 300 PASS. build.ps1 -Demo not run (no demo-specific code
+  touched; sl_settings.c's demo path is the config location only).
+  `make trace-verify` NOT run (no MIPS toolchain).
+
+### Side tabs (owner hint, recorded for a later round)
+
+The wallet panel's right edge carries three sideways tabs (front.h:
+START y 40..130.5, NEXT 130.5..223, PREVIOUS 223..315, x > 390;
+frontAddStartTabText / frontAddNextTabText / frontAddPreviousTabText draw
+the ROM title strings sideways in BankGothic; frontCheckCursorOnStartTab /
+_NextTab / _PreviousTab are pure geometry). The Settings page uses
+PREVIOUS only, so the START and NEXT shapes (the wallet model's SW_TABS
+switch draws all three) sit blank above it - the "two unused vertical
+tab slots". They could sub-group CONTROL (e.g. MOUSE: invert, the two
+sensitivities; CONTROLLER: style, look, aim; BINDINGS on both) at the
+cost of: native sideways labels (textRender ROT_90CW on a native string,
+~40 lines per tab), a second tab level inside one top-strip tab with the
+strip's own rules (what the side tabs show on GAMEPLAY / DISPLAY; the
+cursor's return slot for the bindings editor), the watch's CONTROLS child
+diverging from the front end's grouping unless it follows, and an owner
+replay of a navigation change to an accepted (#41 / #46 / #45) page. Not
+wired this round; the rows went on the CONTROL tab as briefed.
+
+## 2026-09-19 - #50 (owner request, same day): the three range rows as
+## SLIDERS - MUSIC / FX-style bars in the watch's SIGHTLINE children,
+## 007-mode bars on the front end's CONTROL / DISPLAY tabs; ASPECT RATIO
+## stays a stepped row. Owner replay pending; #50 stays OPEN, #45 not reopened.
+
+Owner (verbatim): "Can you make them sliders like music and fx in the watch?
+Same thing as FOV. Same in the out of game settings menu?" Settings
+semantics, ranges, defaults, keys and the look math of #50 / #45 untouched:
+the sliders are a second way onto the same grid points the `-` / `+` steps
+reach (10-step percents, whole degrees, 91 = the exact original vertical).
+
+### Recon (file:line at 314f152d)
+
+- The watch's MUSIC / FX bars: draw_music_volume_slider (options.c:3013) and
+  draw_fx_volume_slider (:2959) - twelve dyn verts, G_RM_XLU_SURF, three
+  setup_watch_rectangles(vtx, 0, 0, 600, 20, -299, z) calls (glass2.c:395;
+  z -275 music, -205 fx), the fill by update_volume_slider_verts (:2833:
+  verts 0-3 the unfilled dark green, 4-9 the filled section brightening with
+  the fill, 10-11 the 30-unit transition band; at fill 0 the band still
+  shows ~36 units, the ROM's own empty-bar look). Drawn BEFORE
+  microcode_constructor (draw_watch_game_options_page :4397-4401), the
+  labels after it at XOFFSET_1, YOFFSET_8 / YOFFSET_9 in framebuffer space.
+  Input: watch_adjust_volume_slider (:2917) - the latched row only, HELD
+  C/L/d-pad left-right +/-0x400 per frame and the stick's deflection above 8;
+  the #40 pointer (sl_watch_pointer.c hit_game_options :407-421: the track
+  projected through watch_project_rect, t = the fraction along it; a click
+  sets through track_set :781 and s_drag_track follows the pointer while the
+  button is down :1070-1082).
+- The face -> framebuffer mapping, MEASURED through watch_project at
+  WATCHZOOM3 (scratch qol12\m.log): flat-on and affine - fb y is the same at
+  x -299, 0 and 301 for every z; z -275 -> 32.33, -255 -> 38.70, 0 ->
+  120.00, 310 -> 218.83 (0.3188 px per unit); x -299 -> 64.67, 301 ->
+  255.96. So the MUSIC bar (z -275..-255) sits at fb y 32.3..38.7 over its
+  label at y 0x26 = 38 - the bar ends ON the label line - and the tracks'
+  600 units are fb x 64.67..255.96, XOFFSET_1 (65) being the bar's left edge.
+  Rare's fx bar sits 4 px higher over its label (z -205 -> 54.6..61.0, label
+  0x41 = 65); the two are eyeballed, not one formula.
+- The front end's only slider idiom: the 007-mode page (front.c
+  constructor_menu09_007options :4412-4587) - label at (57, y), the track
+  microcode_constructor_related_to_menus(55, y+17, 355, y+28, 0x32), the
+  fill (55, y+17, 55 + 300 * f, y+28, 0x64), the percent right-aligned at
+  285, rows 33 apart; interface_menu09_007options :4345-4375: while A / Z is
+  HELD the highlighted row's value = (cursor_h_pos - 55) / 300 clamped (a
+  drag; the highlight is frozen while the button is down :4269). No
+  keyboard step exists there. Settings-page rows are 0x20 apart
+  (sl_front_options.c SET_ROW_Y), which holds the 007 layout exactly (bar
+  foot y+28, the next row's box from y+31).
+- The rows being replaced: options.c sl_draw_sightline_value (`-` value `+`
+  at SL_SIGHTLINE_X_MINUS / _VALUE / _PLUS), sl_sightline_value_step;
+  sl_watch_pointer.c hit_sightline (cells by KIND); sl_front_options.c
+  set_percent_row (cols 1..3) and SR_FOV's set_short_value_row (cols 0..2).
+- The front-end probe (SL_POINTER_PROBE) had never moved the front-end
+  cursor (qol10 / qol11 noted it as a witness limit): sl_menu_pointer_apply's
+  FIRST valid sample is a baseline, not a move, and a lone probe frame is
+  always first. Two probes on consecutive frames (baseline + move) place the
+  cursor; a third fires the click. Not a code change - a usage note.
+
+### Implementation
+
+- Platform (5b9dfd5c): sl_mouse_sens_fraction / _set_fraction (sl_input.c),
+  sl_fov_h16_set / sl_fov_fraction / _set_fraction (sl_display.c;
+  sl_fov_step now calls sl_fov_h16_set, same effect). A fraction sets the
+  NEAREST grid point: 0.5 -> 150 (29 steps), a full bar 300 / 110, an
+  empty one 10 / 60. sl_input_pointer_lmb_held (a device fact) is the front
+  end's held A for a drag. The probe's ",click" now releases (a press left
+  held made every later probed move a drag on whatever it landed on -
+  measured on the first watch run: the row-1 click's stale drag moved row 1
+  to the row-2 press's x); ",down" / ",up" hold and release.
+- Watch (71285e4c; options.c / options.h native arms, sl_watch_pointer.c):
+  SL_WROW_IS_SLIDER for FOV / MSENS / SSENS; ASPECT RATIO keeps the `-`
+  value `+` row (four discrete shapes - the bar idiom has no notion of a
+  named step, and 4:3 -> 32:9 is not a range). A slider row is 8 fb px
+  taller (SL_SIGHTLINE_SLIDER_EXTRA) and its bar's top sits 8 px above its
+  label (SL_SIGHTLINE_BAR_ABOVE), 6.4 px tall, ending on the label as MUSIC
+  does; sl_sightline_row_y(i) walks the view (CONTROLS: 43 / 68 / 93 / 110 /
+  127; DISPLAY: 43 / 68 / 85). The bar is draw_music_volume_slider's
+  geometry and update_volume_slider_verts' fill at the face z under the
+  bar's line through the projection's exact inverse (sl_watch_face_z_at_fb_y:
+  two watch_project calls fix the line; falls back to the measured
+  0.3188 line), the value right-aligned at SL_SIGHTLINE_X_BARVALUE 0x100
+  (the bar's right edge, measured). sl_sightline_slide(row, t) sets through
+  the platform's set-from-fraction and beeps (game_option_select_value on a
+  local) only when the value changes. Pointer: HIT_SLIDER on the projected
+  bar rect (the row's band holds the bar's line), click -> slide + drag
+  while held, the drag re-projected every frame; a drag is armed only while
+  the button is STILL down (s_drag_track had the same latent flaw for a
+  sub-frame click - fixed alongside). Latched LEFT / RIGHT still step.
+- Front end (01d5ca7a; sl_front_options.c): set_slider_row = the #50 cells
+  (`-` value `+` at SET_X_VAL3_1..3; FOV's moved one column right to match)
+  over the 007 bar (SET_BAR_X0 55, W 300, y + 17..28; track 0x32, fill
+  0x64, a 0x32 box around the bar when hovered). The bar is col SET_COL_BAR
+  (3) from 2 above the track to its foot; the next slot's band starts at
+  the bar's foot (set_row_top). A press on the bar sets at the cursor's
+  fraction and arms s_set_drag; while A / Z or the left button is held the
+  value follows the cursor (the highlight frozen), the witness line
+  `sightline options: drag ...` only on a change. BACK's slot rule (5 min /
+  after the last row), GAMEPLAY, ASPECT RATIO and the bindings editor
+  untouched.
+
+### Witnesses (MEASURED; scratch qol12, window off-screen, posted keys and
+### SL_POINTER_PROBE only - the owner was at the desktop)
+
+- Watch (Dam, coverage cheats, scratch config at 100 / 100 / fov 91;
+  sheet-w-controls.png, sheet-w-display.png): the CONTROLS child draws
+  INVERT MOUSE Y, then the two bars over their labels with `110%` / `100%`
+  at the bar's right edge, BINDINGS, BACK (nothing overlaps). Keys: latch,
+  A -> 90, D D -> 110 (wrote each). Probe click on the MOUSE bar at t 0.10
+  (fb 84,63) -> 40 (wrote; `after ... msens=40`); ,down on the SCOPED bar
+  at t 0.99 -> 300 (full bar); held moves to t 0.50 -> 150 and t 0.00 ->
+  10 (the ROM's empty-bar band); ,up; keys D x9 -> 100 (fill 0.31). BACK,
+  DISPLAY child: probe click on the FOV bar at t 0.60 -> 90, keys D -> 91 /
+  A -> 90, clicks at t 0 -> 60 (empty) and t 0.99 -> 110 (full). The file
+  after the run: mouse_sensitivity=40, scoped_mouse_sensitivity=100,
+  fov_vertical=7755. Fill vs value, by the same measurement: 40% -> 0.103,
+  150% -> 0.48, 300% -> 1.0, 10% -> 0, 100% -> 0.31; FOV 90 -> 0.60, 60 ->
+  0, 110 -> 1.0 - each screenshot's fill agrees with its number.
+- Front end (boot to OPTIONS -> SETTINGS; sheet-f-control.png,
+  sheet-f-display.png): keys on MOUSE SENSITIVITY `+` -> 110, `-` -> 100;
+  probe (baseline, move, click) on the MOUSE bar at logical (85,230) ->
+  `row=4 col=3 ... msens=40`; ,down on the SCOPED bar at (355,262) ->
+  300; held moves to (205,262) -> `drag ... t=0.50 ... ssens=150` and
+  (55,262) -> `t=0.00 ... ssens=10`; ,up; keys W (the label line), D to `+`,
+  Enter x9 -> 100. DISPLAY tab by a probe click on the strip; the FOV bar at
+  (235,134) -> h16=90; keys `-` -> 89, `+` -> 90 (the moved columns); clicks
+  at (55,134) -> 60, (355,134) -> 110, (235,134) -> 90; BACK at slot 5 ->
+  OPTIONS. The file after the run: 40 / 100 / fov_vertical=5872 (h16 90).
+- __sgi proof (qol12\sgi_proof.sh): options.c / options.h expand
+  byte-identically to 314f152d under __sgi (md5 7bb753c2d90d /
+  89af0a83a899), the control token differs, native arms +142 / +38 lines,
+  zero NEW #50 tokens in the __sgi expansion (the 12 matches of "slider"
+  there are Rare's own draw_*_volume_slider names, present in the base).
+- Gates: settingstest 111 / 0, displaytest 87 / 0, inputtest 225 checks
+  with the 22 pre-existing B-096 failures unchanged and the invert 9 / 0,
+  5 / 0 and mouse-sens 30 / 0 cases unchanged, test.ps1 facility 300 PASS,
+  build.ps1 (normal) last. `make trace-verify` NOT run (no MIPS toolchain);
+  nothing in src/game outside the native arms changed.
+- NOT measured: the hand feel of a drag with a real mouse (needs the
+  owner's pointer); PAL (YINC 15) row spacing - the walk uses YINC, the
+  bar's 8 px offsets are framebuffer constants either way.
+
+## 2026-09-19 - brand merged into the QoL branch; the exe icon wired
+## (tools/windows/sightline.rc + build.ps1 windres step). Owner statement
+## on the brand files recorded.
+
+MERGE: origin/sightline/brand (0a2ca4ad: docs/brand kit subset + the branded
+readme, on top of origin/master c489657c) merged --no-ff into
+sightline/qol-controls at 5db65581. Merge base dbda7e77; qol-controls had
+not touched readme.md since it (empty `git diff dbda7e77..5db65581 --
+readme.md`), so the merge was conflict-free and readme.md is brand's
+version verbatim (the banner header, the numbered quick start, docs/brand in
+the legal / layout sections, the public-mirror paragraph saying Issues, the
+wiki and the board are live). .gitea/workflows/publish-public.yml came in
+from master's c489657c / acc48586 (publication key kept out of the Actions
+log). docs/brand/sightline.ico present after the merge.
+
+OWNER STATEMENT (2026-09-19, recorded verbatim so the licensing question
+does not get re-asked): "The icon is made by me and can be included in the
+repo." and "all of the assets i shared with you are owned by me." So every
+file under docs/brand/ is the owner's own artwork, committed on that basis;
+docs/brand/README.md's licensing section now says so. Rule 2 (no ROM
+assets) is not touched - nothing in docs/brand is ROM-derived.
+
+EXE ICON (build tooling only, no src/ change):
+- tools/windows/sightline.rc: one line, `1 ICON
+  "../../docs/brand/sightline.ico"`.
+- tools/windows/build.ps1: after modelhit_pool.o and before the first *.o
+  glob, windres (Join-Path $mingwBin 'windres.exe', a missing one throws
+  with the package name) compiles the .rc with `-F pe-i386
+  --include-dir=<repo>\tools\windows -i <repo>\tools\windows\sightline.rc
+  -o build\win32\sightline_res.o`. Rebuilt only when the .rc or the .ico
+  is newer than the .o (the script's mtime convention); exempt from the
+  orphan prune by name next to stubs.o / segments.o / modelhit_pool.o. The
+  -Demo build shares the object directory and takes the same object; the
+  .build_key is unchanged (the object depends on no -D; a key change drops
+  every *.o and it is rebuilt). LDFLAGS untouched (-m32 -no-pie -mconsole
+  -Wl,--large-address-aware).
+- MEASURED (windres 2.47.20260726, from a scratch cwd): the .rc's icon
+  path resolves against the .rc's own directory and against --include-dir;
+  a copy of the .rc elsewhere with no include dir fails "can't open icon
+  file". Both the .rc and the include dir are therefore passed absolute
+  from $repo, never via cwd.
+- SDL2 2.32.10 (mingw-w64-i686-SDL2-2.32.10-1): SDL2.dll's import table
+  has EnumResourceNamesW + LoadIconW and no ExtractIconEx (objdump -p),
+  i.e. SDL_RegisterApp's "first RT_GROUP_ICON becomes the window-class
+  icon" path. No SDL_SetWindowIcon added; SDL source is not in the tree,
+  so this is the import-table reading, and the window title-bar icon is
+  for the owner's next windowed run to confirm.
+
+EVIDENCE (build\win32\sightline.exe, 9986134 bytes):
+- objdump -h: section 6 .rsrc 0xc490 bytes at 0x01770000; objdump -p:
+  Resource Directory entry populated. sightline_res.o carries a single
+  .rsrc of 0xc170 bytes.
+- Win32 EnumResourceTypes/Names on the exe (LOAD_LIBRARY_AS_DATAFILE):
+  RT_ICON #1..#7 (652 / 1269 / 1823 / 3373 / 4818 / 11495 / 25519 bytes),
+  RT_GROUP_ICON #1 (7 images: 16 24 32 48 64 128 256, all 32bpp), plus the
+  mingw default RT_MANIFEST #1. Each RT_ICON's SHA-256 equals the same-size
+  entry in docs/brand/sightline.ico (7 / 7; the .ico itself sha256
+  853c0232...63c7e).
+- [System.Drawing.Icon]::ExtractAssociatedIcon(exe): 32x32.
+- The exe's 32x32 entry is PNG-encoded, 1823 bytes, sha256 501801ec...
+  9735c077 - byte-identical to the kit's icon-32.png (same size, same
+  hash); decoded pixel compare 0 / 1024 differ, max channel delta 0.
+- Incremental: a second build.ps1 run left sightline_res.o's mtime
+  unchanged (no windres rerun), compiled 0, linked.
+- Gates: test.ps1 facility 300 PASS (exit 0, SL_CONFIG at a scratch file,
+  SL_WINDOW=0), settingstest 111 / 0. build.ps1 (normal) last;
+  .build_key lacks SL_DEMO_BUILD. No windowed run, no demo core.
+- Scratch (session, not committed): brand2\icon-evidence*.ps1,
+  extracted-assoc.png, a.o..d.o (the windres path probes).
+
+## 2026-09-19 - #50 CLOSED on owner acceptance ("i approve this already." -
+## mouse sensitivity, scoped sensitivity, the slider presentation incl. FOV;
+## comment 651, state read back closed). #63 FILED: native modern dual-stick
+## controller profile and device-matched watch model - IMPLEMENTED on
+## sightline/qol-controls, OPEN pending the owner's replay with a real pad.
+## #51 (controller analog tuning) PARKED behind #63 (comment 661).
+
+Owner decision relayed with the brief: the controller sensitivity / deadzone
+/ curve tuning is parked; nothing of it is exposed (the fixed 5000-unit
+inner deadzone and the +/-70 channel arithmetic are the only normalization,
+not user-configurable). Roadmap: #63 -> #51 -> #56 -> PC display modes ->
+freeze -> #49 -> v0.2.0.
+
+### Provenance (STEP 1) - measured, not taken from the prior report
+
+- The owner's ORIGINAL archives, read directly (System.IO.Compression):
+  playstation_5_dualsense.zip (46,429,463 B: license.txt, scene.bin,
+  scene.gltf, three tile sets of baseColor / metallicRoughness / normal /
+  emissive) and xbox_controller.zip (1,177,932 B: license.txt, scene.bin,
+  scene.gltf, material_diffuse.png, material_specularGlossiness.png), both
+  in the owner's Downloads. license.txt verbatim: "Playstation 5 Dualsense"
+  by AHarmlessPotato (https://sketchfab.com/AHarmlessPotato),
+  https://sketchfab.com/3d-models/playstation-5-dualsense-878c1f882808477ab81c2fe86d5a3936,
+  CC-BY-4.0, "Author must be credited. Commercial use is allowed."; "Xbox
+  Controller" by umkhero (https://sketchfab.com/umkhero),
+  https://sketchfab.com/3d-models/xbox-controller-32d17951703b4e05abed11a1c65f5909,
+  CC-BY-4.0, the same requirement; each with the "This work is based on ..."
+  credit line. The prior report's facts held. Archives untouched.
+- The owner's PREPARED packages (the modly-bench staging, controller_xbox /
+  controller_dualsense) were regenerated mid-round ("logos only, symbols
+  and letters kept") and re-inspected from scratch: all eight ORACLE.json
+  SHA-1s MATCH (xbox_basecolor_0.png 43,864 B 3CEDFF8D..., controller_xbox
+  .bin 1,317,808 B 866494F2..., .gltf 22,725 B 95469358...; dualsense tiles
+  58,962 / 195,548 / 5,695 B 900FDBFD... / 826BA223... / 7829DC0D..., .bin
+  3,143,248 B 566D6277..., .gltf 38,423 B CC76F4C9...). Nodes: Xbox 15
+  parts (body stick_l stick_r dpad btn_a btn_b btn_x btn_y bumper_l
+  bumper_r trigger_l trigger_r btn_view btn_menu btn_guide), DualSense 17
+  (+ btn_cross/circle/square/triangle, l1 r1 l2 r2, btn_create btn_options
+  btn_ps btn_mute touchpad); every part's mesh local about its pivot (max
+  y = 0 = the top surface); bodies span x -394..394 (the 788 GjoypadZ
+  width); btn_guide / btn_ps carry extras.sl_authored_part (576 tris each,
+  down from 1276 / 5816 - the owner's plain dome / oval). Trademark scrub
+  verified: tile 1002 (dualsense_basecolor_2.png) is ONE flat colour
+  (231,225,237), zero pixels below luminance 128; tile 1001 carries only
+  the mute glyph; the Xbox tile the A/X/B/Y letters and a plain white
+  disc; the owner's preview_debranded_buttons.png and the in-game frames
+  (below) show a plain dome and a plain oval. Face layouts checked against
+  the part previews (A south / B east / X west / Y north; cross / circle /
+  square / triangle likewise).
+- The packages declared every image extras.sl_authored - a FALSE claim for
+  third-party work, which the normalization replaced (below). The
+  historical extras.sl_n64 ("A -> a, stick_r -> c_up c_down ...") was
+  dropped: the final abstraction is physical controls -> semantic actions,
+  never N64 emulation.
+
+### Repository layout and the third-party provenance path
+
+- data/asset-overrides/source/controllers/xbox/ and /dualsense/ (ids
+  controllers.xbox / controllers.dualsense, the existing group.name policy;
+  the handoff's watch.controller_* naming was not used - one build path,
+  no second loader). Per package: NAME.gltf (extras rewritten only: the
+  asset and every image carry extras.sl_third_party {title, author,
+  author_url, source_url, license CC-BY-4.0, attribution, changes};
+  sl_authored gone; sl_n64 dropped; sl_part and sl_authored_part kept; the
+  buffer renamed NAME.bin), NAME.bin and textures/*.png VERBATIM (sha1 =
+  ORACLE), metadata.json (asset_id, family, third_party, the parts map
+  label -> canonical, authored_parts, debranding, frame, the source oracle
+  sha1s), ATTRIBUTION.md (the credit line, the changes, the two
+  owner-authored parts). preview_parts.png NOT committed. The group
+  README.md records the rules; LICENSES/README.md gains the third-party
+  row, data/asset-overrides/LICENSE.md the exclusion, readme.md the credit
+  bullet and the licensing note, docs/asset-overrides.md the two sections.
+  Not sl_authored, not CC0, no endorsement implied; release-packagable
+  (#49 parked).
+- The importer (tools/asset/gltf_import.py): a second, SEPARATE marker
+  sl_third_party beside sl_authored - required fields, licence allowlist
+  {CC-BY-4.0}, both markers on one texture REFUSED, read only after
+  content-addressed game-texture detection (the ROM guard is not weakened -
+  test [32] proves a game texture marked third-party is still a reference
+  with no pixels in the file). Printed at import.
+
+### The part-preserving runtime format (STEP 2) - option A, no version bump
+
+- Recon: the .slmodel importer BAKED every node transform into one vertex
+  array (walk() in gltf_import.py, "the runtime holds one modelview") and
+  the format had no node table; header 128 bytes with +72..+127 zero.
+- F_PARTS (0x8): header +72 part-table offset, +76 count; 32-byte entries
+  {canonical id, pivot xyz, flags, 3 reserved}; the prim record's fourth
+  word = part index or SL_PART_NONE. A part node's geometry is stored
+  RELATIVE to its pivot (the node origin in the baked frame); children
+  inherit. Without the flag every new word is the zero it always was: the
+  four boot models rebuilt through the new writer are BYTE-IDENTICAL
+  (goldeneye 264,452 2550AD04..., legal 6,705,984 4E770891..., nintendo
+  4,832,400 2F89E51A..., rareware 1,113,640 13F0ABD5... - the handoff's
+  own oracles). Canonical ids (PARTS / SL_PART_*): BODY 1, LEFT_STICK 2,
+  RIGHT_STICK 3, DPAD 4, FACE_SOUTH 5, FACE_EAST 6, FACE_WEST 7,
+  FACE_NORTH 8, LEFT_SHOULDER 9, RIGHT_SHOULDER 10, LEFT_TRIGGER 11,
+  RIGHT_TRIGGER 12, MENU 13, BACK 14, GUIDE 15, MUTE 16, TOUCHPAD 17,
+  DPAD_UP..RIGHT 18-21; NONE 0xFFFFFFFF; MAX_PARTS 32; part flag AUTHORED
+  1 (extras.sl_authored_part). Mapping: --part LABEL=CANONICAL /
+  metadata.json "parts" (build_repo_assets.py passes it, and now counts
+  the importer's own mtime as an input); an unmapped sl_part label, a
+  duplicate canonical part, a non-canonical target and an unused --part
+  are errors. Loader (sl_asset_override.c): count 1..32, table span, id in
+  the table, no duplicate, finite pivot, prim part < count or NONE; the
+  pose / tint API sl_asset_override_pose_set / _reset / part_index; an
+  exposure (1..4) per model. Renderer (sl_gfx_dl.c draw_asset_override):
+  per prim MV * T(pivot + move) * Rx Ry Rz, the tint into glColor (COLOR_0
+  models take none), the exposure as GL_COMBINE modulate with GL_RGB_SCALE
+  2 / 4 and the texenv cache re-established after. Both packages compile
+  through the ordinary --repo gate: Xbox 25,271 verts / 42,428 tris / 15
+  prims / 15 parts (5.5 MB), DualSense 58,313 / 106,436 / 27 / 17 (15.7 MB
+  - three 1024 RGBA tiles), each canonical part once.
+- test_gltf_import.py 201 / 0: [32] the third-party marker (accepted,
+  both-markers refused, licence refused, each missing field refused, the
+  ROM guard), [33] the part table (partless byte-shape, pivots,
+  part-relative geometry, prim indices, self-mapping, PART_NONE beside a
+  table, the AUTHORED flag, the four importer refusals, the four loader
+  refusals through the mirror), [34] PARTS == SL_PART_* / COUNT /
+  MAX_PARTS / F_PARTS / NONE / P_AUTHORED, [35] the two packages (labels
+  all mapped, exactly once, required set 15 / 17 complete, no sl_authored
+  anywhere, every image sl_third_party CC-BY-4.0, metadata fields,
+  ATTRIBUTION carries the declared credit line, the glTF images the same
+  line, the flagged parts == metadata.authored_parts and map to GUIDE, no
+  sl_n64, the compile carries every part once with AUTHORED on exactly the
+  flagged parts, every prim in a part, body width 788).
+
+### Input recon (STEP 4, file:line at 8891b62e) and the MODERN seam (STEP 5)
+
+- Pads: SDL_GameControllerOpen in pad_rescan (sl_input.c:1355), driven by
+  SDL_CONTROLLERDEVICEADDED/REMOVED from the gfx drain (sl_gfx_sdl.c:810);
+  g_pads[8], last-touched arbitration. NO type / GUID / mapping call
+  existed (tree-wide grep for SDL_GameControllerGetType, TypeForIndex,
+  JoystickGetGUID, GetVendor/Product, Mapping: zero hits; only
+  SDL_GameControllerName for log strings). SDL 2.32.10 (SDL_version.h,
+  pkgconf), SDL_GameControllerGetType available.
+- Sticks: read_pad :1440-1450 (pad_axis: 5000 deadzone rescaled). The
+  RIGHT stick to look TODAY was a style-dependent MIXTURE: 1.1 / 1.3 (and
+  the front end) -> DIGITAL C bits at 0.47 (or the 0.30 step flag),
+  map_pad :1634-1637; 1.2 / 1.4 -> the N64 STICK (:1607-1616); 2.x ->
+  virtual pad 1's stick (map_pad_dual :1703-1716). Never a continuous
+  channel: sl_mouse_look_set was gated ch_on AND g_linear_look AND
+  g_grabbed with ch_on = the KBM owner (:2594, :2633), and the pad turned
+  the channels OFF (SL_OWNER_PAD). So YES, the runtime synthesized C
+  buttons for look under the 1.1-class styles.
+- The seams: sl_move_channels_set/get (src/native/sl_move_channels.c:74 /
+  :114, +/-70) consumed at bondview2.c:5680-5709 (analogTurn / Pitch,
+  canNaturalTurn / Pitch = 1, walk / strafe when !insightaimmode);
+  sl_mouse_look_set (:2636, degrees, mouse_sens() applied at the producer)
+  consumed at bondview2.c:6443 / :6523 into speedverta / speedtheta. The
+  design note in sl_move_channels.c says the four channels' Rare curve "is
+  correct for a stick, which reports a POSITION held over time" - which is
+  the Modern right-stick seam: the turn / pitch channels, full stick = 70
+  = the channel's own maximum, no C bit, no mouse tuning.
+- #46 registry: dev.pad = the pad handle only under CUSTOM (:2434); LT /
+  RT as digital halves at SL_ACT_AXIS_ON 8000 (sl_action.c:60) =
+  SL_PAD_TRIG_ON; read_pad's four fixed buttons skipped under CUSTOM
+  (:1474-1487).
+- MODERN (sl_input.c): controller_profile read every poll; pad_registry =
+  CUSTOM || MODERN feeds the registry and FIRE / AIM -> pad.fire / aim;
+  map_pad_modern (after map_pad_dual): the d-pad, START, Z / R from the
+  registry's FIRE / AIM; in a menu the left stick as the menu stick, A ->
+  N64 A, B -> N64 B; in play the N64 stick neutral, turn =
+  channel(look_yaw), pitch = -channel(pitch) (SL_LOOK_INVERT still the
+  pad's; the game's Look Up/Down applies to analogPitch as for any pad),
+  walk / strafe withheld while aiming (the mouse's contract). The channels
+  publish when the pad owns the poll (ch_on = kbm_on || (modern && pad
+  owner && !menu)); the linear mouse channel stays kbm_on-gated. Family:
+  pad_family_of() (SDL_GameControllerGetType: XBOX360 / XBOXONE -> XBOX,
+  PS3 / PS4 / PS5 -> PLAYSTATION, else GENERIC) classified at open,
+  shifted on removal, exported as sl_input_pad_family / _name; the
+  physical snapshot sl_input_pad_visual (SDL axes, triggers 0..1, held
+  bits by SL_PART_*) taken in read_pad. Labels: sl_bindings_source_label
+  (src, family) - the g_pad table indexed by g_pad_name_xbox / _ps (A B X
+  Y LB RB LS RS LT RT / CROSS CIRCLE SQUARE TRIANGLE L1 R1 L3 R3 L2 R2),
+  sl_bindings_source_name follows the attached family; the token (pad:A)
+  never moves. sl_bedit_pad_dimmed is 0 under MODERN (the rows live, no
+  "SELECT CUSTOM" note). SL_INPUT_DEBUG's line gained profile= family=.
+- Default ORIGINAL, documented: a config written before the key existed
+  keeps the pad behaviour its owner accepted and its pad_button_mode keeps
+  its meaning (a MODERN default would silently override a user's chosen
+  ORIGINAL button mode); rule 5. The key coexists with control_style,
+  pad_button_mode, bind.*, mouse_*, sprint, aspect / FOV; a profile change
+  rewrites none (settingstest section 12: 9 checks). ORIGINAL keeps the
+  eight styles and the N64 watch page exactly; the switch is live on the
+  next poll (no restart).
+- Under MODERN the control style still decides what Z / R do (FIRE is Z
+  under every style, the keyboard precedent) - 1.3 / 1.4 and the 2.3 /
+  2.4 hands read differently, as the accepted KBM path already does; the
+  style row stays on the watch page. Recorded for #51 / a later round.
+- THE SYNTHETIC PAD (developer seam, getenv-gated, never for a player):
+  SL_PAD_VIRTUAL=xbox|ps|generic attaches an SDL virtual joystick with a
+  real VID:PID (045E:02EA / 054C:0CE6 / 0000:0000) so SDL's OWN classifier
+  answers the family (measured: sdl type 2 -> XBOX, 7 -> PLAYSTATION);
+  SL_PAD_SCRIPT=FILE drives it (frame lx ly rx ry lt rt [buttons]). Two
+  measured SDL facts it needed: joystick motion away from centre is
+  DROPPED while the window has no keyboard focus (the parked evidence
+  window) unless SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS is set; and a
+  virtual trigger axis is full-range to SDL ((raw + 32768) / 2), so raw 0
+  read as a half pull (lt=16383 -> Z and R raised) until the script's
+  0..1 maps to -32768..32767. inputtest stubs the four calls.
+
+### UI (STEP 6)
+
+- Watch: the CONTROLS child (SL_WVIEW_ROWS_MAX 5 -> 7) gains PROFILE
+  (- original / modern +, SL_WROW_VALUE_PROFILE, the ASPECT idiom) and
+  CONTROLLER (SL_WROW_INFO_PAD: the family, inert - the cursor and the
+  pointer skip it, SL_WROW_IS_INERT); the pointer's widest value cell is
+  now "original". The Control Options page (draw_watch_controller, native
+  arm right after the RDP state, before watchRenderController): under
+  MODERN with a family model available, src/native/sl_watch_controller.c
+  draws it with the page's finalmtx / perspective through the bridge
+  command - sticks tilt 25 degrees with the axes (the N64 sense), buttons
+  depress 8 and take a 1.35 highlight tint, the d-pad rocks 10 degrees
+  toward the held direction, shoulders rock 10 while held, triggers swing
+  with the analog pull, no N64 labels; exposure 4x for the black Xbox pad
+  (RGB ~35 vanished on the green face at plain modulate) and 1x for the
+  white DualSense (4x washed its symbols out - both measured on the first
+  draws). No model / GENERIC / ORIGINAL -> the N64 page with its labels,
+  untouched. Perf: no measurable cost (below).
+- Front end: the CONTROL tab is FULL (seven rows + BACK = the eight slots;
+  slot 8 at y 336 is below the 330-unit panel), so a fourth tab PAD
+  (three glyphs, x 0x145, clear of PREVIOUS at 390) holds PROFILE
+  (ORIGINAL / MODERN two-value row), CONTROLLER (informational, dim,
+  never boxed) and a BINDINGS shortcut; the accepted CONTROL / GAMEPLAY /
+  DISPLAY rows do not move. The bindings editor's BACK now returns to the
+  tab it was opened from (s_set_open_tab / row).
+
+### Evidence (STEP 7) - MEASURED; scratch modern, window parked at
+### -4000,-3000, posted keys / the synthetic pad only; NO PHYSICAL PAD
+### ("no gamepad found (0 joystick(s) seen)")
+
+- ORIGINAL identity BEFORE vs AFTER: witness.c (HEAD's own inputtest.c
+  stubs, main renamed) compiled against the 8891b62e platform sources and
+  against the tree; the same 319-line table for all eight styles (left
+  stick (20000,-24000) -> (43,54); right full right -> C-RIGHT 0001 under
+  1.1, the stick 80 under 1.2 and 2.x; A -> 4000, X -> 8000, RT -> 2000,
+  Start -> 1000, d-up -> 0800; aiming; the menu; keyboard W; mouse) - md5
+  7b6512f7aa27 both, diff empty.
+- inputtest modern-pad 72 / 0: default ORIGINAL; family NONE / XBOXONE ->
+  XBOX / XBOX360 -> XBOX / PS5, PS4 -> PLAYSTATION / SWITCH PRO, UNKNOWN
+  -> GENERIC; labels (A / CROSS / PAD A, RT / R2, LS / L3, Y / TRIANGLE, a
+  key ignores the family, source_name follows the attached pad); ORIGINAL
+  1.1 / 1.2 representative map; MODERN right X 10 / 50 / 100 % (raw 7777
+  / 18884 / 32767 past the deadzone) -> turn 7 / 35 / 70 with the N64
+  stick neutral, no C bit, no mouse look; -70 left; right Y -> pitch -7 /
+  -35 / -70 up, +70 down; the diagonal 35 / -35; twelve points round the
+  gate - a smooth vector, never a C bit (the C-BUTTON NEGATIVE CONTROL);
+  release -> 0 / 0; aiming: turn 35 with walk withheld; left stick 70 / 35
+  / -7 and the diagonal 35 / -35; A INTERACT (no N64 A / B in play), X
+  RELOAD, B CROUCH, Y NEXT, L3 SPRINT, R3 PREVIOUS, RT FIRE -> Z (7000
+  below the threshold -> nothing), LT AIM -> R, RB / LB, Start, d-pad;
+  pad_button_mode still 0; FIRE rebound to B honoured; the visual
+  snapshot (right 0.5, FACE_SOUTH + RIGHT_TRIGGER held, trigger 0.61);
+  the menu (A -> N64 A, B -> N64 B, stick +80); W still walks; the file
+  holds controller_profile=1, pad_button_mode=0, no bind. line and
+  INTERACT's pad primary is still the default pad:A; back to ORIGINAL live
+  (C-RIGHT, A -> N64 B) and to MODERN again; the pad removed under MODERN
+  -> family NONE, no visual, W walks. The harness's SDL_WasInit stub now
+  stays initialised without a pad (as SDL does) - the old stub made a
+  removal poll return before the rescan, so a re-attached pad was never
+  re-opened.
+- Windowed MODERN gameplay (Facility, virtual Xbox, SL_MISSION_EVERY=30,
+  g1.log): right X 0.5 for 60 frames -> theta 90.0 -> 105.7; 1.0 for 60
+  -> +98.0 (106.8 -> 204.8); right Y up -> verta -4.0 -> 90.0 (the clamp);
+  the diagonal -> theta 211.8 -> 227.5 with verta at the clamp; the input
+  line reads ch=1 turn=28 / turn=70 / pitch=-70 / turn=28 pitch=-28 with
+  p1 button=0000 stick=(0,0) - no C bit, no N64 stick.
+- Windowed watch, both families (wp-*.log, wc-*.log; sheets
+  sheet-wp-xbox-zoom.png / sheet-wp-ps-zoom.png / sheet-wc.png): the
+  model in the N64 pad's place, the right stick tilting right / up /
+  diagonal, A / B / X / Y brightening on their frames (Xbox); the DualSense
+  with its plain oval PS button; the CONTROLS child - MODERN + ->
+  - ORIGINAL + -> - MODERN + on the latched row (settings: wrote x2, the
+  file: controller_profile=1, pad_button_mode=0). The left stick in the
+  watch is the menu stick and steps the ring - expected. ORIGINAL
+  (wo.log): the N64 pad with AIM / MOVE / PAUSE / FIRE ... labels, the
+  same size. Fallbacks: a truncated install-dir model -> "unusable
+  (declared file size ...) - drawing the original" then the build's file
+  loads; a part id 99 -> "unusable (a part has an id outside the canonical
+  table)"; SL_ASSET_OVERRIDES=0 under MODERN -> the N64 page (wf2-last.png).
+- Front end (f3-*.log, both families): OPTIONS -> SETTINGS -> the PAD tab
+  (options: tab=3), PROFILE label -> modern, ORIGINAL cell -> original,
+  MODERN cell -> modern (the file: controller_profile=1), BINDINGS -> the
+  editor's CONTROLLER tab reads RT / RB / LT / LB / A / X / B / LS / RS /
+  Y (Xbox) and R2 / R1 / L2 / L1 / CROSS / SQUARE / CIRCLE / L3 / R3 /
+  TRIANGLE (PlayStation), undimmed under MODERN with BUTTON MODE ORIGINAL;
+  BACK returns to the PAD tab on BINDINGS (sheet-front.png).
+- Performance (SL_PHASE=1, 960x720, 1799 rendered frames with the watch
+  page open for ~300): DualSense 56.0 fps (dl 26.8 s), Xbox 56.6 (26.3 s),
+  the N64 pad 56.6 (27.6 s); worst frame 0.33 / 0.21 / 0.22 s (the shared
+  level load). No hitch, no memory issue; nothing optimized.
+- Gates: build.ps1 (normal, LAST), test.ps1 facility 300 PASS,
+  settingstest 120 / 0, inputtest modern-pad 72 / 0 with mouse-invert 9 /
+  0, 5 / 0, mouse-sens 30 / 0 and the main run 225 / 22 pre-existing
+  B-096 failures unchanged, test_gltf_import 201 / 0, displaytest not
+  touched (no display change). __sgi proof (modern sgi_proof.sh, base
+  8891b62e): options.c token-identical (base 142155 b 7bb753c2d90d, work
+  142157 b - one empty line from the guard), options.h byte-identical
+  (89af0a83a899), controls differ (2 / 1 lines), native arms +69 / +6,
+  zero #63 tokens. build.ps1 -Demo compile / link only (the new native
+  file and the settings key reach the demo core; not run). make
+  trace-verify NOT run (no MIPS toolchain; D-010 records why).
+
+### NOT exercised / limitations
+
+- NO PHYSICAL CONTROLLER on this machine: every pad witness is the
+  synthetic path (the inputtest stubs and the SDL virtual joystick, whose
+  family SDL classified from a real VID:PID). Feel, a real pad's deadzone
+  behaviour, hot-plug of a real device and the physical replay are the
+  owner's. Hot-plug is covered only by the existing event-driven rescan
+  (re-classified at open) and the harness's remove / re-attach case.
+- The shoulder / trigger / d-pad / Guide motions are asserted through the
+  same pose code as the sticks and face buttons; from the page's top-down
+  view they are subtle in the frames and were not measured pixel-wise.
+- Keyboard / mouse regressions: the witness table (mouse dx / dy rows,
+  keyboard W / A / LCtrl / E) is byte-identical to HEAD's, the inputtest
+  main run unchanged, the mouse-sens and invert cases green; no windowed
+  re-measure of mouse feel this round.
+- The DualSense's face symbols are faint at the page's size (grey on
+  lavender in the source texture); the Xbox letters read.
+
+### Owner replay
+
+.\tools\windows\build.ps1; .\tools\windows\play.ps1 -Level facility
+-Cheats invincible,invisible,maxammo with the pad plugged in. Esc ->
+watch -> A onto SIGHTLINE -> S S onto CONTROLS -> Enter -> PROFILE: latch
+(Enter / A) and RIGHT -> MODERN (CONTROLLER shows XBOX / PLAYSTATION); Esc
+twice. In play: left stick moves (proportional), right stick looks
+(continuous, no C-button stepping), RT / RB fire, LT / LB aim, A interact,
+X reload, B crouch (held), Y next weapon, L3 sprint (if enabled), R3
+previous weapon, Start pauses. Esc -> the watch's CONTROLS page (the
+third ring page) shows your controller with the parts following your
+hands. Front end: OPTIONS -> SETTINGS -> PAD: PROFILE, CONTROLLER, BINDINGS
+(the CONTROLLER tab labels follow the pad). PROFILE ORIGINAL restores the
+accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
+
+## 2026-09-20 - #63 defect round 2: the Control Options page under MODERN
+## with the owner's real DualSense showed "CONTROL STYLE / CONTROLLER" and
+## nothing below - no DualSense, no N64 fallback. ROOT CAUSE FOUND AND FIXED
+## at the importer; #63 stays OPEN pending the owner's replay.
+
+### Reproduction (real pad, this machine)
+
+- The owner's DualSense (USB, 054c:0ce6) was free - no game running - so
+  every run here drove it as a REAL device: "gamepad "DualSense Wireless
+  Controller" (1 attached), family PLAYSTATION (sdl type 7)", the same line
+  the owner's own captures show (~/.sightline/runs/20260919-235232 and
+  -235453: both also show "sl_asset: controllers.dualsense override loaded
+  ... 17 parts" - the model LOADED for the owner, so no fallback was due).
+- The owner's real config.ini (read, never written) copied to scratch as
+  SL_CONFIG: 16:9, fov 5872, control_style 0, sprint on, the bind line.
+  Direct boot facility (34), Tab -> watch -> right x2 -> the Control Options
+  page (posted keys only; the pad untouched, so it stays the first-attached
+  active pad the page reads). Also the owner's LIVE sequence: boot ORIGINAL
+  -> watch -> SIGHTLINE -> CONTROLS -> PROFILE latch + right -> MODERN
+  ("settings: wrote") -> Esc -> right x3 -> the page.
+- BOTH reproduce the picture the owner described, on b14e7fc2's build: the
+  page draws the DualSense, but as a DARK SILHOUETTE - the white shell at
+  RGB (69,67,71), the face at (14,15,18), on the (0,40,0) watch face. The
+  live switch loads the model on the first frame of the page after the
+  toggle ("page profile=modern family=2 model=5 available=1 -> device
+  draw"); there is no blank-frame state and no fallback failure. What the
+  owner saw as nothing drawn was the pad at 0.27 brightness.
+
+### Root cause (measured, src/gfx/sl_gfx_dl.c SL_PAD_DBG line)
+
+- draw id=5 fade=255 k=1.000 exposure=1.0 lit=1 prims=27 tris=106436
+  parts=17 mv-det=pos mean(N.L)=-0.134 facing=40% - the model drew in full,
+  with the diffuse term LOST: the mean eye-space N.L of its normals under
+  the page's modelview was negative.
+- The compiled models, read back (scratch nrmcheck.py / topcheck.py): of the
+  DualSense's 39,361 polygons that face the watch camera (winding normal
+  +y), 23% carry a stored normal pointing up and 28% pointing DOWN, the rest
+  sideways; the Xbox pad 17% / 56%. Correlating each triangle's winding
+  normal with its stored normal component-wise gives a signed axis
+  permutation, not noise: DualSense stored (x, y, z) = geometry (-x, -z,
+  -y); Xbox stored (x, y, z) = geometry (x, -z, y). Rotating the stored
+  normals by that permutation puts 106,122 of 106,436 DualSense triangles
+  (median dot 1.000) and 42,310 of 42,428 Xbox triangles in agreement with
+  their winding. The package builder (the owner's staging tool, not in this
+  repository) re-based POSITION into the GjoypadZ frame and left NORMAL in
+  the source frame; the .gltf nodes carry translations only, so the
+  importer faithfully baked the mismatch; the renderer's one light (0,0,1)
+  then met normals pointing sideways or away and applied 0.30 ambient
+  alone: 231 * 0.30 = 69, the measured shell.
+- Why the previous round's witness missed it: sheet-wp-ps.png (the white
+  DualSense) was captured at 23:13 on build-7, which lifted BOTH models 4x;
+  build-8 at 23:15 set the DualSense to 1x ("saturated ... symbols washed
+  out") and the DualSense page was never re-captured. 69 * 4 = 276 -> white
+  shell, 14 * 4 = 56 -> dark face: the "correct" white picture was the
+  ambient-only model over-exposed, and its flat, shadowless look was the
+  tell. The Xbox pad's 4x had the same origin (32 * 0.30 * 4 = 38 read as
+  "near black vanished at 1x").
+
+### Fix (tools/asset/gltf_import.py, a deriver - rule 3)
+
+- rebase_normals: on every import with NORMAL, the mean dot of winding
+  normal x stored normal over all triangles (normal_agreement). >= 0.5:
+  untouched (boot logos 0.984 / 1.000 / 0.877 / 0.878; their .slmodel
+  SHA-1s unchanged: 2550AD04, 4E770891, 2F89E51A, 13F0ABD5). Below: the
+  strongest signed axis partner per geometric axis (normal_frame_fit); if a
+  permutation and the re-based agreement reaches 0.8, applied, preserving
+  the artist's smoothing (DualSense -0.237 -> 0.990, Xbox 0.253 -> 0.976;
+  the compiled files differ from before ONLY inside the NORMAL block:
+  174,939 / 50,542 words, every one within [o_nrm, o_nrm + nvert*12));
+  otherwise the normals are rebuilt area-weighted from the winding. A
+  correction is printed whether or not verbose; the `normals` line lands in
+  build.ps1's output. The .bin files stay verbatim (sha1 oracle intact).
+- Camera-facing polygons after: DualSense 39,331 / 39,361 up (100%), Xbox
+  18,400 / 18,469. In-game: draw ... mean(N.L)=+0.134 facing=60%; the
+  DualSense shell reads (221,215,226) at 1x with shading; the Xbox shell
+  108..126 at 4x. The exposure knobs stand (comment re-measured in
+  sl_watch_controller.c).
+- SL_PAD_DBG (new, off by default): the page's decision line, the emit line
+  (green / fade / held / axes) and the renderer's draw line with the
+  measured lighting term. sl_watch_controller_modern now computes the
+  decision once and reports it; behaviour unchanged.
+
+### Fallback proven with the real pad (owner-modern config, all three ->
+### "page profile=modern family=2 model=5 available=0 -> the N64 pad", the
+### N64 pad with its labels in the frames, sheet-fallback.png)
+
+- SL_ASSET_OVERRIDES=0; the exe copied to a scratch dir with no
+  data/asset-overrides on its ladder and SL_ASSET_OVERRIDE_DIR at an empty
+  dir (model absent everywhere); the same with a 1,000,000-byte truncated
+  dualsense.slmodel in the install dir ("unusable (declared file size does
+  not match the file) - drawing the original"). The fallback never failed
+  in the owner's case: the model was available and drew.
+
+### Evidence (scratch modern2; frames outside the repo)
+
+- r2 (pre-fix, boot MODERN): shots/r2, r2-zoom.png - the dark pad; r3 the
+  same with SL_PAD_DBG (mean(N.L)=-0.134). live-pre3: the owner's live
+  sequence pre-fix, sheet-live-pre3.png / -last.png - the CONTROLS child
+  ORIGINAL -> MODERN, back, the dark pad. r4 (post-fix): r4-zoom.png, the
+  lit DualSense. live-post: the live sequence post-fix, sheet-live-post.png
+  / -page.png, the lit DualSense on the page after the toggle. wx4: the
+  virtual Xbox pad post-fix (the paired Xbox controller is off), wx4-zoom.png.
+  fb-off / fb-absent / fb-bad: sheet-fallback.png. slmodel-sha1-before.txt.
+- Gates: test_gltf_import.py 217 / 0 ([35] gains the compiled-normals
+  agreement check per package; [36] new: correct normals untouched, the
+  DualSense mapping / a 90-degree frame / an inward flip re-based to the
+  correctly-framed model's values, random normals rebuilt to the face
+  normals, no normals invented); test.ps1 facility 300 PASS; settingstest
+  120 / 0; displaytest 87 / 0; inputtest minv 9 / 0, 5 / 0, mouse-sens
+  30 / 0, modern-pad 72 / 0, main 225 with the 22 pre-existing (B-096).
+  build.ps1 (normal) last: 6 models rebuilt (the importer is an input).
+
+### Not exercised
+
+- The Xbox pad on a real device (the owner's is paired over Bluetooth and
+  was off); its frames are the virtual pad's. The 4x Xbox exposure now
+  renders a black pad as mid-grey (108..126) - readable, arguably brighter
+  than life; 2x would give ~55..65. Owner's call; not changed here.
+- make trace-verify not run (no game-logic change; the importer and a
+  debug seam only).
+
+## 2026-09-20 - #63 defect round 3: the same page, still blank for the owner
+## after round 2 (the white DualSense drew for the agent, nothing drew for
+## the owner - no model, no silhouette, no N64 pad; the watch hands showing
+## through). ROOT CAUSE FOUND AND FIXED in src/native; #63 stays OPEN
+## pending the owner's replay.
+
+### What the owner's run files said (read, never written)
+
+- ~/.sightline/runs/20260920-003933-lvlboot and -004146-lvlboot: env
+  SL_WINDOW_SIZE=960x720; config aspect_ratio=1 fov_vertical=5872
+  controller_profile=1 bind-lines=1; "aspect 16:9 -> window 960x720 ->
+  1280x720"; "controllers.dualsense override loaded ... 17 parts" in both.
+  input.spec LEVEL=boot: the owner booted through the logos and the front
+  end (menus 5 -> 6 -> 26 -> 27 -> 26 -> 6 -> 7 -> 8 -> 10) into DAM
+  (events: level-restart at record 1577, env-rgb 16,48,96), then Esc -> the
+  page. The second run switched aspect 16:9 -> 21:9 -> 16:9 -> 4:3 live on
+  the CONTROLS page with the model loaded (the owner looking for it). The
+  owner's screenshot (Pictures/Screenshots/Screenshot 2026-09-20 004021.png,
+  taken 48 s into the first run) is the page with the hands drawn and
+  nothing else.
+- Both round-2 witnesses (r5, live-post) and every round-1 frame were
+  DIRECT BOOTS OF FACILITY (34); the owner plays Dam (33).
+
+### Reproduction (real DualSense; the owner's config copied to scratch with
+### aspect_ratio=1 as it was at the time of the run)
+
+- Direct boot FACILITY, 960x720 / 16:9 (the owner's exact window and
+  display line): the white DualSense draws. NOT the size, NOT the aspect,
+  NOT SL_SHOT: an on-screen run's PrintWindow(PW_RENDERFULLCONTENT) capture
+  of the client area is pixel-identical (0.00% of pixels differ by >= 16)
+  to the SL_SHOT frame of the same page (onscreen-printwindow.png).
+- The owner's own path (logos -> front end -> Dam via posted keys) AND a
+  direct boot of DAM at 960x720 / 16:9: the blank page, exactly the
+  screenshot. SL_PAD_DBG on Dam: "draw id=5 ... mv=[0.200 0.000 0.000 |
+  0.000 0.141 -0.141 | 0.000 0.141 0.141]" against Facility's "[1.000 0.000
+  0.000 | 0.000 0.707 -0.707 | 0.000 0.707 0.707]" - the whole modelview a
+  fifth of its size, same build, same window, same page.
+- The new `place` line (below), pre-fix Dam: "origin-depth=360.0 near=1000.0
+  far=3000.0 near-culled=100% of 4166 ... box=EMPTY". Post-fix Dam:
+  "origin-depth=1800.0 ... near-culled=0% ... box=473,249-811,442".
+
+### Root cause (src/native/sl_watch_controller.c, the modelview conversion)
+
+- matrix_4x4_f32_to_s32 (src/game/matrixmath.c:495) is not a plain
+  float-to-fixed conversion: every element but the w column is multiplied
+  by D_80032310[0], which bg.c:1091 sets to 65536 x the level's VISIBILITY
+  scale on load (levelinfotable, bg.c:276: Dam, Surface and Surface 2 carry
+  0.2; the other seventeen campaign levels 1.0; the front end 1.0 via
+  bg.c:1249 and the table's initialiser). The game's own watch-pad path
+  converts at UNIT scale: watchRenderController brackets its render_pos
+  conversion with matrix_4x4_7F058C64 / matrix_4x4_7F058C88 (gunfire.c:
+  2239-2247 - save the scale, set 65536, restore), because the watch's
+  geometry is authored in the watch's own units, not the level's.
+- sl_watch_controller_draw converted finalmtx unbracketed (the boot logos'
+  idiom, front.c:2022, which is correct THERE because the front end's scale
+  is 1.0). On Dam the rotation AND the look-at translation arrived x0.2:
+  the pad shrank to a fifth and its eye-space depth went from 1800 to 360,
+  in front of the page's own near plane (guPerspective 1000..3000,
+  options.c:3708), so every triangle was clipped and the page showed the
+  face and the hands. Not a lighting, size, aspect, scissor, viewport,
+  depth-range, focus, binding or capture matter; the round-2 normals fix
+  stands (mean(N.L)=+0.134 facing=60% on every run here).
+- Why round 2 missed it: every witness was a direct boot of Facility
+  (visibility 1.0), where the unbracketed conversion is the identity. The
+  owner's runs said LEVEL=boot and env-rgb 16,48,96 (Dam) from the start.
+
+### Fix (851ff573's successor, src/native only; no game logic touched)
+
+- sl_watch_controller_draw brackets the conversion with
+  matrix_4x4_7F058C64() / matrix_4x4_7F058C88() - the N64 pad's own
+  idiom, so the modern model converts at unit scale on every level and the
+  level's scale is put back for whatever converts next. The two are
+  declared extern in the file (matrixmath.h does not declare them; the
+  game's callers use them undeclared - tree-wide grep 2026-09-20).
+- SL_PAD_DBG grows two measurements: the emit line prints `mtx-scale`
+  (D_80032310[0] / 65536, the level's scale in force: 0.200 on Dam, 1.000
+  on Facility); the renderer adds a `place` line after each `draw` line -
+  the model origin's eye-space depth, the projection's near and far, the
+  share of sampled vertices in front of the near plane, the viewport in
+  force and the projected bounding box in GL window pixels. "near-culled=
+  100% ... box=EMPTY" is the number that separates "did not draw" from
+  "drew, and nothing survived".
+
+### Post-fix matrix (Dam, direct boot, the page; sheet-dam-matrix.png)
+
+- 960x720 / 16:9 DualSense (the owner's case): mv 1.000, depth 1800,
+  culled 0%, box 473,249-811,442 in viewport 0,30 1280x660 - the white pad.
+- 640x480 / 16:9 (853x480): box 315,166-540,295 in 853x440.
+- 960x720 / 32:9 (2560x720): box 1113,249-1451,442 in 2560x660 - centred.
+- 960x720 / 4:3: box 313,249-651,442 in 960x660.
+- 960x720 / 16:9 virtual Xbox pad (the real DualSense ignored through
+  SDL_GAMECONTROLLER_IGNORE_DEVICES so the family reads XBOX): id=4,
+  exposure 4.0, box 468,259-816,426 - the grey Xbox pad.
+- Facility unchanged (scale 1.0: the bracket is the identity there).
+
+### Evidence (scratch modern3; frames outside the repo)
+
+- o960b: Facility 960x720 pre-fix, the pad drawn (o960b-f1.png).
+  front960f: the owner's path to Dam, the blank page (front960f-f2.png,
+  mv 0.200). dam960-pre: a witness build with the bracket removed, the
+  `place` line reading near-culled=100% / box EMPTY. dam960-post,
+  dam640-post, dam960-a2-post, dam960-a0-post, dam960-xbox-post: the
+  matrix above. dam960-onscreen + onscreen-printwindow.png: SL_SHOT
+  against the composed window. replay: the owner's 003933 stream replays
+  byte-for-byte through the front end into Dam (census identical to the
+  owner's log to frame 1561); the watch navigation is native and not in
+  the N64 stream, so the page itself was driven with posted keys.
+- Gates: test.ps1 facility 300 PASS; settingstest 120 / 0; displaytest
+  87 / 0; inputtest minv 9 / 0 + 5 / 0, mouse-sens 30 / 0, modern-pad
+  72 / 0, main 225 with the 22 pre-existing (B-096, byte-identical list);
+  test_gltf_import.py 217 / 0; build.ps1 (normal) last.
+
+### Not exercised
+
+- The owner's live PROFILE switch on Dam (the fix is in the draw, which
+  the switch reaches the same way; round 2 proved the switch path on
+  Facility). The Xbox pad on a real device (virtual, as before).
+- make trace-verify not run: no game logic, physics, AI or entity state
+  touched (src/native and a debug line in src/gfx).
+
+## 2026-09-20 - #63 defect round 4 (the owner's replay with a real Xbox pad):
+## the Xbox model did not face the camera, no action labels around the pad,
+## the N64 CONTROL STYLE still on the page. FIXED; the ORIGINAL / MODERN
+## PROFILE, BUTTON MODE and the CONTROL STYLE setting REMOVED (owner
+## decision); BUTTON LAYOUT and STICK LAYOUT added (their naming and preset
+## questions filed as Gitea #64). #63 stays OPEN pending the owner's replay.
+
+### The owner's report (verbatim)
+
+"I plugged in an xbox controller. However, it doesn't face the right way.
+Also, they are missing the button actions along the side of it. Control
+Style still shows the old n64 names, which might be fine, as long as we are
+using the xbox layouts i showed before. Can tell because it doesn't show
+the buttons." And: "I don't really see a point to hide that behind a
+profile. Sightline will never get a n64 controller hooked up and we aren't
+using emulation."
+
+### The Xbox orientation - measured, fixed at the importer (rule 3)
+
+- Measured on the compiled models (scratch modern4/orient.py, the part
+  table's pivots + bounds in the watch frame: +x right, +y toward the
+  camera, -z the top edge): the DualSense's face-level parts - the four
+  face buttons, the d-pad, Create / Options - sit on one plane (y 58..64
+  whatever their z); the Xbox pad's rise toward the player: FACE_NORTH y
+  1.0 at z -187, FACE_SOUTH 30 at z -86, DPAD 55 at z -14, the two stick
+  tops 62 and 103 for identical 58-unit sticks. A least-squares plane
+  y = a + b x + c z through those seven pivots: the Xbox pad pitched 16.5
+  degrees about x (top edge down) and rolled -0.9; the DualSense 0.6 / 0.0.
+  The page already tilts the frame 45 degrees away from the camera
+  (options.c draw_watch_controller, -pitch - 0.785 about x), so the Xbox
+  face lay ~62 degrees from the eye, foreshortened, its top edge toward the
+  viewer - exactly the owner's frame. The round-2 normals fix was correct
+  (the normals were in the source frame); the POSITIONS were re-based into
+  the frame's box by the package builder but not its orientation.
+- Fix (tools/asset/gltf_import.py, face_level_fit / level_model, a
+  deriver like the normals check): on every compile of a parts model the
+  importer fits that plane through the canonical face-level parts (FACE_*,
+  DPAD, MENU, BACK; three non-collinear needed) and, past FACE_LEVEL_DEG
+  (3), turns the whole model level - pivots, part-relative positions and
+  normals together, so the pose animation about each pivot is unchanged;
+  reported verbose or not (the `face` line in build.ps1's output). The
+  Xbox package compiles "pitched 16.5 deg ... rolled -0.9 ... now 0.1 /
+  0.1"; after: face buttons y 49..59, sticks 98 / 110, shoulders 24..30
+  (the DualSense's 59..64 / 96 / 29). The DualSense passes through
+  untouched (its .slmodel SHA-1 986ED9B7... unchanged), the four boot logos
+  likewise (2550AD04 / 4E770891 / 2F89E51A / 13F0ABD5). metadata.json and
+  the .bin untouched; no per-model runtime special case.
+- Tests: test_gltf_import.py 232 / 0 - [35] gains, per package, the
+  compiled face plane within 3 degrees and the sanity of the frame (face
+  buttons above the body plane, shoulders at -z, the sticks proud); [37]
+  new: a level synthetic model measures 0 / 0 and is untouched, a 16.5-
+  degree pitch (the Xbox's sign) compiles level with every pivot back on
+  the level model's and the geometry / normals turned with it, a roll, a
+  pitch + roll, a 2-degree tilt within the threshold untouched, two face
+  parts (no plane) and a partless model untouched.
+- Witness (real Xbox Series X pad, front end -> Dam, 960x720 16:9,
+  A-xbox-real-f27.png): the grey pad face-on like the DualSense, the guide
+  button top-centre, both sticks and the d-pad visible. Scripted virtual
+  Xbox pad (B3, sheet-B3-poses.png / sheet-B3-zoom.png): the right stick
+  tilts right and up with the axes, A / LB / d-pad-up / RT light their
+  labels and depress / rock / swing their parts (held bits 0x20 / 0x200 /
+  0x40000 / 0x1000 on the emit line). Facility (scale 1.0,
+  H-facility-page.png) draws the same page.
+
+### The labels around the pad (src/native/sl_watch_controller.c)
+
+- Source of truth: the LIVE binding registry. For each labelled control
+  (LT RT LB RB, the four face buttons, L3 R3, d-pad, Start / Options,
+  View / Create) the line is the family's name for it
+  (sl_bindings_source_label: A / CROSS, RT / R2, LS / L3 ...) plus the
+  action(s) the registry holds for it (sl_bindings_actions_for_source, new;
+  the brief forms sl_bindings_action_brief: PREV WPN / NEXT WPN, the rest as
+  the editors print them; several joined with `/`; a control bound to
+  nothing is omitted). The three the registry does not own: Start PAUSE,
+  View / Create MARK, D-PAD the game's own word under the pinned style
+  (LOOK). Never an N64 name.
+- Placement: each part's rest pivot projected through the page's own
+  finalmtx and perspective (the pointer file's idiom) into framebuffer
+  pixels; left half of the pad -> the left column (x 0x1E, left-aligned),
+  right half -> the right (0x122, right-aligned); ordered per column by the
+  rest pivots (top edge first, then down the face - stable under the spin),
+  spread top to bottom at a 13-pixel pitch, pulled up and tightened (down
+  to the text height) if the column would run off the face. A line that
+  would cross the pad's projected silhouette (the body's +-394 edge at the
+  part's depth) breaks into two rows, name over action - measured at the
+  owner's window: "RT FIRE" fits, "RB NEXT WPN" and every DualSense face
+  line break. A held control's label is drawn white outlined, the original
+  page's idiom. No leader lines: the 2D pass is text and the original page
+  draws none either. Two defects found on the first frames and fixed: the
+  game's lowercase d-pad string set in the small style beside capitals
+  (uppercased), and draw_options_labels' measured clip box dropping the
+  Q of SQUARE (the sl_watch_bindings.c wb_label rule - the view box).
+- Witness: A-xbox-real (Xbox, DEFAULT), C-ps-virtual-f6.png (DualSense:
+  L2 AIM, R2 FIRE, CROSS INTERACT, SQUARE RELOAD ...), D-custom-f8.png (a
+  config `bind.fire.pad.1=pad:B`: "B CROUCH/FIRE", RT omitted, BUTTON
+  LAYOUT CUSTOM), sheet-E-buttons.png (SOUTHPAW / GREEN THUMB / DEFAULT
+  labels), F-bumper-southpaw-f3.png (BUMPER: RB FIRE, LB AIM, RT NEXT WPN,
+  LT PREV WPN).
+
+### PROFILE, BUTTON MODE and CONTROL STYLE removed (owner decision)
+
+- Deleted: SL_SET_CONTROLLER_PROFILE / SL_SET_PAD_BUTTON_MODE /
+  SL_SET_CONTROL_STYLE and their rows, SL_PROFILE_*,
+  sl_settings_import_legacy_style (and the shim's .style sidecar call),
+  sl_controller_profile_get / _set, map_pad, map_pad_dual, style_is_dual,
+  the SL_STYLE_* ordinals, SL_CONTROLS=retro and g_retro, read_pad's
+  fixed-button block and its two parameters, pad_custom / pad_modern /
+  pad_registry, sl_bedit_pad_mode / _set_pad_mode / _pad_dimmed, the two
+  editors' BUTTON MODE row / header and the "select custom" note, the watch
+  CONTROLS PROFILE row (SL_WROW_VALUE_PROFILE), the front end's PROFILE row
+  and CONTROL STYLE row (SR_PROFILE, SR_STYLE, set_style_count),
+  settingstest section 12 and the pad_button_mode checks, inputtest's
+  ORIGINAL identity cases (the fixed map, A -> N64 B, the 1.2 stick, the
+  live switch both ways - they asserted a path that no longer exists).
+  Tree-wide `git grep` for every symbol above: zero hits outside docs.
+- Stale keys: a config carrying control_style / pad_button_mode /
+  controller_profile loads with every live key intact, is NOT rewritten by
+  the load (write-on-change), and loses the lines on the next
+  write-on-change (settingstest section 6; run F's config kept all three
+  after a 125-second session with no write). sl_input.c's debug line: the
+  padmode / profile fields replaced by `sticks=` (the stick layout).
+- The pin (src/native/sl_settings_apply.c): cur_player_set_control_type
+  (CONTROLLER_CONFIG_HONEY) at every stage start in solo play, over
+  whatever the folder save carries; the SYNC seam no longer mirrors the
+  style. Witness line: "applied player defaults control_style=0 (pinned)
+  ... game reads style=0". Consequence for an existing config with
+  control_style != 0: a keyboard player who had picked 1.3 / 1.4 gets the
+  Honey click back (left button FIRE, right AIM). D-011 in
+  docs/divergences.md; D-010 superseded.
+
+### STICK LAYOUT and BUTTON LAYOUT
+
+- STICK LAYOUT (`pad_stick_layout`, sl_settings.h SL_STICK_LAYOUT_*): the
+  one seam is map_pad_modern (sl_input.c), which routes the pad's four
+  axes onto walk / strafe / turn / pitch per layout - DEFAULT left walk +
+  strafe / right turn + pitch; SOUTHPAW swapped; LEGACY left walk + turn /
+  right pitch + strafe; LEGACY SOUTHPAW the reverse. SL_LOOK_INVERT and the
+  game's Look Up/Down act on the pitch channel whichever stick carries it;
+  the menu stick stays the left stick. Read every poll. inputtest: a
+  four-magnitude probe (left 50% right / 100% up, right 10% right / 100%
+  down) names every channel's axis under each layout; SOUTHPAW aiming keeps
+  the left stick looking; the menu stick unchanged; the physical snapshot
+  unchanged. In play (run F, Dam, virtual pad, SOUTHPAW): right stick right
+  -> strafe 70, right stick up -> walk 70, left stick right -> turn 70; run
+  H (Facility): left stick up -> pitch -70, right stick up -> walk 70.
+- BUTTON LAYOUT (`pad_button_layout`, the registry's g_layouts in
+  sl_bindings.c, data - one row per action, two sources): DEFAULT (RT
+  fire, LT aim, RB + Y next weapon, LB previous, A interact, X reload, B
+  crouch, L3 sprint, R3 zoom in - the task's list; it IS the compiled pad
+  default now: RB, LB and R3 changed from the #46 CUSTOM layout for anyone
+  who never edited them), SOUTHPAW (triggers and bumpers swapped), BUMPER
+  (RB fire, LB aim, RT next, LT previous, Y still next), GREEN THUMB
+  (DEFAULT with R3 a second AIM and B ZOOM IN - CROUCH then has no pad
+  source; flagged for the owner). sl_bindings_layout_apply writes every
+  action's two PAD slots in one store write and records the id; a PAD slot
+  edited through sl_bindings_set records CUSTOM (or the preset the table
+  then equals); RESET DEFAULTS records DEFAULT; at load a recorded preset
+  the bind. lines contradict reads CUSTOM (the row never lies). inputtest
+  covers each of those, run E the UI: the page's latched row stepping
+  SOUTHPAW -> BUMPER -> GREEN THUMB -> DEFAULT with the pad slots persisted
+  and removed per step ("button layout X applied (pad slots written)", the
+  persist lines), the CONTROLS child the same two rows.
+- UI: the Control Options page's two rows are BUTTON LAYOUT / STICK LAYOUT
+  (sl_watch_layout_rows_draw, on the original page's two row indices so
+  its navigation, latch and the pointer's rows stand; the latched LEFT /
+  RIGHT step; the pointer's click on the name steps up); the SIGHTLINE ->
+  CONTROLS child gets the same two rows as NAMED value rows (label + the
+  name right-aligned at the slider value column: "legacy southpaw" does
+  not fit the centred value cell) - chosen over a pointer to the page as
+  the smaller change; the front end's PAD tab reads BUTTON LAYOUT, STICK
+  LAYOUT, CONTROLLER, BINDINGS (one value cell each, advancing on a press,
+  the CONTROL STYLE row's shape) and the CONTROL tab lost CONTROL STYLE
+  (sheet-G-front.png). Both UIs read the one store / registry.
+- Preserved (asserted): keyboard / mouse bindings and the main inputtest
+  run's other sections; mouse sensitivity / scoped / invert (the three
+  cases 9 / 5 / 30 green); sprint; aspect / FOV (displaytest 87 / 0); the
+  watch pointer's rows (hit_control_options rewritten for the two rows,
+  hit_sightline for the named rows); d-pad menu navigation; A / B as menu
+  accept / back.
+
+### Gates
+
+build.ps1 (normal, last); test.ps1 facility 300 PASS; settingstest 118 /
+0; displaytest 87 / 0; inputtest mouse-invert 9 / 0 + 5 / 0, mouse-sens
+30 / 0, modern-pad 96 / 0, main 218 with the 22 pre-existing (B-096,
+byte-identical list against round 3); test_gltf_import.py 232 / 0; the
+__sgi proof (scratch modern4/sgi_proof.txt): options.c and options.h
+byte-identical to 45479b1b under __sgi, control differs, native arms +75 /
++10, zero new tokens. build.ps1 -Demo not run (no demo-only change).
+
+### Not exercised / limitations
+
+- The physical Xbox pad's own sticks, triggers and buttons were not moved
+  by anyone (the owner's pad, on the owner's desk): the family / model
+  line and the face-on page are the real pad's, the pose and held-label
+  witnesses are the scripted virtual Xbox pad's (SDL classifies it XBOX
+  from a real VID:PID). During the last run (G, the front end) SDL saw 0
+  joysticks - a wireless pad sleeping on idle, the sl_input.h note.
+- In the watch, the pad's LT / LB (AIM -> N64 R) step the ring page as the
+  N64's R does and its RT / RB (FIRE -> Z) toggle the row latch; unchanged
+  from rounds 1-3, noted because the scripted witness tripped on it.
+- The right column holds up to thirteen lines on the DualSense (five
+  two-row labels) and tightens its pitch to fit; it reads, and it is dense.
+  An owner call whether Start / View belong there.
+- `make trace-verify` not run: no game logic, physics, AI or entity state
+  touched (the apply seam is a native arm that returns before touching
+  anything with the store inactive).
+
+## 2026-09-20 - #63 / #64 defect round 5 (the owner's replay, real Xbox pad):
+## "xbox is still not facing the camera correctly and the button icons on the
+## side are missing". The icons: DONE - each labelled part drawn alone beside
+## its action, the original page's idiom. The facing: MEASURED, the Xbox now
+## faces exactly as the N64 pad does; what the owner sees is the page's own
+## 45-degree tilt on a modern pad's shape - an owner call, asked on #63 with
+## previews, nothing changed. #63 stays OPEN.
+
+### The owner's report (verbatim)
+
+"xbox is still not facing the camera correctly and the button icons on the
+side are missing. Maybe we need to pull the buttons out of the controller
+model to show on the side too."
+
+### Stale-model check first
+
+The owner's 09:32 run (`~/.sightline/runs/20260920-093211-lvlboot/log`)
+loaded `build\win32\data\asset-overrides\controllers/xbox.slmodel` whose
+SHA-1 (E128D9E7...) is the round-4 "after" hash - the LEVELLED model, not a
+stale one; the exe (09:25) postdates the compile (08:44). So round 4's fix
+was in force for the report.
+
+### The facing, established numerically (rule 7's corollary: measure)
+
+- THE N64 PAD'S FRAME, from the ROM (scratch modern5/n64pad.py:
+  scripts/generate_prop_model_c.py's parser over the 1172-inflated GjoypadZ,
+  tools/export/logo_models.py's walker): every face button's winding normal
+  is (0, 0.273, 0) to three places - pure +y - and the least-squares plane
+  through the eight face-part pivots (Start, d-pad, the four C buttons, A,
+  B) is pitched -2.4 degrees about x and rolled 2.8. The body is 788 x 253
+  x 836 as the package builder recorded. So "+y toward the camera" IS the
+  N64 pad's face, and the modern models are fitted to that frame.
+- THE MESH, not the pivots (scratch modern5/facemesh.py, the area-weighted
+  winding normal of each compiled model's up-facing body surface inside the
+  face region, and of the face buttons and sticks): the levelled Xbox body
+  reads (0.000, 1.000, 0.010) - pitch -0.6 degrees - its face buttons -0.4,
+  both sticks' tops -0.2, the d-pad -4.0 (the face is slightly convex: the
+  top band +3.8, the bottom band -4.1); the DualSense body -2.4, buttons
+  -1.5, sticks 0.0. Both sticks' tops on the Xbox still differ by 11.8 units
+  over 118 of z (5.7 degrees, the +z one higher) - the package's own
+  geometry, both sticks identical meshes at different pivot heights.
+- IN GAME (SL_PAD_DBG, the new sl_watch_controller_probe called from
+  draw_watch_controller for both arms): the face normal through the page's
+  finalmtx into eye space, +z toward the camera. N64 pad: eye (0.000,
+  0.707, 0.707), 45.0 degrees from the view axis, seen from above. Xbox
+  (the real "Xbox One Controller", family XBOX): the mesh face normal from
+  its stored normals (0.129, 0.990, 0.052) -> eye (0.129, 0.664, 0.737),
+  42.5 degrees, 8.0 from the N64 pad's face (the 8 is roll: the B button's
+  dome on the pad's rounded right edge pulls the stored-normal mean to +x).
+  By the winding normals (facemesh.py through the same matrix): Xbox 44.9,
+  DualSense 43.7, N64 45.0. The DualSense's STORED normals lean 9.7
+  degrees toward the top edge ((0.082, 0.982, -0.168) -> 54.9 in eye
+  space) while its winding says level: a lighting-only oddity of that
+  package's normals, not a shape.
+- SIDE BY SIDE (scratch modern5/facing-sheet.png: the N64 pad through a
+  scripted GENERIC virtual pad, the owner's real Xbox pad, a virtual
+  DualSense, all front end -> Dam, 960x720 4:3, the owner's config): the
+  three pads under the same 45-degree page tilt. All three are seen from
+  above-front with the grips toward the viewer; the N64 pad's flat, long
+  face reads as near face-on, the two modern pads' short faces and steep
+  grips read as "tilted away" at the same angle.
+- CONCLUSION: the Xbox faces the camera as the N64 pad and the DualSense
+  do, to within 2 degrees by the mesh. Nothing to fix at the importer (a
+  second levelling pass would find 0.6 degrees). What the owner sees is the
+  PAGE'S tilt - Rare's 45 degrees, right for the N64 pad's shape - applied
+  to a modern pad's shape. Whether the modern pads should present more
+  face-on is a judgement of feel (an owner call, not a subagent's). Asked
+  on #63 with a preview sheet (scratch modern5/tilt-sheet.png: 45 as
+  shipped, 20, 0 - the `SL_PAD_TILT=<degrees>` developer seam in
+  sl_watch_controller.c, off by default, the modern pad pitched that many
+  degrees from face-on with the labels and icons following; the N64 pad
+  untouched). The shipped page is unchanged.
+- Two probe defects on the way, both measured: (1) the include tree's
+  math.h shadows libm's and declares only sinf / cosf / sqrtf, so a probe
+  calling acos / atan2 / sqrt got implicit int-returning declarations and
+  printed 1877468 degrees; the probe uses the game's acosf / atan2f /
+  sqrtf. (2) atof("0") read 45745600.0 in sl_watch_controller.c (the same
+  double-return hazard sl_teleport.c declares around by hand); the seam
+  takes whole degrees through atoi.
+
+### The button icons (src/native/sl_watch_controller.c, the renderer)
+
+- THE ORIGINAL'S IDIOM, read from the decomp (the notes are silent on this
+  page's drawing - docs/doc-routing.json not_covered, 2026-09-20): the
+  icons on the N64 page ARE the pad's own button nodes drawn a second time
+  (gunfire.c watchRenderController, animatebuttons): the body node hidden,
+  nodes 1..12 placed in the look-at frame at g_1ContButtonPositions (A at x
+  900 / z 128, L at -820 / -389, all at y 200 - the pad's own depth) and
+  tilted toward the camera (R_x(-60) for the face buttons, +60 for L / R,
+  the d-pad -51.4, Z R_z(180)), pressed and rocked exactly as on the pad.
+  (The "(A)" / "(B)" strings in sub_GAME_7F0A9AB8 are unused.)
+- THE RENDERER'S PART-ONLY DRAW (src/sl_asset_override.h, sl_asset_override.c,
+  src/gfx/sl_gfx_dl.c): the bridge command's w1 gains a <part> byte (bits
+  8..15; 0 = the whole model, every command emitted until now; p = the
+  primitives of the part with canonical id p - 1 alone). A part-only draw
+  leaves out the pivot translation - the caller's modelview places the
+  pivot - and keeps the part's pose (press, tilt, tint), so an icon moves
+  with its button. sl_asset_override_emit_part writes it; the loader now
+  measures each part's vertex bounds about its pivot (struct sl_amdl_part
+  lo / hi, host-side, nothing on disk) so a caller can fit a part to a
+  size. No new renderer: draw_asset_override with a selector, ~25 lines.
+- THE ICONS: for every labelled control (LT LB RT RB, the four face
+  buttons, the two sticks, the d-pad, Start / View) the part is drawn alone
+  beside its label at the pad's own depth (1800 from the eye - a pixel is
+  ~7.1 units there under the 50.5-degree perspective), fitted so its
+  largest face-on extent spans 92 units (~13 px; scale clamped 0.5..2.5),
+  lit by the page's rig and the model's exposure, the same pose table as
+  the pad. Face parts lean back 30 degrees (the pad's 45, less, so the
+  letters read); bumpers and triggers - whose legends are on the front
+  face the pad's own view hides - are turned R_x(60) then R_y(180), which
+  shows the front and the top with the legend upright and unmirrored (the
+  front face is looked at from the pad's far side, so the reading direction
+  is -x; a rotation alone can put the front toward the camera upright only
+  after the 180 about the view axis). The text beside an icon is the ACTION
+  alone - "icon + word", the original's look - so `RT FIRE` is now the
+  trigger and FIRE.
+- THE COLUMNS FOLLOW THE FACE. Measured on the 960x720 frame (the green
+  extent per row): the watch face is a circle of radius 148 framebuffer
+  pixels about (160, 120) to within a pixel (half-width 149 at the middle,
+  137.5 at y 64, 125 at y 200). Fixed columns put the top and bottom rows'
+  icons on the bezel (the first build: the RB icon on the rim), so each
+  row's icon centre sits 14 px in from the face's edge at its own y and its
+  text 28 in; the columns curve with the face, as the original's do (its R
+  at x ~276 on row 82, its A at ~287 on row 182). Row pitch 17 (min 14),
+  rows 0x40..0xBE. A line that would reach the pad breaks into two rows
+  at its last space or slash (NEXT / WPN) - decided from the row's own
+  text position after a first spread, and only for rows that overlap the
+  pad's projected vertical span (the body's bbox through the same
+  projection; a row below the grips cannot reach them whatever its width)
+  - then spread again. On the Xbox / DualSense with the DEFAULT layout
+  every label fits one row (8 right, 5 left, pitch 17).
+- MIPMAPPED TEXTURES for override models (sl_gfx_dl.c aov_tex_upload): a
+  1024-square texture on a ~300 px pad and a ~13 px icon is 4..80x
+  minified, and plain GL_LINEAR takes one of the four nearest texels; the
+  complete box pyramid (mip_box_halve, the B-119 chain the game's textures
+  take) with trilinear sampling. Magnified textures (the logo screens'
+  reflection maps) sample level 0 as before.
+- HELD WITNESS (scripted virtual Xbox pad, scratch modern5/E-held-sheet.png
+  from the SL_SHOT frames): A held - INTERACT white-outlined, the A on the
+  pad and the A icon both depressed and tinted; LB - PREV WPN lit, the
+  bumper rocked on both; d-pad up - LOOK lit, the cross rocked; RT - FIRE
+  lit, the trigger swung on the pad and beside the label; LT steps the
+  page (AIM -> N64 R, unchanged since round 1).
+- FRAMES: Xbox (the owner's real pad, 960x720 4:3 = the owner's window:
+  B-xbox-real-f4.png, E-held-f7-rest.png, P2-timing-f12.png; 1280x720 16:9
+  F-xbox-169-f12.png; 1920x540 32:9 G-xbox-329-f12.png - no overlap
+  between icons, text and the pad at any of the three; at 16:9 and 32:9
+  the columns keep the 4:3 face's circle, which the wider face contains),
+  DualSense (virtual, D2-ps-f12.png), the N64 pad (C-n64-f4.png).
+- COST (SL_PAD_DBG, the part-draw timer with glFinish on both sides - an
+  upper bound that includes the sync stalls; real pad, Dam, 960x720): 13
+  part draws per frame, 35..86 ms per 60 frames = 0.6..1.4 ms per frame
+  for all the icons; +17,678 triangles per frame on the Xbox (42%), +35,728
+  on the DualSense (34%, its d-pad alone 18,728). The 60 fps pacer holds
+  8.33 ms per VI with the icons on and off alike (the SL_SHOT files' wall
+  clock over 1200 VIs: 9,998 vs 10,002 ms).
+
+### Gates
+
+build.ps1 (normal, last); test.ps1 facility 300 PASS; settingstest 118 /
+0; displaytest 87 / 0; inputtest mouse-invert 9 / 0 + 5 / 0, mouse-sens 30
+/ 0, modern-pad 96 / 0, main 218 with the 22 pre-existing B-096 failures
+byte-identical to round 4's list; test_gltf_import.py 232 / 0; the __sgi
+proof (scratch modern5/sgi_proof.txt): options.c and options.h
+byte-identical to 5bc6f8a1 under __sgi (the one options.c change is the
+probe call inside the existing #ifndef __sgi arm), control differs, native
+arms +6 / +0, zero new tokens.
+
+### Not exercised / limitations
+
+- The DualSense's face symbols do not read at icon size. They are in the
+  texture (the buttons' tops map onto the cross / circle / square /
+  triangle islands - verified by rendering the tops textured offline,
+  scratch modern5/ds-face-textured.png) but drawn as 2..3-texel grey
+  (~150) lines on lilac (~230) in a 65-texel disc: at 13 px a line is under
+  half a pixel and the mip chain averages it into the white. The pad's own
+  buttons at ~12 px show the same plain discs - a faithful DualSense, whose
+  real symbols are subtle. Options for the owner: a darker-symbol edit of
+  the CC-BY texture (the licence allows it; ATTRIBUTION.md records changes),
+  or the family name back in the text for the PlayStation family (CROSS
+  INTERACT) - one flag. The Xbox letters (large, coloured on black) read
+  at every size witnessed.
+- The Xbox bumper and trigger icons read as the shapes they are - a curved
+  lip and a rounded paddle with no legend on the package's texture; the
+  DualSense's L1 / R1 / L2 / R2 legends are dark-on-dark at 13 px.
+- The owner's real pad's own sticks and buttons were not moved by anyone;
+  the held witnesses are the scripted virtual Xbox pad's (SDL classifies it
+  XBOX). The real pad drew the facing frames (family XBOX, "Xbox One
+  Controller").
+- The facing question is open on #63: no presentation change shipped.
+- `make trace-verify` not run: no game logic, physics, AI or entity state
+  touched (src/native, src/gfx, and one probe call inside options.c's
+  native arm).
+
+## 2026-09-20 - #63 owner-accepted and CLOSED ("Ok, i think the controllers
+## look good now. What next?"); #51 controller analog tuning - LOOK
+## SENSITIVITY, LOOK DEADZONE and MOVE DEADZONE for the modern pad (D-013),
+## defaults = the accepted feel bit for bit. #51 stays OPEN pending the
+## owner's replay with a real pad; #64's polish stays PARKED.
+
+### Issue admin
+
+- #63 CLOSED on the owner's acceptance after the round-6 replay: the
+  device-matched Xbox / DualSense models, the individually addressable
+  controls, the icons beside the action labels, the 20-degree
+  presentation, the DualSense symbols, the direct modern controller
+  architecture and the stick-role presentation. It does not settle the #64
+  default-layout questions.
+- #64 stays OPEN as is: Y unbound, R3 unbound in DEFAULT, the faint Xbox
+  d-pad arrows and the custom-wheel context are PARKED (none proved
+  load-bearing for this round).
+- #51 REUSED (it was parked behind #63): scope = look sensitivity + look
+  inner deadzone, plus the move deadzone (justified below); response
+  curves, an outer deadzone and acceleration NOT in this round - the
+  measurement did not show one necessary.
+
+### Recon (file:line, at 04b92554)
+
+- The raw seam: read_pad, src/platform/sl_input.c:1580-1583 -
+  SDL_GameControllerGetAxis LEFTX / LEFTY / RIGHTX / RIGHTY, Sint16
+  -32768..32767, each through pad_axis (:1207): a fixed per-axis (square)
+  inner deadzone SL_PAD_DEADZONE = 5000 raw (:390, 15.26% of travel), the
+  remainder rescaled over 32767 - 5000 = 27767 so full travel reaches 1.0,
+  clamp_unit'ed. The intent takes lx / -ly / rx / -ry (up / right = +).
+  The same 5000 gates the two-pad arbitration (pad_touched :1242) and the
+  step point for the menus (pad_step, 0.30 of the remaining travel).
+- The routing: map_pad_modern (:1795): a switch on the STICK LAYOUT picks
+  which axis is walk / strafe / turn / pitch; the developer SL_LOOK_INVERT
+  negates pitch; channel() (:2233) = (int) (clamp_unit(v) x 70) - so the
+  maximum of every channel is 70 and no gain existed anywhere: full stick
+  = 70 = the game's full rate. The left and right transforms were the same
+  pad_axis; only the routing differed.
+- The consumer: bondview2.c:5690-5693 writes the channels into
+  analogTurn / analogPitch; :6533-6554 (turn) and :6452-6473 (pitch)
+  divide by 70, clamp +/-1, signed-square, and multiply by viGetFovY() /
+  60 - the cartridge's own stick curve, applied to the pad exactly as to
+  the N64 stick. So the sniper zoom already slows controller look
+  (fovy / 60), no scoped controller percent is needed and none is added;
+  the game's Look Up/Down (:5905-5914) negates analogPitch after the seam
+  writes it, so it applies to whichever stick carries pitch.
+- The infrastructure: the #50 slider idiom (sl_front_options.c
+  set_slider_row / set_slide / set_row_fill, SET_COL_BAR; options.c
+  SL_WROW_IS_SLIDER, sl_sightline_slide, sl_draw_sightline_slider /
+  _bar; sl_watch_pointer.c by the kind macros) and the #50 accessor shape
+  (sl_mouse_sens_get / _step / _fraction / _set_fraction) over percent
+  rows on the settings store.
+
+### The pre-change transfer function (MEASURED, the oracle)
+
+The real sl_input.c through the inputtest stubs at 04b92554 (scratch
+analog\witness.c, witness-pre.txt, 230 lines): raw -> the snapshot's
+normalized value -> the channel, DEFAULT layout, right X (right Y, left X
+and left Y identical in magnitude; the derived RATE column is the
+cartridge's curve as a formula, not an in-game measurement):
+
+    raw     0..5000 -> 0.000000 -> 0      (dead; 5001 -> 0.000036 -> 0)
+    5500 -> 0.018007 -> 1     7777 -> 0.100011 -> 7     8192 -> 0.114957 -> 8
+    10000 -> 0.180070 -> 12   12000 -> 0.252098 -> 17   16384 -> 0.409983 -> 28
+    18884 -> 0.500018 -> 35   20000 -> 0.540210 -> 37   24576 -> 0.705010 -> 49
+    29490 -> 0.881982 -> 61   32000 -> 0.972377 -> 68   32767 -> 1.0 -> 70
+    -32768 -> -1.0 -> -70; every negative raw the mirror of its positive.
+    diagonals per axis ((16384,16384) -> 28 / 28; (5000,5000) -> 0 / 0);
+    the four layouts route the same magnitudes to their channels; aiming
+    withholds walk / strafe; the menu stick reads the left stick (+80 at
+    full up, nothing at 12000 - the 0.30 step).
+
+### What shipped (src/platform, src/native, src/game native arms)
+
+- sl_settings: three rows. `pad_look_sensitivity` 25..200 step 5 default
+  100; `pad_look_deadzone` and `pad_move_deadzone` 0..40 step 1 default
+  15. Missing / malformed / out-of-range -> the default; write-on-change;
+  an older file reads the defaults and is not rewritten until the next
+  change. The range: 25 = channel 17 at full stick (6% of the full rate
+  through the square curve; slower is unusable), 200 = half the
+  remaining travel already reaches 70 (beyond that the stick loses its
+  proportional range), step 5 = 3.5 channel units at full stick (above
+  the channel's integer grain); deadzone 0 = none (a rescale over the
+  whole travel), 40 = 13333 raw, step 1.
+- sl_input.c: pad_axis(raw, dz) - the SAME shape (per axis, rescaled,
+  clamped), the size a parameter. ONE roles table (s_stick_roles: the
+  role of LX / LY / RX / RY under each of the four layouts) replaces
+  map_pad_modern's switch AND decides each axis's deadzone in read_pad
+  (look roles -> pad_look_deadzone, move roles -> pad_move_deadzone), so
+  under SOUTHPAW the left stick is the one the look deadzone shapes, and
+  the routing and the deadzone cannot disagree. The deadzone in raw units
+  is p x 5000 / 15: 15 is the compiled 5000 exactly, every other p within
+  one percent of p percent of the 32767-unit travel. LOOK SENSITIVITY is
+  one factor on the LOGICAL look pair in map_pad_modern - after the
+  routing, after the deadzone, before SL_LOOK_INVERT and before
+  channel()'s +/-70 clamp - so it never exceeds the game's full rate, only
+  reaches it earlier. Order: deadzone -> gain -> the sign conventions
+  (SL_LOOK_INVERT here, the game's Look Up/Down game-side) - never the
+  mouse's Invert Mouse Y. The intent carries the TUNED axes: the
+  last-device-wins rule, the menu step and the watch's picture see a stick
+  inside its deadzone as neutral (the standing "drift never steals the
+  game" rule, now at the player's size). The move pair has no gain.
+  Accessors for the editors: sl_pad_tune_get / _step / _fraction /
+  _set_fraction over SL_PAD_TUNE_LOOK_SENS / LOOK_DEADZONE /
+  MOVE_DEADZONE (sl_input.h), the #50 shape.
+- The front end: PAD tab = BUTTON LAYOUT, STICK LAYOUT, LOOK SENSITIVITY
+  [bar], LOOK DEADZONE [bar], MOVE DEADZONE [bar], CONTROLLER, BINDINGS,
+  BACK (slot 7) - the accepted slider row (`-` value `+` over the
+  007-mode bar; a press on the bar sets the value at the cursor's
+  fraction on the grid, a held press drags).
+- The watch: SIGHTLINE -> CONTROLS gains a STICK TUNING row (after STICK
+  LAYOUT) opening a second-level child - LOOK SENSITIVITY / LOOK DEADZONE
+  / MOVE DEADZONE as MUSIC / FX bars with the percent, BACK - because
+  CONTROLS already reaches the face's foot with its two bars (nine rows
+  now, BACK at y 179, the bindings child's own limit) and two more bars
+  would have put BACK on the page bar. The back stack is two (view, row)
+  pairs (SL_WVIEW_DEPTH_MAX): BACK / Escape return ONE level, to CONTROLS
+  on the STICK TUNING row, then to SIGHTLINE. Same store, same four calls
+  as the front end; no local copies. options.c / options.h changes are
+  native arms only.
+- MOVE DEADZONE implemented (not parked): the recon showed the same fixed
+  5000 on the move pair, a drifting left stick makes Bond creep, and the
+  exposure is one table row through the same pad_axis; default 15 = the
+  exact current, full deflection = the exact current 70. No move
+  sensitivity.
+
+### Evidence
+
+- DEFAULT IDENTITY: witness-post.txt (the same program on the new tree,
+  no config) vs witness-pre.txt: 230 lines, Compare-Object 0
+  differences.
+- POSITIVE CONTROLS (the same program with a config): sens 50 -> 35 at
+  full stick, 14 at 16384, 3 at 7777, the move pair 70 / 70, the picture
+  still 1.0; sens 200 -> 14 at 7777, 57 at 16384, 70 from 18884 on, sign
+  kept, 5001 still 0; look dz 30 (10000 raw) -> 9999 / 10000 dead, 10001
+  live, 7777 -> 0 (a previously live input killed), 16384 -> 19, -16384
+  -> -19, full stick 70, (16384,16384) -> 19 / 19 with no bias,
+  (16384,8000) -> 19 / 0 (the square zone), the move pair still 28 / 7;
+  look dz 0 -> 5001 -> 10 (a previously dead input woken), 16384 -> 35,
+  full stick 70; dz 40 -> 13333 dead, 13334 live, full stick 70; move dz
+  30 -> the move pair 10000 dead / 16384 -> 19 / full -70, the look pair
+  7 / -7, the menu stick still +80 at full up.
+- THE LAYOUTS (look sens 50 + look dz 30 + move dz 15, every axis at
+  16384): DEFAULT left 28 / -28, right 9 / 9; SOUTHPAW right 28 / -28,
+  LEFT 9 / 9 (the left stick tuned); LEGACY LY walk -28 / RX strafe 28,
+  LX turn 9 / RY pitch 9; LEGACY SOUTHPAW RY walk -28 / LX strafe 28, RX
+  turn 9 / LY pitch 9; aiming withholds the move pair under every layout;
+  no C bit, the N64 stick neutral, no mouse look.
+- INVERSION: the whole pad-tune case again under SL_LOOK_INVERT=1 (73 /
+  0): every pitch the exact negation, the default identity included.
+- SCOPE / FOV: the pad's channel is the same number scoped and unscoped
+  (39 at 30% x2 at 16384); the only scope scaling is the game's fovy / 60,
+  unchanged.
+- NEGATIVE CONTROLS under a tuned pad: d-pad left / right PREVIOUS / NEXT,
+  up / down ZOOM IN / OUT, no N64 D-UP; LB / RB the cycle unscoped and the
+  zoom scoped; the mouse 40 counts -> 6.00 degrees (3.00 at
+  mouse_sensitivity 50); W walks 70; the pad takes the poll back at 54.
+- inputtest: pad-tune 73 / 0, pad-tune-invert 73 / 0, modern-pad 124 / 0
+  (unchanged), mouse-sens 30 / 0, mouse-invert 9 / 0 + 5 / 0, the main run
+  219 with the 22 B-096 failures byte-identical to round 6's log.
+  settingstest 134 / 0 (the three rows: defaults, write-on-change, the
+  bounds, malformed / out-of-range, reload, a pre-#51 file read and not
+  rewritten, the next write adding the three).
+- __sgi: options.c / options.h byte-identical to 04b92554 (md5
+  c5b3b9864b82 / 89af0a83a899), non-vacuous control, native arms +63 /
+  +22, zero #51 tokens (scratch analog\sgi_proof.sh / .txt).
+- IN-GAME WITNESSES (960x720, the owner-shaped config, the real DualSense
+  attached and awake - family PLAYSTATION - its sticks moved by no one):
+  F: the front end's PAD tab (F-pad-tab.png), `+` x3 on LOOK SENSITIVITY
+  -> 105 / 110 / 115, a press on its bar at the cursor's 0.907 -> 185 (the
+  grid: 25 + 32 x 5), `-` x2 on LOOK DEADZONE -> 14 / 13, `+` on MOVE
+  DEADZONE -> 16, BACK from slot 7 -> OPTIONS; config.ini then holds
+  pad_look_sensitivity=185 / pad_look_deadzone=13 / pad_move_deadzone=16.
+  W (a restart on that file): the PAD tab shows 185 / 13 / 16; Dam -> the
+  watch -> SIGHTLINE -> CONTROLS (the STICK TUNING row after STICK LAYOUT,
+  W-controls.png) -> STICK TUNING (W-stick-tuning.png): latched RIGHT x2
+  -> 195, LOOK DEADZONE RIGHT -> 14, MOVE DEADZONE LEFT -> 15; BACK ->
+  CONTROLS on row 2 (one level), Escape -> SIGHTLINE on row 3; the file
+  holds 195 / 14 / 15. R (a third launch on it): the PAD tab shows 195 /
+  14 / 15. P (in play on Dam, the scripted virtual Xbox pad taking the
+  poll from the sleeping DualSense, the owner's SOUTHPAW layout): at 100 /
+  15 / 15 LX 0.5 -> turn 28, LX 0.25 -> 8, RY -0.5 -> walk 28, LX -1.0 ->
+  -70, LY 0.5 -> pitch 28; at 200 / 30 / 30 the same script: turn 39, LX
+  0.25 dead, walk 19, -70, pitch 39 - the harness numbers, in the game,
+  with the tuning in force printed on the poll witness (psens / pdz / mdz
+  now on the `sightline input:` line).
+- GATES: build.ps1 (normal, last; no warnings); test.ps1 facility 300
+  PASS; settingstest 134 / 0; displaytest 87 / 0; inputtest as above.
+
+### Not exercised / limitations
+
+- The owner's real DualSense drew the CONTROLLER rows (PLAYSTATION) and
+  was never moved by anyone; the in-play numbers are the scripted virtual
+  pad's. Feel (default the same, lower / higher, drift) is the owner's
+  replay.
+- The percent labels of the deadzone rows are p x 5000 / 15 raw, i.e.
+  p x 1.017 percent of the SDL travel - within 0.8% of the label across
+  the range; 15% IS the compiled 5000. Chosen over a true-percent grid so
+  the default is bit-identical (a true 15% = 4915 raw moves the channel
+  at some raws).
+- The move deadzone also shapes the menu stick (the intent carries the
+  tuned axes); at 40% the menu's 0.30 step still needs only raw ~19200.
+- The look gain is BEFORE the cartridge's square curve, so 50% gives a
+  quarter of the turn rate at a given deflection and no percent exceeds
+  the game's full rate (the channel clamps at 70). A response-curve row
+  was not needed and is not shipped.
+- #64's polish (Y / R3 unbound, the faint Xbox d-pad arrows, the
+  custom-wheel context) stays parked; none proved load-bearing here.
+- `make trace-verify` not run: no game logic, physics, AI or entity state
+  touched (src/platform, src/native, and native-arm rows in options.c /
+  options.h).
+
+## 2026-09-20 - #51 owner-accepted and CLOSED ("Looks good. We can move onto
+## the next item on the todo list."); #56 CROUCH MODE and SPRINT MODE, HOLD /
+## TOGGLE at the action layer (D-014), default HOLD = today's behaviour bit
+## for bit. #56 stays OPEN pending the owner's replay; #64's polish stays
+## PARKED; PC display modes are next on the roadmap order.
+
+### Issue admin
+
+- #51 CLOSED on the owner's acceptance: LOOK SENSITIVITY, LOOK DEADZONE and
+  MOVE DEADZONE, the default identity, the PAD tab rows, the watch's STICK
+  TUNING child, the persistence and the logical-look-role composition.
+- #64 stays OPEN / PARKED as is.
+- #56 REUSED (filed 2026-09-19 with the roadmap): the two HOLD / TOGGLE
+  settings, both editors, the edge cases the issue asked to have decided
+  (below). Not owner-accepted; the replay steps are on the issue.
+
+### Recon (file:line, at 68fd4d1e)
+
+- CROUCH's semantic path: the registry's CROUCH row (sl_bindings.c:380
+  key:LCTRL, :314 pad B in every preset) -> sl_action_eval
+  (sl_action.c:129: a LEVEL over every slot, one PRESSED edge per fresh
+  press of the action with the round-6 stale rule, the per-slot raw memory
+  g_prev_down) -> sl_input.c:2681 -> the held mask published by
+  sl_action_channels_set (:2699, `act_on = live && !menu`) -> the game's
+  once-per-tick consume sl_action_channels_get (sl_action_channels.c:126)
+  -> bondview2.c:5783 `if (sl_held & SL_ACTCH_CROUCH) crouchDown = 1,
+  g_sl_crouch_native = 1; else if (g_sl_crouch_native) crouchUp = 1` - a
+  LEVEL consumer, under the cannot-crouch stat bit (:5781) and the action
+  block's gates (:5745-5750: frozen, watch animation, dead, controls
+  locked, paused). No game-side crouch toggle state exists (tree-wide grep for
+  SL_ACTCH_CROUCH / crouchDown / g_sl_crouch_native over src/:
+  bondtypes.h:4129, sl_action_channels.c:65 and bondview2.c alone - Rare's
+  two aim + C-down writers at :5245 / :5506, the native block at
+  :5783-5793 and the consumer at :6199).
+- SPRINT's: the registry's SPRINT row (:385 key:LSHIFT, :319 pad L3) ->
+  the same evaluation and publish -> bondview2.c:5776 `(sl_held &
+  SL_ACTCH_SPRINT) && sl_sprint_enabled()` -> g_sl_sprint_held -> the
+  speed block :6161 (channels live, not aiming, standing, a requested
+  magnitude > 0 and < the diagonal cap: the #42 rule, cap = |(1.08 x
+  speedboost, 1.08)|, W+D untouched). A LEVEL; no game-side latch.
+- The edge machinery: sl_action.c g_prev_held (per action) and g_prev_down
+  (per slot); `pressed` is set only when the level came up this poll AND a
+  live source went down this poll (the stale rule). Evaluated on EVERY
+  poll, menus included, so a control held across a menu open / close keeps
+  its raw memory; PUBLISHED only while live and out of a menu.
+- Rebinding: sl_bindings_set (:823, with the steal), sl_bindings_layout_apply
+  (:750), sl_bindings_reset_defaults (:886) and sl_bindings_init (:667) are
+  the four table writers; every persisted slot write goes through
+  slot_persist (:628).
+- The stage-start seam: init_watch_at_start_of_stage (options.c:403,
+  called from lvlInit lv.c:426 for every non-title stage - the front-end
+  flow, a restart after death, SL_BOOT_LEVEL) -> sl_settings_apply_player_defaults
+  (sl_settings_apply.c:84, the Honey pin).
+- Entering / leaving the watch: sl_action_channels_set(0, ...) drops the
+  held mask and every pending edge on the channel side; the platform side
+  keeps evaluating. Focus loss: sl_input.c:3145 sl_action_reset() wipes the
+  edge history (a control down when focus returns is a fresh press).
+- Where the rows go: the front end's GAMEPLAY tab held SPRINT alone
+  (sl_front_options.c s_tabs, BACK at SET_ROW_BACK_MIN); the watch's
+  SIGHTLINE -> GAMEPLAY child held sprint / back (options.c sl_watch_views).
+  Both had room; the modes are device-independent, so neither the CONTROL
+  tab (full) nor the PAD tab was the place.
+
+### The pre-change oracles (MEASURED before the first edit)
+
+- The semantic table: the real sl_input.c / sl_action.c / sl_bindings.c /
+  sl_settings.c through the inputtest stubs at 68fd4d1e (scratch
+  holdtoggle\witness.c, witness-pre.txt, 92 rows): per poll the keys /
+  pad buttons / menu fed in -> `on`, the published CROUCH and SPRINT level
+  (+P on an edge), the held mask, walk / strafe / turn / pitch. CROUCH on
+  Ctrl: idle 0, press 1+P, held 1 1 1, release 0, idle 0 0; again 1+P 1 0
+  0; pad B the same; two sources 1+P 0 1+P 0; across the watch (held in,
+  released in the watch: 1+P, [on=0] 1, 0, 0; pressed in the watch, closed
+  held: [on=0] 1+P 1, [on=1] 1 1, 0, fresh 1+P 0); pad B in the watch
+  1+P (unpublished) 0. SPRINT on Shift with sprint_enabled 0 (the platform
+  publishes the level regardless): W walk 70, W+Shift 70 / SPRINT 1+P, held
+  1 1, up 0, W+D 70 / 70, W+D+Shift 70 / 70 SPRINT 1+P, up 0; the pad's L3
+  the same; a focus loss with keys held: the reset makes the still-down
+  keys a fresh press on the next poll (1+P 1+P). RX 16384 -> turn 28, mouse
+  dx 40 -> turn 70, d-pad up -> ZOOM IN held, RB -> NEXT WEAPON held.
+- The in-game sprint magnitudes (Surface, the #42 method: teleport to the
+  start pad, 240 ticks from the first moving tick, SL_MISSION_EVERY=1,
+  sprint_enabled 1, the 68fd4d1e binary): W 2023.1 units, 9.693 / tick over
+  the last 60, spd 1.350 / 0.000 / 1.25; W+Shift 2785.9, 12.978 / tick,
+  spd 1.729 / 0.000 / 1.25, sprint=2 (one of three pre runs read 2784.8 -
+  12.960 / tick, the shift landing a tick apart; the two repeats read
+  2785.9); W+D 2789.0, 12.885 / tick, spd 1.350 / 1.000 / 1.25; W+D+Shift
+  2789.0 = W+D exactly, sprint=1 (held, not applied).
+
+### What shipped (src/platform, src/native, src/game native arms)
+
+- Settings (788ad2a9): `crouch_mode` / `sprint_mode`, 0 HOLD / 1 TOGGLE,
+  default HOLD; missing / malformed / out-of-range -> HOLD; write-on-change;
+  an older file reads HOLD and is not rewritten until the next change; no
+  version bump. SL_ACTION_MODE_HOLD / _TOGGLE. Self-test [14], 12 checks.
+- The transform (b6ed1b80): sl_action_modes_apply (sl_action.c), called by
+  sl_input.c right after sl_action_eval and before the intents and the
+  publish read the states, with `gameplay = live && !menu` - the publish
+  predicate. HOLD: the evaluated state untouched (the identity). TOGGLE:
+  the action's `held` replaced by ONE latch per action that the evaluator's
+  PRESSED flips (so no second edge history), gated on `gameplay`; the latch
+  dropped on a mode change, on a binding change (sl_bindings_generation - a
+  per-action counter slot_persist, reset_defaults and init advance), when
+  sprint_enabled is off (and a press then latches nothing), by
+  sl_action_latch_reset (the stage-start seam, before the store check) and
+  by sl_action_reset (focus loss, shutdown). `pressed` is left as
+  evaluated (no consumer reads the two actions' edges). The game's
+  consumers untouched: bondview2.c is not in the diff. Both editors reach
+  the store through sl_action_mode / sl_action_mode_set
+  (sl_settings_apply.c, the sl_sprint_enabled shape). The action witness
+  line gains cmode / smode and +L on a latched action.
+- The front end (cdc4e8fe): GAMEPLAY tab = SPRINT / SPRINT MODE / CROUCH
+  MODE, HOLD / TOGGLE as the AIM CONTROL row's two values, BACK in its
+  accepted slot. The options witness line gains smode / cmode.
+- The watch (2468c91d): SIGHTLINE -> GAMEPLAY = sprint / sprint mode /
+  crouch mode / back, the mode rows' cells the text table's own hold /
+  toggle at the toggles' columns (SL_WROW_TOGGLE_SMODE / _CMODE,
+  SL_WROW_IS_MODE); the pointer's hit test measures the same strings; a
+  toggle witness line. The string ids are chosen BEFORE getStringID - that
+  macro (bondconstants.h:4794 `((TEXTBANK * 0x0400U) + TEXTSLOT)`) does
+  not parenthesise its slot, and a conditional written inside it bound to
+  the bank's addition and blanked every cell of the child (the SPRINT row's
+  OFF / ON included): measured on the first witness screenshot, fixed,
+  re-witnessed.
+
+### The decisions the issue asked for
+
+- A weapon carrying the cannot-crouch stat bit: the consumer's gate is
+  unchanged (bondview2.c:5781 refuses crouchDown / crouchUp alike), so a
+  latched crouch does nothing while such a weapon is held and resumes
+  when it is put away - the latch is an input fact, the refusal a game
+  fact, exactly as a held Ctrl behaves.
+- Mission end / restart: every stage start drops both latches (the Honey
+  pin's seam); a control still held across it is not a fresh press.
+- Focus loss: both latches drop with the edge history (no stuck crouch or
+  sprint - the same visible result as HOLD, where SDL releases the keys);
+  a control still held when focus returns is a fresh press, the layer's
+  standing rule.
+- SPRINT ENABLED off while latched: the latch clears; on again does not
+  resume; a fresh press latches again.
+- Cutscenes / an intro camera: the platform layer does not know them (the
+  channels are consumed and dropped game-side under the action block's
+  gates), so a press during one flips the latch exactly as a held control
+  would be held through it. Not a menu; not gated. Noted, not changed.
+- A second source pressed while the first is still held adds no edge (the
+  action's level was already up - the existing "one edge for the pair"
+  rule), so it does not flip; released and pressed alone it does.
+- Mouse-button sources bound to CROUCH / SPRINT (none by default): the
+  snapshot zeroes the mouse buttons in menus (the fire / aim gate), so a
+  mouse-bound source held across a menu close is a fresh edge on the close
+  - the pre-existing behaviour of every mouse-bound pulse, noted below.
+
+### Evidence
+
+- Default identity: the same witness program on the new tree with no
+  config prints the 92-row table byte-identically (Compare-Object: 0
+  differences). With crouch_mode=1 sprint_mode=1 sprint_enabled=1 the same
+  program prints the toggle traces (witness-toggle.txt): press 1+P, held 1
+  1 1, release 1, idle 1 1, press 0+P, held 0, release 0; Ctrl then B flip
+  the same latch; the watch cases produce no flip in either direction; the
+  focus loss clears and the stub's still-down keys re-latch as a fresh
+  press; SPRINT stays 1 through W up / W down and clears on the second
+  press.
+- inputtest hold-toggle (its own process): 127 / 0 - the HOLD identity
+  (the raw level poll for poll, W / W+Shift / W+D / W+D+Shift at 70/0 70/0
+  70/70 70/70, a press in a menu unpublished), the CROUCH trace, the second
+  source, keyboard = pad, the menu / watch isolation and held-across-context
+  both directions for both actions (pad B is the watch's BACK and never
+  flips), the mode changes with a control held (no stuck crouch; release +
+  fresh press), the SPRINT trace through press / release / stop / resume /
+  second press with W+D unchanged, sprint_enabled off / on / fresh press,
+  sl_action_latch_reset and sl_action_reset with a control held, the modes
+  surviving both, CROUCH rebound to C and SPRINT's pad slot to X (the old
+  sources dead, a rebind drops the latch, the other action's latch
+  untouched), RESET DEFAULTS restoring Ctrl / Shift / B / L3 and leaving
+  the modes alone, the negatives (RX 16384 -> 28, the mouse's 6.00 degrees,
+  the d-pad's ZOOM IN level, RB in and out of the scope), the file holding
+  the two modes and nothing about a latch. The other six cases unchanged
+  (9 / 5 / 30 / 124 / 73 / 73, all 0); the main run 219 with the 22 B-096
+  failures, its 278 check lines identical to the previous round's.
+- settingstest 146 / 0 (the 12 new: defaults, write-on-change beside
+  sprint_enabled and the #51 rows, 1 accepted / 2 and -1 refused, reload,
+  malformed and out-of-range, a pre-#56 owner-shaped file read as HOLD and
+  not rewritten, the next write adding both, the MIXED config - both modes
+  TOGGLE, sprint on, bind.crouch.kbm.1=key:C, pad_look_sensitivity 150,
+  mouse_invert_y 1 - read intact and surviving an unrelated rewrite and a
+  reload).
+- In-game sprint identity under HOLD (the new binary, the same four runs):
+  W 2023.1 / 9.693 per tick, W+Shift 2785.9 / 12.978 (spd 1.729, sprint=2),
+  W+D 2789.0 / 12.885, W+D+Shift 2789.0 = W+D (sprint=1) - the pre-change
+  numbers.
+- In-game SPRINT TOGGLE (Surface, sprint_mode=1): W walk; a Shift tap ->
+  SPRINT+H+P+L, sprint=2, spd ramping 1.527 -> 1.729 (the accepted cap); W
+  up -> SPRINT+H+L, sprint=1 (latched, stationary), spd 0; W again ->
+  sprint=2, 1.527; a second tap -> SPRINT+P, sprint=0, spd 1.350 (W alone).
+- In-game CROUCH TOGGLE and the watch isolation (Dam through the front end
+  at 960x720, the owner-shaped config, cmode=1 from the front end): a Ctrl
+  tap -> CROUCH+H+P+L, crouch 2 -> 0 with the key up; the watch opened and
+  closed (Esc) -> still CROUCH+H+L, crouch 0; Ctrl held in play -> CROUCH+P,
+  crouch 0 -> 2 (OFF), the watch opened, Ctrl released in it, closed -> no
+  edge, standing; the watch opened, Ctrl pressed and held in it (CROUCH+P
+  with on=0, no +L), closed held -> no edge, released -> nothing, a fresh
+  tap -> CROUCH+H+P+L, crouch 0.
+- Cross-UI: the front end's CROUCH MODE TOGGLE cell -> cmode=1
+  (F-crouch-toggle.png); the watch's GAMEPLAY child then shows CROUCH MODE
+  with TOGGLE lit and SPRINT MODE with HOLD lit (X-watch-gameplay.png, after
+  the front end set SPRINT MODE HOLD / CROUCH MODE TOGGLE); the watch's own
+  latched LEFT on CROUCH MODE -> `toggle kind=17 <- 0` (the latch dropped
+  on the next poll: Bond stood, crouch 0 -> 2; Ctrl then HOLD: down crouch
+  0, up 2) and RIGHT on SPRINT MODE -> `toggle kind=16 <- 1` (W + a Shift
+  tap -> SPRINT+H+L, sprint=2, staying after W up); a relaunch on that
+  file shows CROUCH HOLD / SPRINT TOGGLE on the front end's tab
+  (R-front-gameplay.png) and in the watch (R-watch-gameplay-row1.png), and
+  Dam starts with cmode=0 smode=1 and no latch (held=00, no +L) until the
+  first press. The file holds crouch_mode / sprint_mode and nothing else
+  new.
+- __sgi: options.c / options.h preprocess byte-identically to 68fd4d1e
+  (md5 c5b3b9864b82 / 89af0a83a899), non-vacuous control, native arms +28
+  / +7 lines, zero #56 tokens (sl_action_mode, SL_WROW_TOGGLE_SMODE /
+  _CMODE, SL_WROW_IS_MODE, "crouch mode", "sprint mode", #56).
+- GATES: build.ps1 (normal, last; no warnings); test.ps1 facility 300
+  PASS; settingstest 146 / 0; displaytest 87 / 0; inputtest as above.
+
+### Not exercised / limitations
+
+- The owner's real DualSense was attached (the CONTROLLER rows read
+  PLAYSTATION) and was moved by no one; the in-game witnesses are the
+  keyboard's, the pad's toggle semantics are the harness's (the synthetic
+  pad through the real evaluator: pad B / L3 / X flip the same latches as
+  the keys). Feel is the owner's replay.
+- A press during an intro camera or a cutscene flips a latch (the layer is
+  not told about them); the game drops the level until its gates open, so
+  the visible result is the same as a control held through the cutscene.
+- A mouse-button source bound to CROUCH or SPRINT held across a menu's
+  close is a fresh edge on the close (the snapshot zeroes the mouse buttons
+  in menus for the fire / aim gate) - none is bound by default, and it is
+  the pre-existing behaviour of every mouse-bound pulse.
+- A wheel row bound to CROUCH or SPRINT (possible, useless under HOLD)
+  flips once per poll that carries notches, not once per notch.
+- The stray Notepad: an early attempt to capture build.ps1's output
+  through `cmd /c` opened the script in the owner's Notepad (a read-only
+  tab); nothing was edited. It was not force-closed.
+- `make trace-verify` not run: no game logic, physics, AI or entity state
+  touched (src/platform, src/native, and native-arm rows in options.c /
+  options.h; bondview2.c untouched).
+
+## 2026-09-20 - #63 / #64 defect round 6 (the owner's replay, real Xbox pad
+## and DualSense): "look and zoom in aren't mapped correctly. D pad isn't
+## used at all, and it should be, and zoom in is actually look. To zoom in,
+## we should probably use lb and rb. So it zooms when scoping for sniper
+## rifle, and cycles weapons when not. Xbox still needs to be pitched more
+## too ... Looks like ps5 can be tilted better too. Would like for the
+## symbols to show on the buttons too." All four DONE: the d-pad and the
+## bumpers in play (D-012), the labels honest, the tilt 20, the DualSense
+## symbols visible. #63 stays OPEN pending the owner's replay.
+
+### The owner's report (verbatim)
+
+"look and zoom in aren't mapped correctly. D pad isn't used at all, and it
+should be, and zoom in is actually look. To zoom in, we should probablly
+use lb and rb. So it zooms when scoping for sniper rifle, and cycles
+weapons when not. Xbox still needs to be pitched more too. Mark will
+eventually become the button to change textures later, but we can worry
+about that later. Looks like ps5 can be tilted better too. Would like for
+the symbols to show on the bottons too."
+
+What the screenshots showed, read against the code: the D-PAD row said
+LOOK - the cartridge's Honey word for the N64 d-pad (game_control_styles),
+not a binding; under 1.1 Honey the pad's d-pad reached the game as the N64
+d-pad and the cartridge aliases that to the C buttons (bondview2.c:5427
+look up / down, :5419 the digital strafes, :5495 the scope's zoom), so it
+"looked" a little and read as unused. The RS icon said ZOOM IN - R3's
+binding, which the owner read as the right stick's function - and R3's zoom
+was a two-tick pulse per press (sl_action_channels: a wheel notch's
+duration), so it did nearly nothing. The DualSense's symbols were plain
+white discs.
+
+### A. Bindings and labels (src/platform, src/native/sl_watch_controller.c)
+
+- THE D-PAD IN PLAY: four registry sources (pad:DPAD_UP / DOWN / LEFT /
+  RIGHT, family label "D-PAD UP" etc. on both families, "PAD D-PAD UP"
+  neutral), bindable and capturable like any button. DEFAULT: up / down
+  ZOOM IN / OUT, left / right PREVIOUS / NEXT WEAPON; the same in every
+  preset. In play map_pad_modern no longer passes the pad's d-pad bits to
+  the game (a direction bound to ZOOM IN would otherwise have zoomed twice
+  and looked up); in a menu the d-pad is the d-pad as before. The page's
+  d-pad row is the union of the four directions' bindings, each action
+  once and a complementary pair collapsed to one word
+  (sl_bindings_pair_brief: "WEAPONS/ZOOM"); the snapshot's per-direction
+  flags light the one d-pad label and rock the one d-pad part.
+- THE SCOPE-AWARE CYCLE, ONE RULE: the wheel's context rule is now a
+  property of the SOURCE (sl_bindings.c g_pad `ctx`, set on the wheel and
+  on LB / RB) and of the row (sl_bindings_source_ctx: a contextual source
+  on a weapon-cycle action is PLAY, on a zoom action SCOPED, on anything
+  else no context). The evaluator (sl_action.c row_live) skips a row out of
+  its context; the conflict policy lets two rows of one source coexist when
+  their contexts differ. DEFAULT: RB = NEXT WEAPON + ZOOM IN, LB = PREVIOUS
+  WEAPON + ZOOM OUT; SOUTHPAW mirrored; BUMPER puts FIRE / AIM on the
+  bumpers (a plain level - the rule gates only cycle / zoom rows, so LB
+  aims straight through the scope it opens; asserted) and the cycle on the
+  triggers, NOT scope-aware (a trigger is not flagged; under BUMPER the
+  zoom is the d-pad's alone - decided so a trigger never changes meaning
+  mid-pull); GREEN THUMB = DEFAULT + R3 as a second AIM, and its B is
+  CROUCH again (its ZOOM IN on B had no point with the zoom on the bumpers
+  and the d-pad; the round-4 "CROUCH has no pad source" flag is closed).
+  Y is UNBOUND in every preset: two slots per action is the whole editor,
+  and RB + d-pad right fill NEXT WEAPON's - an owner call which of the three
+  Y should displace, if any. R3 is unbound in DEFAULT.
+- THE STALE RULE (sl_action.c): an edge needs a live source of the action
+  that went down THIS poll (per-slot raw memory), so releasing the scope
+  with RB still down does not step the weapon and raising it with RB down
+  does not pulse a notch. Asserted both ways.
+- A HELD ZOOM IS A LEVEL (sl_action_channels.c): the getter reports a zoom
+  tick while the notch pulse runs OR the ZOOM level is held - the
+  cartridge's C-up feel, zoomInFovPersec = 1.0 every tick the button is
+  down. Witnessed in play: RB held in the scope 15 -> 7 degrees over 17
+  ticks, LB 7 -> 60, d-pad up 60 -> 10.8 (the x1.1 per tick of
+  camera_sniper_zoom_in); no weapon change while scoped; the same buttons
+  unscoped cycle 17 <-> 5 (sniper <-> the PP7). The wheel unchanged: one
+  notch up PREVIOUS, one down NEXT, in play (E-play.log).
+- THE ONE WHEEL SEMANTIC THAT MOVED (a custom binding only): a wheel row on
+  an action outside the two pairs (INTERACT, say) has no context now, so it
+  fires in either context and its capture steals both the play and the
+  scoped row of that notch (until round 6 it counted as "play" and ZOOM IN
+  kept the notch). The default wheel table is untouched.
+- THE STICK LABELS: two rows, never omitted - the stick's ANALOG role from
+  the STICK LAYOUT in force (MOVE / LOOK; LEGACY: MOVE/TURN and
+  LOOK/STRAFE; SOUTHPAW swaps) over "CLICK <action>" for the click's
+  binding(s), so a reader cannot take the click for the motion. The
+  owner's config is SOUTHPAW: LS reads "LOOK / CLICK SPRINT", RS "MOVE".
+- THE BUMPER LABELS: both rows, "NEXT WPN/ZOOM IN", and the two-row break
+  now prefers the slash between actions (NEXT WPN over ZOOM IN) to the last
+  space; a single-word or fixed-row label never breaks.
+- Tests: inputtest modern-pad 96 -> 124 / 0 (each direction -> its action
+  with no N64 bit in play and the bit in the watch, the held level, RB / LB
+  unscoped and scoped both directions, the stale rule, the d-pad's zoom
+  rows as plain levels, wheel scoped / unscoped / x2, a key on the cycle in
+  the scope, BUMPER's LB through the scope and RT there, the row contexts,
+  RB onto RELOAD stealing both rows, the pair briefs, the d-pad token and
+  labels, every preset re-seeding with a probe incl. SOUTHPAW scoped, the
+  resolver's two rows per bumper); main 218 -> 219 with the 22 B-096
+  failures byte-identical. settingstest, displaytest: see Gates.
+
+### B. The tilt (src/native/sl_watch_controller.c)
+
+SL_WC_MODERN_TILT = 20 degrees for both modern pads (round 5's middle
+preview), the N64 pad at the page's 45 as before; SL_PAD_TILT=<degrees>
+stays as the developer override. The face icons lean with the pad (the
+tilt in force, capped at 30) instead of a fixed 30; front parts unchanged.
+The probe measures the modern model under its tilt: the DualSense reads
+30.0 from the view axis (its stored normals lean 9.7 toward the top edge -
+the round-5 lighting detail, not the shape; 16.0 from the N64 pad's face).
+Frames at 4:3 960x720 (the owner's window, C-xbox-held-f2.png,
+D-ps-held-f10.png, P-ps-real), 960x720 16:9 (Q-xbox-960-169), 1280x720
+16:9 (F-xbox-169), 1920x540 32:9 (G-xbox-329, H-ps-329): no overlap
+between icons, text and the pad at any of them; the label lines
+(sl_pad_dbg: labels) list every row's y and rows. The 20-degree pad
+projects taller, and the columns still fit rows 0x40..0xBE at pitch 17
+(Xbox: 7 left rows, 8 right; DualSense 8 / 8).
+
+### C. The DualSense symbols (the package, tools/asset/darken_symbols.py)
+
+- FIRST FINDING, the one that mattered: the tile's ALPHA channel. Measured
+  on the mesh (scratch modern6/measure_cap.py): each face button is built
+  as a cap (its texels at alpha ~51) over the symbol face (alpha ~150-160)
+  over the opaque button; 268,847 texels (26%) of tile 1 are below alpha
+  128. The glTF declared no alphaMode (OPAQUE), so the caps drew solid and
+  the symbols were never visible - the darkened strokes compiled in
+  (5080 texels in the .slmodel) still drew as plain discs (B-ps-real).
+  dualsense_mat1 now declares alphaMode MASK, alphaCutoff 0.5 (the
+  renderer's alpha test); BLEND was tried and shows depth-order artefacts
+  (a black triangle button; ds-alpha-modes.png). The d-pad's arrows show
+  too. Nothing else on the page changed.
+- SECOND, the strokes: under MASK alone the author's 2..3-texel grey (159)
+  lines read faintly on the pad and not on the icons
+  (ds-mask-orig-vs-edited.png). tools/asset/darken_symbols.py dualsense:
+  inside each symbol's MEASURED box (4-connected components of grey texels
+  on the lilac, scratch modern6/measure_glyphs.py - cross (585,165)-
+  (634,215), circle (653,370)-(701,417), triangle (684,450)-(729,490),
+  square (11,563)-(63,616)) the stroke (luminance 120..205, channel spread
+  <= 16) is dilated 3 texels onto lighter texels only, at most 6 outside
+  the box, and painted RGB 56/56/64; 5080 texels, nothing else touched,
+  size and format unchanged. A first pass with detection in the margin
+  caught a flat-grey (205) area beside the square and left speckles inside
+  the stroke; detection is confined to the box now. Re-running is a no-op;
+  `--check` verifies the recorded SHA-1 (826BA223... -> 93951E60...).
+- RECORDED: metadata.json sightline_edits (both edits, regions, rule, both
+  SHA-1s), ATTRIBUTION.md, the image's sl_third_party.changes, the
+  material's sl_note, the controllers README; the .bin and the other two
+  tiles verbatim (the oracle note says which). test_gltf_import.py [38]
+  (13 checks): the record, the SHA-1, the size, the no-op re-run, each box
+  painted with no grey left, the painted colour outside the boxes exactly
+  the source's six texels, --check exit 0, the MASK on the material and
+  on the compiled model's materials with no BLEND.
+- RESULT on the page (real DualSense, P-ps-real; virtual, M-ps-mask):
+  triangle / square / circle / cross legible on the pad's ~12 px buttons
+  and on the 13 px icons at 960x720. The text fallback (CROSS / CIRCLE
+  beside the icons) was not needed.
+
+### D. Note
+
+The View / Create button (MARK) is reserved for texture-set switching when
+#47 ships - recorded under the #47 entry above.
+
+### Gates
+
+build.ps1 (normal, last); test.ps1; settingstest; displaytest; inputtest
+(mouse-invert 9 / 0 + 5 / 0, mouse-sens 30 / 0, modern-pad 124 / 0, main
+219 with the 22 pre-existing B-096 failures byte-identical);
+test_gltf_import.py 245 / 0; the __sgi proof: nothing under src/game
+changed (`git diff --stat -- src/game` empty), options.c / options.h
+untouched. `make trace-verify` not run: no game logic, physics, AI or
+entity state touched.
+
+### Not exercised / limitations
+
+- The owner's real pads' buttons were not moved by anyone; the held and
+  in-play witnesses are the scripted virtual pads' (SDL classifies them
+  XBOX / PLAYSTATION); the real DualSense drew the page frames (A / B / P).
+- On the page the d-pad's left / right cannot be held for a frame: in the
+  watch they are the page-change keys (options.c:825), so the held witness
+  on the page is up / down; all four are witnessed in play.
+- Y unbound in every preset (two slots per action) - an owner call.
+- The Xbox bumper and trigger icons still carry no legend (that package's
+  texture has none).
+
+## 2026-09-20 - #56 owner-accepted and CLOSED ("This is accepted."); #52 PC
+## DISPLAY MODES: WINDOW MODE (windowed / borderless / fullscreen), RESOLUTION
+## and VSYNC, persisted, live, in both editors (D-015), the default = the
+## accepted launch bit for bit. #52 stays OPEN pending the owner's replay;
+## #64 stays PARKED; #49 (the ZIP release) is next AFTER the display
+## acceptance, and the v0.2.0 FEATURE FREEZE follows that acceptance - no
+## further feature work is planned or started before it.
+
+### Issue admin
+
+- #56 CLOSED on the owner's acceptance ("This is accepted."): CROUCH MODE
+  / SPRINT MODE HOLD or TOGGLE, the default identity, the action-layer
+  latches, the menu / watch isolation, the stage / process resets, SPRINT
+  ENABLED off clearing the sprint latch, the keyboard / controller / remap
+  composition, both editors, the persistence.
+- #52 REUSED (filed 2026-09-19 with the roadmap: "Display: resolution,
+  window mode, fullscreen, VSync and frame pacing"). FRAME CAP / frame
+  pacing is OUT of this round (said on the issue): the render loop keeps
+  its cadence and the recon the issue asks for stays open there.
+- #51 / #63 stay CLOSED; #64 and #49 stay OPEN / PARKED. Not owner-accepted;
+  the replay steps are on the issue.
+
+### Recon (file:line, at 230b4b52)
+
+- The window seam: src/gfx/sl_gfx_sdl.c sdl_init (:140-231):
+  `SDL_CreateWindow(title, px, py, w, h, SDL_WINDOW_OPENGL |
+  SDL_WINDOW_SHOWN)` at :198 - not resizable, centred unless SL_WINDOW_POS
+  pins it (:190-197, with SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN); the
+  GL context :205 (the B-125 24-bit depth + 8-bit stencil request);
+  `SDL_GL_SetSwapInterval(0)` :212 ("replay sets the pace, not vsync").
+  The size: sl_gfx.c:31 compiled 640x480, SL_WINDOW_SIZE (:37) overriding,
+  play.ps1:172 always passing 960x720 (`-Size`). SL_WINDOW=1 selects the
+  backend (sl_gfx.c:22).
+- The store is ACTIVE before the window exists: sl_main.c:1679
+  sl_shim_configure -> sl_ultra_shim.c:2572 sl_eeprom_init_rw -> :1997
+  sl_settings_init, then :1684 sl_gfx_init. So a persisted mode can decide
+  the creation.
+- The aspect's window rule (#45): sdl_apply_aspect (:280-321) at every
+  sdl_begin: windowed -> width = height x aspect (sl_display_window_width,
+  sl_display.c:234), re-centred; a fullscreen / fullscreen-desktop /
+  maximised / minimised window is left alone (:288-296) and the fit rule
+  applies.
+- The authoritative size: sdl_begin :323-340 `SDL_GetWindowSize ->
+  glViewport(0, 0, w, h)`; the renderer reads it back at its frame reset
+  (sl_gfx_dl.c:14848 `glGetIntegerv(GL_VIEWPORT, g_window_vp)`) and derives
+  the content / safe rects and k through the ONE helper (rects_update
+  :9112 -> sl_display_rects, sl_display.c:265; the fit sl_display_fit
+  :241); bars_clear :9146; the `sl_display:` heartbeat :15295.
+- The pointer seams read the same two facts: the front end
+  sl_menu_pointer.c:375 sl_menu_pointer_uv (window px -> the safe rect via
+  sl_gfx_present_rect :9295 -> logical 440x330 at :455-469), the watch
+  sl_watch_pointer.c:1163 through the same call; the input layer reads
+  SDL_GetWindowSize every poll for the confinement rect (sl_input.c:2036,
+  :2085-2092, re-applied on any size change) and the watch's integrated
+  pointer clamp (:1035). The gameplay mouse look (read_mouse :1096-1225)
+  reads NO window size: `dx * sens / SL_STICK_MAX` and the raw counts -
+  tree-wide `grep -n "g_ptr_w\|g_ptr_h\|ww.*wh" src/platform/sl_input.c`
+  finds the pointer publish, the confinement rect and the watch clamp only.
+- Events: sdl_poll :737-833 handles QUIT, Escape, Tab, buttons, wheel,
+  controllers, FOCUS_LOST / GAINED; no SIZE_CHANGED (nothing needed one: the
+  size is read at the frame reset).
+- Pacing: sl_ultra_shim.c sl_pace_frame :555-609 sleeps to SL_FPS (60) with
+  the capped VI catch-up (:546); SL_PHASE=1 prints per-phase fps / sleep
+  (:831). No swap-interval reads anywhere (tree-wide grep
+  `SDL_GL_SetSwapInterval` in src/: sl_gfx_sdl.c:212 only).
+- The editors: the front end's DISPLAY tab (sl_front_options.c:515: ASPECT
+  RATIO, FIELD OF VIEW), the one-value-cell row idiom (SR_BLAYOUT
+  :1043-1056), the two-value row (:927), the short-value columns (:444-452);
+  the watch's DISPLAY child (options.c:1083: aspect ratio, field of view,
+  back), the NAMED row idiom (:4470), INFO_PAD (:4492), the pointer's cells
+  by KIND (sl_watch_pointer.c:536-651).
+- SDL 2.32.10, the windows driver (sdlprobe.exe, the scratch probe): the
+  owner's display 0 "LC49G95T" desktop 5120x1440@240, 95 modes over 15
+  sizes 640x480..5120x1440; display 1 "ARZOPA" a portrait 720x1280@60.
+  `SDL_GetClosestDisplayMode(1920x1080, refresh 0)` answers @240 - the
+  HIGHEST refresh, so the refresh rate is passed explicitly (the desktop's).
+
+### The oracle (measured BEFORE the first edit, the 230b4b52 exe)
+
+- The owner-shaped config (aspect_ratio=0, fov_vertical=5872, sprint on,
+  both modes TOGGLE, bind.aim.kbm.2=none - the owner's config.ini as it is
+  today, copied to scratch), play.ps1's launch (SL_WINDOW=1,
+  SL_WINDOW_SIZE=960x720): client 960x720, window rect 966x749 at
+  (2077,334) on the 5120x1440 primary, style 0x16ca0000 (WS_CAPTION |
+  WS_SYSMENU | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_VISIBLE; no
+  WS_THICKFRAME), foreground, `sightline gfx: SDL window 960x720`,
+  `aspect 4:3 -> window 960x720 already fits`, `mouse confined to 960x720`,
+  `sl_display: aspect=4:3 k=1.000 window=960x720 content=0,0 960x720
+  safe=0,0 960x720 logical=440x330 ... fov=58.72(h16=90)`.
+- The same at 16:9: client 1280x720 (`aspect 16:9 -> window 960x720 ->
+  1280x720`), rect 1286x749 at (1917,334), `k=1.333 ... safe=160,0
+  960x720`.
+- Swap interval 0 (sl_gfx_sdl.c:212; read back as `swap=0` by the new
+  build's init line, below).
+
+### What shipped (sightline/qol-controls)
+
+- SETTINGS (src/platform/sl_settings.h/.c): six rows - `window_mode` 0
+  WINDOWED / 1 BORDERLESS / 2 FULLSCREEN (default 0), `window_width` /
+  `window_height` (the windowed client pair, 0 / 0 = not chosen = the
+  launcher's window), `fullscreen_width` / `fullscreen_height` (the
+  exclusive mode, 0 / 0 = the desktop's), `vsync` 0 / 1; 0..16384 on the
+  sizes, missing / malformed / out-of-range -> the defaults, write-on-change,
+  no version bump, a pre-#52 file read as the defaults and not rewritten.
+- THE HOST LAYER (src/platform/sl_window.h/.c, new, host-clean, in
+  displaytest): the typed reads; the lists - the fullscreen list = the
+  display's modes deduped by w x h, ascending by width then height,
+  640x480 and up, at most 32 (the largest kept); the windowed list = the
+  distinct HEIGHTS of those modes that fit the desktop at the aspect's
+  width (height <= desktop, height x aspect <= desktop width), shown as
+  (height x aspect) x height, following the aspect; the step (by height
+  then width, an off-list size stepping to its neighbours, the ends
+  clamped); the fallbacks (fullscreen: the stored pair when offered, else
+  the desktop mode; windowed: the stored height when the windowed list
+  offers it, else the launcher's height, the width always the aspect's);
+  the REQUEST seam (the editors file mode / size / vsync requests; the
+  backend takes them once per frame), the published lists and APPLIED
+  state the editors print, the commit (the mode; the pair SDL gave when a
+  size was requested - window_* in WINDOWED, fullscreen_* in FULLSCREEN,
+  nothing in BORDERLESS; vsync when requested; a fallback never written).
+- THE BACKEND (src/gfx/sl_gfx_sdl.c): sdl_apply_display replaces
+  sdl_apply_aspect (the #45 width rule kept verbatim as a case of it):
+  once per frame at the frame reset - a request, or an aspect change, or
+  init - it remembers the working state, transitions (WINDOWED:
+  SDL_SetWindowFullscreen(0) + SDL_SetWindowSize to the chosen height at
+  the aspect's width, re-centred unless pinned; BORDERLESS:
+  SDL_WINDOW_FULLSCREEN_DESKTOP; FULLSCREEN: SDL_GetClosestDisplayMode at
+  the desktop's refresh -> SDL_SetWindowDisplayMode ->
+  SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN), through a WINDOWED HOP
+  when already exclusive - measured necessary, below), reads back (the
+  flags, SDL_GetWindowSize, SDL_GetWindowDisplayMode, the display bounds,
+  AND SDL_GL_GetDrawableSize), commits only a match, else restores the
+  working state (and on a second failure the launcher's windowed size),
+  then publishes the state and prints `sightline gfx: display state (...)`.
+  VSYNC: SDL_GL_SetSwapInterval on the live context, SDL_GL_GetSwapInterval
+  read back, a refusal restores the previous interval and writes nothing.
+  CREATION: a chosen windowed height creates the window at that size (the
+  SL_WINDOW_SIZE stand-aside said on stderr); a fullscreen mode creates it
+  HIDDEN, applies through the same path, then shows it - no flashing
+  through modes; nothing chosen = the pre-#52 flags and size exactly. The
+  display's lists are published per display index; a SIZE_CHANGED event
+  is logged as a witness only. No level reload, no context recreation, no
+  second size source: glViewport <- SDL_GetWindowSize at sdl_begin as
+  before, the renderer's frame reset reads it, the #45 fit derives the
+  rects, the input layer re-reads it every poll.
+- The front end's DISPLAY tab (src/native/sl_front_options.c): WINDOW MODE
+  (the one-value-cell row, a press advances and wraps), RESOLUTION
+  (`-` <WxH> `+`, the size at the short-value second column, informational
+  and dimmed with no cells in BORDERLESS - the CONTROLLER row's idiom),
+  VSYNC (OFF / ON), then ASPECT RATIO and FIELD OF VIEW as accepted; five
+  rows, BACK in its accepted slot. The rows print the APPLIED state.
+- The watch's SIGHTLINE -> DISPLAY child (src/game/options.c / options.h,
+  native arm; sl_watch_pointer.c a comment): window mode and resolution as
+  NAMED rows (the BUTTON LAYOUT idiom: the latched LEFT / RIGHT step, a
+  click on the name steps up), vsync as a toggle row (off / on), then
+  aspect ratio, field of view, back - six rows with one bar. RESOLUTION
+  reports itself SL_WROW_INFO_RES (inert, dimmed) while the size is not
+  the player's (BORDERLESS), so the cursor, the pointer and the draw follow
+  one kind. Same store, same request seam, no copies.
+- A dev-witness change (src/platform/sl_input.c): an SL_POINTER_PROBE holds
+  its position until the next probe fires (it held one frame), so a second
+  probe on a never-focused window is a MOVE rather than a fresh baseline -
+  the pointer controls below needed it; never set in a player session.
+
+### Decisions
+
+- Resolution is per MODE: `window_*` the windowed client, `fullscreen_*`
+  the exclusive mode, BORDERLESS none (the desktop owns it). Leaving a
+  fullscreen mode returns to the windowed size the player left (the
+  launcher's until one is chosen); the two pairs never confuse a mode
+  with a window.
+- In WINDOWED the height is the authority and the width is the aspect's
+  (#45's contract, stated in the row: the pair shown is the window that
+  results at the current aspect); a stored width a later aspect change
+  left stale is stood aside, never rewritten. The launcher's
+  SL_WINDOW_SIZE names the fallback only once a height is chosen, said on
+  stderr (the SL_MOUSE_INVERT lesson).
+- FULLSCREEN is real exclusive fullscreen at the desktop's refresh rate
+  (never SDL's refresh-0 pick, which is the panel's highest). A MODE CHANGE
+  WHILE ALREADY FULLSCREEN GOES THROUGH WINDOWED: measured 2026-09-20 on
+  an activated, on-screen window as much as the parked one -
+  SDL_SetWindowDisplayMode on an already-exclusive window switches the
+  panel's mode and updates SDL's own size (client=2560x1440) but the HWND
+  keeps its client rectangle (GetClientRect 5120x1440, the drawable with
+  it) - the drawable read-back caught it and restored; leaving and
+  re-entering exclusive fullscreen at the new mode (the init path) sizes
+  the window as asked (E1 below).
+- A fallback is logged once and NEVER written back: the file keeps saying
+  what the player chose; the editors print the applied truth.
+- Not resizable by hand (as before); window position not persisted (out of
+  scope); the B-124 offscreen arm refuses display changes (its
+  renderbuffers are sized once); a maximised / minimised window is not
+  resized by the aspect (as before).
+- No frame cap; the pacer's contract is untouched (measured below).
+
+### Evidence (all on scratch configs and a scratch save; the owner's
+### config.ini and saves never opened for writing)
+
+- DEFAULT IDENTITY (A): the new build on the owner-shaped config prints
+  the oracle's lines byte for byte - the 8 `sl_display:` / confinement /
+  aspect lines Compare-Object 0 differences, the external probe the same
+  client 960x720, rect 966x749 at (2077,334), style 0x16ca0000; the config
+  file's hash unchanged after the run; the init line `display state
+  (init): mode=WINDOWED flags=0x606 client=960x720 drawable=960x720
+  display=0 desktop=5120x1440 swap=0`. The 16:9 launch the same (client
+  1280x720, rect 1286x749 at (1917,334), the 5 `sl_display:` lines
+  identical) - the one visible difference: the aspect's width is applied
+  at creation rather than at the first frame (the end state identical).
+- B WINDOWED at another size (F7, the front end's RESOLUTION `+`): the
+  window 960x720 -> 1024x768 (`applied ... client=1024x768
+  drawable=1024x768`, WINFO client 1024x768, `sl_display: window=1024x768
+  content=0,0 1024x768 safe=0,0 1024x768`), `+` again -> 1067x800, `-` ->
+  1024x768; ASPECT 16:9 on that window -> 1365x768 (`content=0,0 1365x768
+  safe=170,0 1024x768 k=1.333`: 16:9 FILLS the window), 4:3 back ->
+  1024x768. Written: window_width=1024 window_height=768.
+- C BORDERLESS (F2): `applied: mode=BORDERLESS flags=0x1107
+  client=5120x1440 drawable=5120x1440`, WINFO client 5120x1440 at (0,0),
+  style 0x96020000 (WS_POPUP), `sl_display: window=5120x1440
+  content=1600,0 1920x1440 safe=1600,0 1920x1440 k=1.000` - 4:3
+  PILLARBOXED in the 32:9 desktop (F-borderless.png: black bars, the
+  RESOLUTION row dimmed reading 5120x1440 with no cells). At 16:9 (B169):
+  `content=1280,0 2560x1440 safe=1600,0 1920x1440 k=1.333`; at 32:9
+  (B329): `content=0,0 5120x1440 safe=1600,0 1920x1440 k=2.667` - 32:9
+  FILLS the 32:9 panel, the 2D layer at its 4:3 size centred.
+- D back to WINDOWED (F6, after fullscreen): `applied: mode=WINDOWED
+  flags=0x506 client=960x720`, WINFO 960x720 at the parked position - the
+  window the player left; E3 on-screen: 960x720 re-centred at (2077,334).
+- E FULLSCREEN (E, an on-screen activated window launched from
+  window_mode=2): init `mode=FULLSCREEN flags=0x207 client=5120x1440
+  drawable=5120x1440 fsmode=5120x1440@240`; RESOLUTION `-` -> `applied:
+  mode=FULLSCREEN flags=0x707 client=2560x1440 drawable=2560x1440
+  fsmode=2560x1440@240`, WINFO client 2560x1440, monitor (0,0)-(2560,1440)
+  - a REAL mode switch - `sl_display: window=2560x1440 content=320,0
+  1920x1440 safe=320,0 1920x1440` (4:3 pillarboxed in 16:9,
+  E-fullscreen-2560.png); `+` -> 5120x1440 (monitor rect 5120x1440 again);
+  WINDOWED -> 960x720 centred. Written: fullscreen_width=5120
+  fullscreen_height=1440 (the `+`), window_mode=0. The pinned evidence
+  window does the same through the hop (F5: `client=2560x1440
+  drawable=2560x1440 fsmode=2560x1440@240`, monitor (0,0)-(2560,1440)). The
+  desktop returned to 5120x1440 after every run (the next run's probe).
+  The ROLLBACK PATH, witnessed before the hop existed (F5 of the earlier
+  run): `drawable 5120x1440 is not the 2560x1440 asked for` -> `FULLSCREEN
+  2560x1440 NOT established (SDL reports mode=FULLSCREEN) - restoring
+  FULLSCREEN 5120x1440` -> `the request was not committed (config.ini
+  unchanged)` -> `display state (restored): ... client=5120x1440
+  drawable=5120x1440 fsmode=5120x1440@240`, the desktop back at 5120.
+- F VSYNC: OFF -> ON `vsync ON (swap interval 1 read back)`, `swap=1` on
+  the next state line; ON -> OFF `swap interval 0 read back`; in WINDOWED,
+  BORDERLESS and FULLSCREEN alike. The pacing contract (SL_PHASE=1, the
+  front end on-screen, 1500 frames): NINTENDO 501 frames in 8.343 s at
+  60.1 fps with vsync on vs 8.345 s at 60.0 off, catchup 0 both,
+  clk{1:501} both, D sleep 6.929 s vs 6.994 s - the sim cadence unchanged
+  (a 240 Hz panel: the swap waits at most 4.2 ms inside the pacer's
+  budget).
+- POINTER, the front end (F, SL_POINTER_PROBE baseline / move / click at
+  the same logical spot - the VSYNC row's label, logical (60,150) - mapped
+  into each mode's safe rect): WINDOWED 960x720 window (131,327) ->
+  `pointer (0.136,0.454) -> cursor (60.0,149.9)` -> `options: tab=2 row=2
+  col=-1` -> vsync ON; BORDERLESS 5120x1440 window (1862,655) -> cursor
+  (60.0,150.1) -> row 2 -> OFF; FULLSCREEN 5120x1440 (1862,655) -> row 2 ->
+  ON; WINDOWED 1024x768 (140,349) -> cursor (60.2,150.0) -> row 2 -> OFF.
+- POINTER, the watch (W, Dam, the watch's DISPLAY child open throughout):
+  WINDOWED window (765,234) = fb (255,78) -> `CLICK ptr=(255,78) hit=value
+  row=2 value=1` -> `toggle kind=21 <- 1` -> vsync ON; then WINDOW MODE
+  latched RIGHT with the watch OPEN -> `display step kind=18 dir=1` ->
+  `applied: mode=BORDERLESS client=5120x1440` (W-watch-display-borderless.png:
+  the face pillarboxed, the RESOLUTION row dimmed 5120x1440); BORDERLESS
+  window (2830,468) = fb (205,78) -> `CLICK ptr=(205,78) hit=value row=2
+  value=0` -> OFF; LEFT -> `applied: mode=WINDOWED client=960x720`;
+  WINDOWED (765,234) -> ON again; RESOLUTION RIGHT -> 1024x768, LEFT ->
+  960x720; BACK one level -> SIGHTLINE, Escape closes the watch; no crash,
+  no level restart (the same Dam session throughout, `cameramode=0`
+  before and after), the hit rects the page's own. Written: window 960x720,
+  vsync=1.
+- The 2D layer in play: the HUD's ammo glyph sits at the same safe-relative
+  spot in WINDOWED 960x720 (0.8146, 0.8819) and BORDERLESS 5120x1440
+  (0.8149, 0.8827) - the same 2D ortho the gunsight and the crosshair use.
+- RELATIVE MOUSE: by construction - read_mouse reads no window size (the
+  grep above; `dx * sens / SL_STICK_MAX` and the raw counts), so the same
+  counts consume to the same look delta in every mode; the inputtest
+  mouse-sens case (30 / 0) pins the count -> degrees mapping.
+- PERSISTENCE / CROSS-UI: R - a relaunch on the config the WATCH wrote
+  (window 960x720, vsync 1): `config.ini window_height=720 chosen -> the
+  window is created 960x720 (the aspect's width); SL_WINDOW_SIZE=960x720
+  stands aside as the fallback only`, `vsync ON (swap interval 1 read
+  back)`, the front end's tab `wmode=0(WINDOWED) res=960x720(editable)
+  vsync=1` (R-front-display.png), the file's hash unchanged by the
+  relaunch. R2 - a relaunch on the config the FRONT END wrote (1024x768,
+  fullscreen 5120x1440, vsync 1): created 1024x768, swap=1, the watch's
+  DISPLAY child shows WINDOWED / 1024x768 / VSYNC ON lit
+  (R2-watch-display.png), the file unchanged.
+- MALFORMED / UNSUPPORTED (four launches, each starting and reaching the
+  front end, none rewriting its file): M1 window_mode=2 fullscreen
+  9999x7777 -> `fullscreen 9999x7777 is not a mode display 0 offers -> the
+  desktop's 5120x1440 (not rewritten)`, exclusive 5120x1440, vsync on read
+  back; M2 windowed 9999x7777 -> `window_height=7777 is not a height
+  display 0 offers ... -> the launcher's 960x720 (not rewritten)`, client
+  960x720; M3 window_mode=fullscreen / width=abc / height= / vsync=on ->
+  WINDOWED 960x720, swap 0; M4 BORDERLESS with a windowed pair ->
+  borderless, the pair kept for the return.
+- CONTROL-SETTINGS NEGATIVES: every `sightline options:` witness line
+  across every mode change reads `look=0 aim=0 minv=0 sprint=1 ... psens=100
+  pdz=15 mdz=15 smode=1 cmode=1` (the owner's shape) unchanged; the files
+  the runs wrote (F.ini, W.ini) differ from the owner-shaped file in the
+  six display lines only (Compare-Object of the non-display lines: 0),
+  bind.aim.kbm.2=none kept; aspect_ratio never rewritten by the display
+  code (the F8 aspect steps wrote it through the ASPECT row as before).
+- TESTS: displaytest 149 / 0 (87 + the 62 sl_window checks: names, the
+  store's typed reads, the fullscreen list from a 28-mode table with
+  duplicates / undersized / portrait entries -> 16 sizes ascending, the
+  32-entry bound keeping the largest, the windowed lists at 5120x1440 and
+  1920x1080 at 4:3 / 16:9 / 32:9, the step from on- and off-list sizes,
+  the fallbacks 9999x7777 / 960x720 / nothing chosen / 7777 tall, the
+  request / take / commit seam and the editors' steps, BORDERLESS
+  informational, the size text); settingstest 156 / 0 (the 10 new: defaults,
+  write-on-change beside the #56 rows, refused values, reload, malformed
+  and out-of-range, the pre-#52 owner-shaped file read as the defaults and
+  not rewritten, the next write adding the six lines); inputtest the seven
+  cases 9 / 5 / 30 / 124 / 73 / 73 / 127 all 0 and the main run 219 with
+  the 22 B-096 failures, the 30 FAIL lines byte-identical to the previous
+  round's; test.ps1 facility 300 PASS; build.ps1 normal, LAST, no warnings.
+- __sgi: options.c / options.h preprocess byte-identically to 230b4b52
+  (md5 c5b3b9864b82 / 89af0a83a899, the same hashes as the #51 and #56
+  rounds), non-vacuous control, native arms +89 / +11 lines, zero #52
+  tokens (sl_window_*, SL_WROW_VALUE_WMODE / _RES, SL_WROW_INFO_RES,
+  SL_WROW_TOGGLE_VSYNC, "window mode", "resolution", "vsync", #52).
+
+### Not exercised / limitations
+
+- The gunsight itself was not photographed: aiming needs the pointer
+  capture, the capture needs the window's focus, and the parked evidence
+  window never has it (the desktop was in use - idle 0 ms - so no
+  foreground was taken). The 2D layer's placement is witnessed through
+  the HUD instead; the gunsight is a texrect through the same ortho (#45).
+- The relative-mouse control is by construction plus the harness, not an
+  in-game injection: raw input cannot be posted.
+- The DISPLAY tab and the watch child were driven by the keyboard and the
+  probe; the owner's own pointer and pad are the replay.
+- The pinned evidence window's exclusive mode switch worked only through
+  the hop; the on-screen activated window was measured both ways (E).
+- A display change while the game is minimised, a desktop-resolution
+  change under the game, and a multi-monitor drag re-read the display at
+  the next apply but were not exercised.
+- `make trace-verify` not run: no game logic, physics, AI or entity state
+  touched (src/platform, src/gfx, src/native, and native-arm rows in
+  options.c / options.h).
+
+## 2026-09-20 - #52 follow-up: the front end's RESOLUTION row opens a
+## DROPDOWN (owner, on the display round: "Instead of clicking through each
+## of the resolutions, can it be a drop down?"). The list policy, the request
+## seam, the backend transaction, the other rows and the watch's row are
+## untouched. #52 stays OPEN pending the owner's replay.
+
+### Recon (file:line, at fb31b3b5)
+
+- The row: `src/native/sl_front_options.c` set_activate SR_RES (:705-712 -
+  `-` col 0 stepped down, everything else stepped up through
+  sl_window_size_step), the hit test's three cells (:912-922, `-` at
+  SET_X_VAL0, the size at SET_X_VAL3_1, `+` at SET_X_VAL3_3, no cells while
+  informational), the draw (:1200-1225). Every row is a view: the seam is
+  `src/platform/sl_window.c` sl_window_size_step (:335-347), which finds the
+  neighbour in the current mode's list and files sl_window_request_size
+  (:247-253); the SDL backend takes the request at its frame reset
+  (`src/gfx/sl_gfx_sdl.c` sdl_apply_display), reads back and commits or
+  restores (D-015).
+- The lists are public (`sl_window.h` :129-130 sl_window_list_fullscreen /
+  sl_window_list_windowed_now, :99 sl_window_list_find): the same ones the
+  step walks, bounded at 32, 11 windowed heights and 15 fullscreen sizes on
+  the owner's LC49G95T.
+- Activation and the pointer: one cursor (front.c:288-289), moved by
+  frontUpdateControlStickPosition (front.c:1243; full stick = 5.75 units a
+  frame, clamped 20 units inside the 440x330 page at :1319-1341) with the
+  native pointer applied at its head (`src/native/sl_menu_pointer.c`
+  sl_menu_pointer_apply :398-474: writes the cursor only when the motion
+  serial advances; a click is one A edge on a screen
+  sl_game_pointer_menu_active lists, :204-230). Enter is A, Escape is B in
+  the front end (`src/platform/sl_input.c` :956, :2732-2739), W/A/S/D and
+  the wheel drive the stick.
+- Existing list idioms, docs first: `gedocs.py topic front-end-menus`
+  routes to the mode-select constructor / interface notes and
+  return positions.txt - row geometry and cursor placement, no list widget.
+  In the tree: the cheat menu is the front end's dense list (front.c:8131-
+  8153, rows 0x14 apart, boxed when the cursor is on them; no scrolling,
+  two columns of 12), the bindings editor is 14 rows at a 16-unit pitch
+  "no scrolling" (sl_front_bindings.c:25-29), the multiplayer stage select
+  is a grid (front.c:6525-6561). Absence, cited: `grep -rn scroll
+  src/game/front.c` = 18 lines, all mp_char_select_scroll_offset (the
+  horizontal portrait carousel, :242, :5436-5555); `grep -rni scroll
+  src/native/` = the bindings editor's "no scrolling" and the WATCH's
+  bindings page (sl_watch_bindings.c wb_scroll_to_row, a ring-face idiom);
+  `grep -rniE "dropdown|listbox|combobox" src/` = nothing before this
+  round. So nothing was reusable beyond the cheat menu's pitch and box.
+
+### What shipped (one file: src/native/sl_front_options.c; no src/game,
+### src/platform or src/gfx edit)
+
+- OPEN: a press (A / Z / START, Enter, a click) on the RESOLUTION row's
+  LABEL or its VALUE cell opens the current mode's list under the row.
+  `-` and `+` KEPT and still step (they cost nothing: the same two lines as
+  before); the label, which used to step up, opens instead. Nothing opens
+  while the row is informational (BORDERLESS: dimmed, no cells, as before).
+- THE LIST: the entries in the value column the size already sits in, the
+  cheat menu's 0x14 pitch, one backdrop box in the highlight shade 0x32
+  (the slider track's stacking idiom), the applied size in the ON colour,
+  the entry under the cursor boxed. The rows under it (VSYNC, ASPECT
+  RATIO, FIELD OF VIEW, BACK) are NOT DRAWN while it is open - nothing
+  shows through, nothing under it can be hit. The row itself draws its
+  value boxed (the open control) and its `-` / `+` dimmed.
+- NAVIGATION: the one front-end cursor, hit-tested per entry band on
+  cursor_v_pos and the column on cursor_h_pos - so the stick, W/S, the
+  wheel and the pointer all move the highlight the same way. Opening
+  places the cursor on the current entry (every screen's entry placement;
+  a still pointer leaves it, its first motion takes it back). CONFIRM on
+  an entry PICKS; confirm with the cursor left or right of the column
+  CANCELS (a click outside); B / Escape CANCELS. Closing (either way) puts
+  the cursor back on the row's value cell, so a keyboard / pad player's
+  next confirm is on the row and never on whatever lay under the list.
+- INPUT CAPTURE: while open, sl_interface_menu_settings runs the list's
+  own frame and returns - the strip, the other rows, BACK and the
+  PREVIOUS tab are not hit-tested and B does not leave the page (witnessed:
+  no `options: tab=` line for any other row across every open / pick /
+  cancel in the W and M logs; the only B while open produced `dropdown
+  cancel (B)`, never tab_prev_selected).
+- SCROLL: a window of DD_VISIBLE = 8 slots (the last box ends at y 286,
+  inside the cursor's 310 reach); the cursor is confined to the window's
+  band after each move (the same clamp the page applies at its edge), a
+  push past the first / last entry scrolls one, at most every DD_COOL = 4
+  frames (a 40 ms tap scrolls one; a held key walks ~15 entries a second;
+  the wheel and a pointer dragged past the edge scroll the same way).
+  Opening centres the window on the current size. A dimmed `-` at the
+  first slot / `+` at the last says more lies above / below - the row's own
+  glyphs in the "not available" shade, no new widget.
+- THE PICK files sl_window_request_size(w, h) with the entry's pair - the
+  very call sl_window_size_step makes (sl_window.c:346) - so the take /
+  read-back / commit-or-restore transaction and the write-on-change are
+  the backend's, byte for byte as the display round left them
+  (`git diff --stat -- src/platform src/gfx src/game` empty).
+- Witnesses (SL_INPUT_DEBUG only): `options: dropdown open n= cur= top=
+  mode=`, `front: dropdown hover= top= n= size= cursor=` (on change),
+  `options: dropdown pick i= size= req=`, `options: dropdown cancel (B |
+  confirm outside the column)`.
+
+### Evidence (scratch config / save under the session scratchpad
+### `dropdown\`; the owner's config.ini never opened; all windows parked
+### off-screen but the two-mode excursion, which ended WINDOWED)
+
+- W (WINDOWED 960x720, 4:3, `SL_POINTER_PROBE` in window pixels):
+  `dropdown open n=11 cur=2 top=0 mode=WINDOWED`, hover=2 (960x720) at
+  cursor (250.0,178.0) - `shots\W-open.png`; probe f3601 (545,388) =
+  the baseline on slot 2, f3721 (545,432) = the move -> `dropdown hover=3
+  top=0 n=11 size=1024x768 cursor=(249.8,198.0)` - `shots\W-hover.png`;
+  f3841 (545,432) + click -> `dropdown pick i=3 size=1024x768 req=2` ->
+  `settings: wrote` -> `display state (applied): mode=WINDOWED flags=0x106
+  client=1024x768 drawable=1024x768`, the external client 1024x768, the
+  row printing 1024x768 with the page back - `shots\W-after.png`.
+- Keyboard: Enter on the value cell -> `open n=11 cur=3`, S -> hover=4
+  (1067x800), S -> hover=5 (1152x864), Enter -> `pick i=5 size=1152x864
+  req=2` -> `applied ... client=1152x864`, external client 1152x864.
+- Cancel: Enter -> `open n=11 cur=5 top=1` (the window centred: the `-`
+  mark, `shots\W-open-scrolled-top1.png`), Escape -> `dropdown cancel
+  (B)`, no request, no `display state` line, the client still 1152x864
+  and the config's SHA256 e4e74acc...38c4 (625 bytes) identical before
+  and after.
+- Scrolled: S past the last slot -> `hover=10 top=3 size=1920x1440`
+  (entries 3..10, the `-` mark, no `+`) - `shots\W-scrolled-end.png`; W
+  past the first slot, 12 taps -> `hover=0 top=0 size=640x480` (the `+`
+  mark, no `-`) - `shots\W-scrolled-start.png`.
+- Click outside: two A taps -> `hover=-1 ... cursor=(221.3,218.0)`, Enter
+  -> `dropdown cancel (confirm outside the column)`.
+- A169 (WINDOWED 1280x720 at 16:9, the safe rect 960x720 at x 160, the
+  probes at x 705 = 160 + 545): `open n=11 cur=2` (1280x720), f3721 ->
+  `hover=3 ... size=1365x768 cursor=(249.8,198.0)` - `shots\A169-hover.png`;
+  f3841 + click -> `pick i=3 size=1365x768` -> `applied ... client=1365x768`,
+  `sl_display: aspect=16:9 ... window=1365x768 ... safe=170,0 1024x768` -
+  `shots\A169-after.png`. The same logical spot hits the same entry at
+  both aspects.
+- M (the excursion, ~10 s on the desktop, the desktop's own 5120x1440@240
+  for FULLSCREEN so no panel mode switch): BORDERLESS -> Enter on the row
+  -> `options: tab=2 row=1 col=-1 ... res=5120x1440(info) req=0` and NO
+  `dropdown open` - `shots\M-borderless-info.png` (row dimmed, no cells);
+  FULLSCREEN -> Enter on the value -> `open n=15 cur=14 top=7
+  mode=FULLSCREEN`, hover=14 (5120x1440), the `-` mark - `shots\M-
+  fullscreen-list.png`; Escape -> `cancel (B)`; WINDOWED -> `applied ...
+  client=960x720`, the file back at window_mode=0 with no size chosen.
+
+### Gates
+
+build.ps1 (normal, last, 0 warnings); test.ps1 facility 300 PASS;
+settingstest 156 / 0; displaytest 149 / 0 + sl_window 62 / 0; inputtest
+the seven cases 9 / 5 / 30 / 124 / 73 / 73 / 127 all 0 and the main run
+219 with the 22 B-096 failures (byte-identical in kind); the __sgi proof:
+nothing under src/game changed (`git diff --stat -- src/game` empty), so
+no options.c / options.h expansion to compare. `make trace-verify` not
+run: no game logic, physics, AI or entity state touched.
+
+### Not exercised / limitations
+
+- The pad's stick walks the list by construction (it is the same cursor
+  the keyboard's stick moves); the wheel likewise (stick pulses in a menu).
+  Neither was injected.
+- A real mouse's drag past the list's edge scrolls one entry per pointer
+  motion after the cooldown; only the probe's discrete moves were driven.
+- The watch's RESOLUTION row is unchanged (latch + LEFT / RIGHT); the owner
+  can ask for the list there too - the ring face would need its own idiom.
+
+## 2026-09-21 - ACCEPTANCE REPAIR before the v0.2.0 release: five
+## owner-observed defects on the candidate (the widescreen cursor, the watch
+## cursor, no QUIT GAME, the gunbarrel composition, the missing north face
+## button) plus the owner's bumper decision taken mid-round. v0.2.0 stays
+## FEATURE-FROZEN - this round is repair only; #49 (the ZIP release) was NOT
+## started and is still next AFTER the owner accepts these. Nothing here is
+## owner-accepted.
+
+Branch `sightline/qol-controls`, from e28232e1. One forward commit per
+repaired defect, in order, each with its own gates:
+
+| | commit | issue |
+|---|---|---|
+| pointer (A + B) | c203b508 | #65 (filed this round) |
+| QUIT GAME (C) | 9b554aec | #66 (filed this round) |
+| gunbarrel (D) | a86476b3 | #67 (filed this round) - measured, NOT reproduced |
+| north face button (E) | a55f3fdf | #64 (existing; stays open) |
+| the bumpers (owner, mid-round) | 322ca69e | #64 |
+| docs | this entry | - |
+
+### A + B - the widescreen cursor and the watch cursor (#65)
+
+MEASURED first, on a 1280x720 16:9 window with SL_POINTER_PROBE. Both
+pointer layers mapped the pointer through `sl_gfx_present_rect` - the SAFE
+rect since #45 - and rejected a fraction outside [0,1]:
+
+- front end: a probe at window (0,360) produced no `front: pointer` line
+  and the cursor stayed at Rare's placement (red centroid measured at
+  (433,455)); a probe at (40,360) **+ click** produced `menu 6 -> 26` - the
+  click activated the row the frozen cursor still sat on. That false hit is
+  what the confinement hid.
+- watch: the same rejection returned before drawing, so in either 160 px
+  band NOTHING was drawn while the watch's 3D bezel, widened with the view
+  by #45, is drawn there. Not draw order, depth or scissor: the 2D layer
+  draws after the watch with the depth test off, and inside the image the
+  crosshair was always visible. A second, vertical cause: in a level the
+  game's own scissor is [0,10]-[320,230] of 320x240 (SL_SCISSOR_DBG: gl
+  0,30 1280x660), which clipped a crosshair in the top / bottom 30 window
+  pixels even inside the image.
+- underneath both: a texrect cannot name a position left of logical 0 (E4's
+  corners are unsigned 10.2) and `draw_textured_rectangle` clips xl < 0 to
+  0 (bondwalk2.c:43), so no game-side coordinate could reach the left band.
+
+THE CONTRACT NOW: the physical pointer, the hit position and the visible
+cursor are three named things. The hit position stays Rare's
+(`cursor_h_pos` / `_v_pos`, written only over the safe rect, clamped by the
+game's own 20-unit inset - no menu target moved, no dossier UI stretched);
+the drawn cursor crosses the whole CONTENT rect; outside the safe area the
+hit position is frozen where the pointer left the image (never dragged
+along the edge) and a click there is DROPPED.
+
+The seam is one tagged no-op, `C0 'SLC'`, carrying the rect's top-left in
+signed 1/4 logical px: the renderer moves the NEXT texrect there, same
+size, texture and s/t, and draws that one quad with the scissor lifted.
+`sl_gfx_content_rect` beside `sl_gfx_present_rect`;
+`sl_display_pointer_logical` is the pure extended mapping (2 inside / 1
+band / 0 outside / -1 degenerate) with 17 self-test checks; the front end
+emits the tag from `frontDrawCursor`'s native arm only when the mouse owns
+the cursor and, inside the image, only once the hit position IS the
+pointer's; the watch's crosshair goes through the same tag with its texrect
+encoded in range so the game's own clip cannot fire.
+
+Witnessed: 16:9 - (0,360) `cursor drawn at (-73,165) BAND` with the red
+centroid at window (10.6,358); (1279,360) -> (513,165) at (1268,357);
+(640,0) / (640,719) -> drawn (220,0) / (220,330) against hits (220,20) /
+(220,310); band clicks at (40,360) and (1240,360) -> no transition;
+(170,300) + click -> row 0, `menu 6 -> 7`. 32:9 - (0,360) -> (-367,165) at
+window x 11, (2559,360) -> (806,165) at x 2549, a band click -> nothing.
+4:3 IDENTITY (the pre-round binary against this one, same seed and probes):
+the baseline, (100,300), (900,100) and (700,590) + click frames are
+pixel-identical; the two probes inside the 20-unit inset differ only inside
+the cursor's own box, same row highlighted in both logs. Watch (Dam, the
+SIGHTLINE -> DISPLAY child, 16:9): the crosshair photographed at (0,360),
+(1279,360), (640,0), (640,719), (0,0), (1279,719) and over the panel, and
+the probed click still lands `hit=value row=2 value=1`.
+
+### C - QUIT GAME (#66)
+
+The dossier had SELECT MISSION / MULTIPLAYER / OPTIONS and no way to close
+the game at a large resolution or in fullscreen. A native fourth row placed
+by the menu's OWN rule (a row every 0x20, its band 9 above its text - Rare's
+243 / 275 compares; `Main Menus/Main and Misc/menu 06 - mode select` in
+Zoinkity's notes is the authority for the row geometry): text at 0x13C, box
+0x13A..0x14A, band from 307, all plus the existing SL_MODESEL_DY.
+Activation files ONE latching request (`sl_quit_request` in
+src/platform/sl_window.c - host-clean, so the display self-test asserts it)
+and the frame pump takes the SDL_QUIT path at the next frame boundary.
+Nothing exits from menu code: a tree-wide grep for exit / _exit / abort /
+ExitProcess over src/game and src/native finds two hits and neither is a
+call (a declaration in initBondDATAdefaults.h:7 and the word in a comment
+at model.c:243).
+
+Witnessed, all exit 0, no crash, the config's SHA256 unchanged: keyboard
+(six S taps to `highlight menu=6 row=3`, Enter), mouse (a probed click at
+(275,650) of 960x720), controller (an SDL virtual Xbox pad, the menu stick
+down then A), BORDERLESS 5120x1440, FULLSCREEN at the desktop's mode, and
+FULLSCREEN with a REAL mode switch (client 2560x1440, `fsmode
+2560x1440@240`) - the desktop measured back at 5120x1440 after every one.
+
+### D - the gunbarrel (#67): MEASURED, NOT REPRODUCED
+
+Docs first and silent (`topic intro-boot-sequence` covers the boot chain's
+TIMERS only; searches for gun barrel / gunbarrel / intro return no filename
+matches) - recorded as a `not_covered` entry in docs/doc-routing.json. The
+layers, from the decomp: the barrel's hand-built aperture through the
+1280x960 guOrtho `initializeGunBarrelIntro` sets, the backdrop as 2D at x
+offset `viGetX() * g_TitleX / 1280` (viGetX() is 440 here - measured), Bond
+through his own `guPerspective(46, 320/240)`, the blood as 2D; one sweep
+value, g_TitleX, drives all of them.
+
+A witness was added (`SL_INTRO_DBG`, native, getenv-gated: mode, case,
+g_TitleX, whether Bond's layer runs, viGetX/Y per frame) and used to compare
+frames by SEQUENCE STATE rather than by frame number - the wider runs
+advance the sweep a step or two more by a given frame under the pacer, which
+looked like a difference and is a capture artefact. At the same state
+(TitleX = -85.49) across 4:3 960x720, 16:9 1280x720, 21:9 1680x720, 32:9
+2560x720 and BORDERLESS 5120x1440 at 32:9: the lit disc's centroid is
+u = 0.5902 of the safe rect in every one and Bond's is u = 0.3558; each wide
+aspect's safe-rect CROP against the 4:3 frame is pixel-identical at 16:9
+(32:9: 3 pixels), with Bond's own animation frame the only other difference;
+mid-sweep the aperture sits at 0.896 of the safe rect at both 4:3 and 32:9;
+the blood wash is confined to the safe rect with the bands black. So the
+cinematic is the 4:3 image inside the safe rect at every aspect and Bond's
+placement relative to the barrel is the 4:3 placement. NO transform was
+changed. #67 carries the measurement and asks the owner for the conditions
+(aspect, window mode, where in the sequence, the screenshot).
+
+### E - the north face button (#64)
+
+The page's list is already the part table, but its label builder returned
+"omit this row" when the resolver found no action, and `pad:Y` is bound by
+no preset - so Xbox Y / DualSense TRIANGLE was absent on every one. A button
+with no action now reads UNBOUND and keeps its icon, with the label coming
+from the authoritative table exactly as a bound one's does. Xbox 12 -> 13
+labels (`R Y: UNBOUND`), DualSense 13 (`R TRIANGLE: UNBOUND`); a scratch
+config with `bind.reload.pad.1=pad:Y` reads `R Y: RELOAD` and `R X: UNBOUND`
+- the same rule in the other direction. No binding invented; #64 stays open
+because what Y should DO is the owner's call.
+
+### The owner's bumper decision (mid-round, #64)
+
+"I also don't like RB and LB and L1 and R1 cycling the weapons. They should
+just mirror the triggers for aim and shoot. Dpad handles weapons fine."
+DATA, not mechanism: DEFAULT is RT / RB FIRE and LT / LB AIM with the cycle
+and the zoom on the d-pad alone; SOUTHPAW the same with the sides swapped;
+GREEN THUMB DEFAULT plus R3 AIM - and because two slots per action is the
+whole editor, R3 takes the slot LB holds, so LB is unbound in that preset
+alone (flagged for the owner, and the page now says UNBOUND rather than
+hiding it). BUMPER is RETIRED - its point was the TRIGGERS cycling - with
+its id kept occupied (`retired` in the table, `sl_bindings_layout_selectable`
+/ `_step`, `layout_matches`), so a config that recorded it loads as CUSTOM
+keeping its own lines. The scope-aware mechanism is untouched: the `ctx`
+flag still rides on the wheel and both bumpers, and a HAND binding still
+gets the two-row behaviour (asserted); FIRE and AIM are unpaired, so a
+bumper acts in every context - measured inside the sniper scope
+(`ctx=scoped held=3000 pressed=1000 FIRE+H+P AIM+H`). Existing configs:
+DEFAULT with no pad lines gets the new table with no manual step; a custom
+pad row is kept verbatim; a stored BUMPER loads CUSTOM. Both pages follow
+the registry (Xbox `LB: AIM` / `RB: FIRE`, DualSense `L1: AIM` / `R1:
+FIRE`).
+
+### Gates (build.ps1 normal LAST each time, 0 warnings)
+
+test.ps1 facility 300 PASS; settingstest 156 / 0; displaytest 171 / 0 with
+sl_window 67 / 0 (17 pointer-mapping checks, 5 quit checks); inputtest the
+seven cases 9 / 5 / 30 / 139 / 73 / 73 / 127 all 0 and the main run 223 with
+the 22 B-096 failures unchanged in kind. `__sgi` proofs on every src/game
+file touched: front.c token-identical at both edits (+10 and +49 native
+lines), title.c token-identical (+18), zero repair tokens in any cartridge
+expansion; non-vacuous control differs each time. `make trace-verify` not
+run: no game logic, physics, AI or entity state changed - the src/game edits
+are a display-list tag, a menu row and a stderr witness, all native-arm.
+
+### Not exercised / limitations
+
+- #67 is NOT reproduced here; the owner's conditions are needed before any
+  intro transform is touched.
+- The integrated front-end replay clicked SELECT MISSION and OPTIONS and
+  hovered all four rows; MULTIPLAYER was not activated (it needs two
+  controllers) and QUIT was re-witnessed in its own run instead.
+- The pad's stick and the wheel reach the new QUIT row by construction (one
+  cursor); only the keyboard, the probe's clicks and a virtual pad's A were
+  driven.
+- A hand-written config can still name one pad control on two actions (the
+  loader applies bind lines verbatim; the steal is an EDIT-time rule) - the
+  pre-existing load semantics, unchanged by this round.
+
+## 2026-09-21 - RELEASE TRANSACTION, v0.1.0 ONLY (owner narrowed the scope
+## mid-round): the pre-QoL checkpoint tagged on the canonical and the public
+## repositories, both read back; the two release blockers settled by
+## MEASUREMENT on a clean build of the exact checkpoint - one resolved (the
+## linker map), one a demonstrated STOP (the ROM-derived table compiled into
+## the exe), so NO ZIP and NO GitHub Release exist for v0.1.0; the release
+## tooling (validator, stager, launcher) on `sightline/release-tooling`, not
+## on master and not in the tagged source. QoL was NOT merged; v0.2.0 was NOT
+## started.
+
+### Issue administration (owner decisions of 2026-09-21, each read back)
+
+#65 and #66 owner-accepted ("Ok, i accept what was about to be fixed") and
+CLOSED. #64: the repair-round changes (Y / TRIANGLE present, the UNBOUND
+rule, the bumpers mirroring the triggers, the d-pad's weapons and zoom)
+accepted; the issue STAYS OPEN for the broader layout questions. #67: the
+owner confirms the sniper-intro observation and accepts v0.2.0 with it
+outstanding; deferred to v0.3.0 Visual Fidelity; SL_INTRO_DBG kept; OPEN, not
+claimed disproved. v0.2.0 remains FEATURE-FROZEN; the next milestone after it
+is v0.3.0 Visual Fidelity (nothing implemented here).
+
+### The checkpoint and its two tags
+
+`V010_CANONICAL_SHA = c489657c6abb5e0804ba424389cbfe5d277a2bc2` = origin/master
+at the start and at the end of the round (`merge-base(origin/master,
+origin/sightline/qol-controls)` = the same commit: master is an ancestor of
+the QoL tip and nothing was integrated). Canonical annotated tag `v0.1.0`
+(tag object 594b1ebb) pushed to origin; `git ls-remote --tags` reads back
+`refs/tags/v0.1.0^{}` = c489657c. The local `master` at 90e74995 is stale and
+was never used.
+
+Public: `publish_public.py --rev c489657c --dry-run` against the real
+staging repository reports `public tree unchanged`, tree
+0f137281ff6eceb563273381fa76c2682ebbb98c = the tree of sightline-public
+master = github.com/mscrnt/Sightline master = 4d6148d8 (`Publish 90e74995:
+...`; the two later canonical commits touch only the excluded
+.gitea/workflows/). So `V010_PUBLIC_SHA = 4d6148d871a3aaa47d2731e4e3dff08309e243d4`,
+CASE A, no new publication. Tag `v0.1.0` created on sightline-public through
+the Gitea API (annotated, tag object 4b757a30, tagger the Gitea identity);
+the push mirror carried it to GitHub within a minute (`ls-remote` on GitHub:
+`refs/tags/v0.1.0^{}` = 4d6148d8; the API's tag object names the same
+target). Both tags are immutable from here.
+
+### Blocker 2, the linker map - RESOLVED by permitted local generation
+
+`build.ps1:162` hard-requires `build\u\ge007.u.map` (the `-Map` output of
+the matching link, `Makefile:230`), which is not in Git. It is not ROM
+content: symbol names and addresses, the ROM-flavoured ones being the asset
+file offsets already carried by `scripts/filelist.u.csv`. It was regenerated
+FOR THE CHECKPOINT: a detached worktree at c489657c under WSL, `make
+matching` (the retained IDO recomp binaries), `MATCH!`, the built ROM SHA-1
+abe01e4a... byte-identical to the base. Map SHA-256
+6fd6f4d72308301d0806cf82a3b652fe4cdbcc299c49231b24fa1bb58533966d, and on
+every line gen_segments.py consumes (7657 lines, 1881 of them ROM-flavoured
+symbols) IDENTICAL to the map the development host had built with since
+09-01 - so the dev map was equivalent all along, and now that is measured
+rather than assumed. The worktree was removed afterwards.
+
+### Blocker 1, the ROM-derived compiled table - DEMONSTRATED, STOP
+
+At c489657c `src/platform/sl_acmd.c:17` includes the generated
+`build/native/sl_resample_tab.h` (`tools/native/gen_resample_tab.py`, from
+`bin/aspboot.data.bin`), `static const short` tables read at `:289`
+(ENVMIXER ramp, 8 shorts) and `:894` (RESAMPLE taps, 256 shorts): 528 bytes
+of the aspMain microcode data segment, i.e. ROM content. Tree-wide search of
+the checkpoint's src/ and tools/windows/ for RESAMPLE_TAB / ENVMIX_RAMP /
+gen_resample_tab / aspboot finds only those sites and build.ps1:202 - no
+runtime seam exists at this revision. The data segment was derived EXTERNALLY
+(scratch Python: ROM 137616/71760 -> 1172 raw-deflate -> md5
+055525d9087f953d43d80639773b4291, the script's own constant -> slice
+0x3c290..0x3c550), SHA-256 e6afb200... equal to the host's extraction, and
+supplied as the build input the checkpoint's own tooling asks for.
+
+The clean build (below) was then MEASURED: the 512-byte taps table sits at
+0x1fce20 and the ramp at 0x1fce00 in `.rdata` of sightline.exe, once each.
+That is the blocker in bytes. A safe binary from the exact checkpoint would
+need a source change (a runtime derivation), which is by definition not
+v0.1.0; patching the binary is not a release; shipping the bytes is
+distributing ROM-derived data. So: tags kept, build and provenance recorded,
+NO package, NO GitHub Release. The owner's ruling A (accept the 528 bytes
+with a notice / a source-only release / no v0.1.0 binary at all) decides
+what, if anything, is attached to the public tag; none of them is taken here.
+
+### The build (provenance, not a distributable)
+
+Detached worktree of a fresh clone at c489657c, `git status` empty, mapped
+to a `subst` drive S: because 244 object paths under the scratch directory
+overflowed the harvest link's command line (`The filename or extension is
+too long`) - and because -g writes the compile directory into DWARF: the
+exe carries `S:\build...` and no user, project or scratch path (measured:
+the user name, D:\Projects and the scratch path are absent). `build.ps1
+-Clean`, SL_PYTHON = the host venv (3.13.5; stdlib generators plus the glTF
+importer's numpy / pillow). Toolchain: i686-w64-mingw32-gcc 16.2.0 (Rev3,
+MSYS2), GNU windres 2.47.20260726, SDL2 2.32.10. 244 objects, 29 stubs,
+`.build_key` the normal flag set (no -DSL_DEMO_BUILD). sightline.exe 9571806
+bytes, SHA-256
+98832b94bc60d98c317605ec849a149fa637e22271b309bbe33c32e876515a37, PE32 /
+i386, characteristics 0x0126 (LARGE_ADDRESS_AWARE), subsystem 3. Builds are
+NOT byte-reproducible (-g, timestamps); the hash is the identity of this one.
+
+### The validator and the stager (release tooling, `sightline/release-tooling`)
+
+`tools/windows/validate-package.ps1` and `package-release.ps1` with
+`release/Sightline.cmd` and `release/README.txt`. The stager run on S:\ with
+the ROM given staged 14 files (the exe, SDL2.dll + libwinpthread-1.dll from
+the import walk, the four boot .slmodels, the launcher, README.txt,
+VERSION.txt, the four LICENSES files) and the validator REJECTED it on the
+two excerpts - no ZIP written. Controls: the same stage with the 528 bytes
+zeroed in a COPY of the exe PASSES (never run, never shipped); without -Rom
+the as-built stage PASSES, which is why the ROM is a validator input; a
+planted .z64, eeprom.bin, config.ini, private hostname, user-profile path,
+ROM-sized file, ROM-magic file, SightlineDemo.exe and .zip, a removed
+README.txt and a removed SDL2.dll each fail for their own reason.
+
+### Smoke of the staged layout from an unrelated directory
+
+The rejected stage copied to `%TEMP%\sl-smoke-<id>\pkg` (not the repo, not
+build\, not the scratch), run through `Sightline.cmd` with the ROM supplied
+by SL_ROM from outside the folder and LOCALAPPDATA pointed at a scratch
+directory so the launcher's save path is a scratch save. Every SL_* cleared
+first. Mission (SL_BOOT_LEVEL=34, SL_FRAMES=900): `booting via mainproc`,
+`sightline audio: device open 22050 Hz 2 ch`, a frame-601 capture of the
+Facility interior, `survived 900 pumped frames`, 231 submits with 97.26%
+non-zero samples, exit 0 in 9 s. Boot chain (no level, SL_FRAMES=3000):
+captures at 901 (the replacement first logo), 1601 (the replacement
+Rareware-slot logo, MOONWARE) and 2301 (the gunbarrel aperture entering),
+`survived 3000 pumped frames`, 847 submits, 95.09% non-zero, exit 0 in 29 s
+- the cartridge's own front-end sequence rendering; the dossier menu was not
+reached because no input was driven. Clean exit by that version's own
+method (the frame limit; there is no QUIT GAME at c489657c). The package
+directory's file list and sizes were unchanged afterwards; the only writes
+were `lad\sightline\eeprom.bin` (+ `.style`) under the scratch LOCALAPPDATA;
+the logs carry no D:\Projects, S:\ or scratch path.
+
+### Not done, on purpose
+
+- No fast-forward of master, no v0.2.0 build, package, tag or release, no
+  v0.3.0 work. origin/master = c489657c and origin/sightline/qol-controls =
+  02bd8e01 before and after.
+- No GitHub Release for v0.1.0 (the artifact is blocked; the owner's ruling
+  decides). No public README change (nothing to point players at yet).
+- For the v0.2.0 round: the two tables must move to runtime derivation from
+  the user's ROM before its executable can pass the same validator (the shim
+  already maps the ROM; `src/inflate` is the game's own 1172 inflater; the
+  cdata segment is ROM 0x21990 / 71760 bytes, aspMainData at +0x3c290 of the
+  inflated segment, the ramp at +0xB0 and the taps at +0xC0), and the map
+  input should either be regenerated the same way and its hash recorded, or
+  a tracked extract of the lines gen_segments.py consumes should replace the
+  untracked file.
+
+## 2026-09-21 - RELEASE ROUND, v0.2.0 (QoL Phase 1, the first Windows binary
+## release): v0.1.0 published as a SOURCE-ONLY GitHub Release on its existing
+## public tag (owner ruling b); the release tooling fast-forwarded onto the QoL
+## line; the first demonstrated release blocker - 528 bytes of ROM-derived
+## audio-microcode data compiled into the exe - removed by deriving the tables
+## from the player's ROM at start-up, proven byte-identical and proven to
+## refuse a changed ROM; the linker-map dependency formalized as a tracked
+## extraction with provenance; the readme's player path and the v0.2.0 notes.
+## The packaging, the smoke, the integration into master, the tags and the
+## GitHub Release follow this commit and are recorded in #49.
+
+Owner direction for the round (binding): the distributed executable is
+Sightline's own code plus permitted Sightline-owned / redistributable
+runtime material ONLY; the original game data stays EXTERNAL and is read from
+the player's own ROM at run time. No embedding, appending or packaging of the
+ROM; no ROM assets converted into distributable compiled arrays; no
+pre-extracted game data in the ZIP; locally generated ROM content is not
+redistributable merely because it is no longer in .z64 form. If a clean
+executable could not be produced without embedding game data, the release
+STOPS. It could.
+
+### v0.1.0 - source-only GitHub Release (STEP 0)
+
+`gh release create v0.1.0` on the EXISTING public tag (4b757a30 -> 4d6148d8):
+no new tag, no ZIP, no binary; release id 393001361, published, target
+4d6148d8, assets = GitHub's generated source links only. The notes say why:
+the checkpoint compiled 528 bytes of ROM-derived audio-microcode table data
+into the executable (ENVMIXER ramp 16 B, RESAMPLE table 512 B); the
+redistribution policy does not ship ROM-derived game data; the source
+checkpoint is preserved exactly and was not altered to retrofit release
+behaviour; v0.2.0 moves the tables to run-time derivation. Both v0.1.0 tags
+untouched (canonical 594b1ebb -> c489657c re-read; public 4b757a30 ->
+4d6148d8 re-read through the GitHub API).
+
+### Release tooling onto the QoL line (STEP 1)
+
+origin/sightline/qol-controls was still 02bd8e01 and
+sightline/release-tooling (a0092286 validator / stager / launcher, a1f795dd
+docs) a strict descendant of it, so the QoL branch was FAST-FORWARDED to
+a1f795dd and pushed (ls-remote read back). Nothing recreated.
+
+### The ROM-derived audio tables, moved to run time (STEP 2)
+
+**The old path, file:line at a1f795dd.** `src/platform/sl_acmd.c:17`
+`#include "sl_resample_tab.h"` (generated by `tools/native/
+gen_resample_tab.py` from `bin/aspboot.data.bin` into `build/native/`);
+`SL_ENVMIX_RAMP[k]` read at `:289` (sl_env_construct), `SL_RESAMPLE_TAB[idx
+* 4]` at `:894` (RESAMPLE); `tools/windows/build.ps1:202` ran the generator
+and `:446` put `build/native` on the platform include path. The ROM offsets
+are `scripts/extract_asp_gsp_rsp.sh`'s: ROM 137616 (0x21990) / 71760 bytes
+-> 1172 raw deflate -> the aspMain data segment at inflated 0x3c290..0x3c550
+(704 bytes), ramp +0xB0, taps +0xC0, big-endian shorts. Tree-wide search of
+src/ and tools/windows/ for `RESAMPLE_TAB|ENVMIX_RAMP|gen_resample_tab|
+sl_resample_tab`: only those sites.
+
+**The seams that already existed.** The ROM is a malloc'd image behind
+`sl_rom_load` in `sl_ultra_shim.c:1181` (SL_ROM, lazily on the first PI
+access; exit 3 if it cannot be opened). The game's own 1172 inflater is
+`src/inflate/inflate.c` (`decompress_entry(src, dst, hlist)`), compiled into
+the native build and used by nothing native - `grep -rn "decompress_entry\|
+huftlist" src/`: inflate.c, inflate.h, the MIPS-only boot.s (the game's
+run-time inflater is the separate rz_* copy in src/game/zlib.c). The audio
+device is queue-driven on the main thread (sl_audio.c: SDL_QueueAudio, no
+callback) and the interpreter runs from `sl_sc_complete_for` on that thread,
+so nothing consumes a command list off-thread.
+
+**What was done.** `src/platform/sl_ucode.c` (new): `sl_ucode_tables_derive`
+runs from main() after sl_shim_configure and before mainproc; takes the ROM
+through a new read-only accessor `sl_rom_bytes` (sl_ultra_shim.c); checks
+size 12582912 and the z64 magic; checks the 0x11 0x72 container header at
+0x21990; SHA-1s the 71760-byte compressed segment and compares it with an
+embedded digest BEFORE the inflater runs (the inflater writes through an
+unbounded output pointer, so the digest is what pins the stream to the one
+whose inflated size, 247120 bytes, is known - the output buffer is exact by
+construction); inflates with `decompress_entry` into malloc'd buffers;
+checks the inflated length; SHA-1s the 704-byte data segment against a
+second embedded digest; reads the 8 + 256 big-endian shorts into
+sl_acmd.c's run-time tables through `sl_acmd_set_ucode_tables`; refuses an
+all-zero ramp (the generator's own refusal, kept); zeroes and frees every
+buffer. **What is embedded is stated plainly: two SHA-1 DIGESTS of
+ROM-derived data - not the data, not invertible into it.** No fallback
+table, no default, no #ifdef. Any failure prints the cause and main()
+returns 3 (sl_rom_load's code); `sl_acmd_exec` additionally returns
+SL_ACMD_ERR_UNGROUNDED if the tables were never set. The tables live for the
+process in sl_acmd.c's static storage, written once.
+
+**Removed.** The `#include`, the `static const` tables, the generator (its
+only role was the compiled header), build.ps1's generator step, the
+build\native directory and include path; the Linux `tools/native/build.sh`
+and `acmdreplay.sh` drop the step (acmdreplay's standalone harness does not
+yet supply the tables - it will report UNGROUNDED until it does; Linux is
+not a target).
+
+**Oracle and identity.** BEFORE deleting the compiled path the bytes the
+old build would compile were recorded from the owner's ROM by an external
+standard-library derivation (the v0.1.0 round's `derive_ucode.py`): the
+704-byte segment SHA-256 e6afb200..., the old generated header from those
+bytes 1832 bytes SHA-256 13524ce3..., the 16-byte ramp as the build's
+little-endian shorts SHA-256 b236ffc8..., the 512-byte table e606c84c....
+AFTER: `tools/native/ucode_tables_oracle.py` (new; standard-library zlib,
+prints digests only) and `tools/windows/ucodetabtest.ps1` (new): the
+executable run once with `SL_UCODE_TABLES_DUMP` (scratch only) - ramp 16 B
+and taps 512 B, Compare-Object 0 differences each, SHA-256 b236ffc8... /
+e606c84c... equal to the oracle's; NEGATIVE CONTROL a scratch copy of the
+ROM with one byte changed at 0x21990+4096 -> exit 3, "cannot derive the
+audio microcode tables from the ROM: the compressed code/data segment ... has
+SHA-1 ..., not the supported dump's", no dump, no boot; a 1 MiB truncation
+-> exit 3, the size named. 17 / 17.
+
+**Validator control (the redistribution boundary, measured).** The v0.1.0
+executable REBUILT from c489657c in a scratch worktree (SHA-256 974892ec...,
+9571806 bytes; same layout as the round's 98832b94...) scanned with the ROM
+given: REJECTED - `compiled RESAMPLE polyphase table (512 bytes LE)` at
+0x1fce20 and `compiled ENVMIXER ramp (16 bytes LE)` at 0x1fce00, the same
+offsets the v0.1.0 round measured. The candidate executable with the same
+ROM: the excerpt scan reports nothing (the only failures on a bare directory
+are the required-file rules). The validator was not weakened.
+
+### The linker map, formalized (STEP 3)
+
+`build.ps1:162` hard-required `build\u\ge007.u.map`; `gen_segments.py`
+consumed its `_*Segment(Rom)?(Start|End)` symbols and the ROM-flavoured
+addresses of the unresolved symbols. `make matching` at a1f795dd under WSL:
+MATCH!, ROM SHA-1 abe01e4a..., map SHA-256 4f6a6068... (694948 bytes).
+`tools/native/extract_linkmap.py` (new) reduces a map to that consumed
+subset - 98 segment symbols, 1804 ROM-flavoured symbols, first occurrence as
+the consumer takes them - into the TRACKED `tools/native/
+ge007.u.linkmap.txt`, whose header records the source map's SHA-256 and
+size, the commit `make matching` ran at and the ROM it reproduced. Symbol
+names and link addresses only (the ROM-flavoured addresses are the asset
+files' ROM offsets, the numbers `scripts/filelist.u.csv` carries): no ROM
+byte, no game data. `gen_segments.py` reads either format; `build.ps1`
+reads the tracked file (SL_LINKMAP overrides it for a comparison) and the
+map requirement is gone. `--check` against the development host's map of
+2026-09-01 (ed09bc5c...) agrees symbol for symbol; on one unresolved list
+gen_segments emits a byte-identical segments.elf.s (SHA-256 10de5455..., 827
+absolutes, 26 segments) from the raw a1f795dd map, the tracked file and the
+host's map, and the build from the tracked file alone with no build\u
+present produced exactly that. Release preparation from here: `make
+matching` at the commit, then `extract_linkmap.py --check`.
+
+### README and notes (STEP 4)
+
+`readme.md`: the player path first (Releases -> the latest
+Sightline-vX.Y.Z-win32.zip -> extract -> your own compatible GoldenEye 007
+(USA) .z64 beside Sightline.cmd -> Sightline.cmd); a Releases list (v0.1.0
+source-only, v0.2.0 the first distributable binary); the build step needs
+neither a ROM nor a matching-build output. `docs/releases/v0.2.0.md`: QoL
+Phase 1 as accepted, the two provenance changes above, known / deferred (#67
+owner-confirmed, accepted for v0.2.0, deferred to v0.3.0 Visual Fidelity;
+no World Detail / Community HD / XBLA / Modern Lighting), the own-ROM
+requirement. Nothing implies a ROM is included; v0.3.0 is not released.
+
+### Gates on the candidate (a clean scratch clone, mapped to a short drive)
+
+build.ps1 -Clean 0 warnings (the S: mapping keeps the -g DWARF strings free
+of any user / project / scratch path, which the validator forbids);
+settingstest 156 / 0; displaytest 171 / 0 with sl_window 67 / 0; inputtest
+the seven cases 9 / 5 / 30 / 139 / 73 / 73 / 127 all 0 and the main run 223
+with the 22 B-096 failures unchanged in kind; ucodetabtest 17 / 17; test.ps1
+facility 300 PASS. `make trace-verify` not run: no game logic, physics, AI or
+entity state changed - src/game is untouched; the src/platform change is a
+start-up derivation that produces the very bytes the old header compiled in
+(proven above), and the matching build at a1f795dd MATCHes.
+
+### CI debt, recorded (not started; nothing here touches the runner, the
+### compose file, the CI image or the harness workflow)
+
+After v0.2.0 and before v0.3.0: make the `sightline-ci` label use the
+project's own CI image so the slinput compile check goes green. Evidence as
+reported: harness-tests 98 PASS / 1 skip, but the plugin build fails on
+`m64p_types.h` because `runs-on: sightline-ci` launches
+`catthehacker/ubuntu:act-22.04` instead of the image `ci/image` builds.
+
+### Not done, on purpose
+
+No v0.3.0 work; #67 untouched (deferred, documented); #64 untouched; no
+CI-runner repair; the demo core never run and never packaged; no re-baseline
+of anything. The package, the smoke from an unrelated directory, the
+integration into master, the canonical and public v0.2.0 tags and the GitHub
+Release are performed after this commit and read back into #49.

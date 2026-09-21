@@ -45,6 +45,102 @@
  * self-contained and its four declarations match src/joy.c exactly, so the only
  * thing this changes is that the native compiler now knows the return type. */
 #include "joy.h"
+
+/* THE WATCH'S POINTER (#40, src/native/sl_watch_pointer.c). Three seams and
+ * no more: the frame hook, called at the head of the interactive branch of
+ * draw_watch_current_page with the page's own matrix so the native layer can
+ * hit-test the pointer against what THIS frame draws (the text rows in
+ * framebuffer space, the page bar and the volume tracks through the same
+ * projection the RSP is handed); the cursor draw at the end of the same
+ * branch (the game's own crosshair, half size, over the page); and the equip
+ * take, read where A and Z equip on the equipment page so a click on a list
+ * row equips through the same lines. Everything else the pointer does is a
+ * write to the same globals the stick path writes, from the native side, so
+ * there is no second highlight. */
+extern void sl_watch_pointer_frame(Mtx *pagemtx);
+extern Gfx *sl_watch_pointer_draw(Gfx *gdl);
+extern s32  sl_watch_pointer_take_equip(void);
+
+/* NATIVE (#44): the SIGHTLINE watch page - its row index and navigation
+ * (defined beside the other watch_screenN_navigation functions below), its
+ * draw (beside the other page draws) and the six-segment page bar. The two
+ * settings the page shows live elsewhere and are reached by their one setter
+ * each: Invert Mouse Y in the platform layer (sl_input.c, #39), Sprint in the
+ * native settings store through sl_settings_apply.c (#42). No value is held
+ * here; the front end's Settings page reads and writes the same two. */
+extern u32  sl_sightline_row_index;
+void sl_reset_sightline_row_index(void);
+void sl_watch_sightline_navigation(void);
+Gfx *sl_draw_watch_sightline_page(Gfx *gdl, Mtx *param_2);
+extern int  sl_mouse_invert_y_get(void);
+extern void sl_mouse_invert_y_set(int on);
+extern int  sl_sprint_enabled(void);
+extern void sl_sprint_enabled_set(int on);
+/* #56: the GAMEPLAY child's SPRINT MODE / CROUCH MODE (HOLD / TOGGLE),
+ * through the same two calls the front end's GAMEPLAY tab makes
+ * (sl_settings_apply.c; which 0 = CROUCH, 1 = SPRINT). */
+extern int  sl_action_mode(int which);
+extern void sl_action_mode_set(int which, int toggle);
+/* #45: the DISPLAY tab's two settings, through the same accessors the front
+ * end uses (src/platform/sl_display.c) - no watch-local state. */
+extern int         sl_aspect_ratio(void);
+extern void        sl_aspect_ratio_set(int aspect);
+extern int         sl_aspect_by_order(int column);
+extern int         sl_aspect_order_of(int aspect);
+extern const char *sl_aspect_name(int aspect);
+extern int         sl_fov_h16_displayed(void);
+extern void        sl_fov_step(int delta);
+/* #50: the CONTROLS child's two sensitivity percents, through the same two
+ * calls the front end's CONTROL tab makes (src/platform/sl_input.c). */
+extern int         sl_mouse_sens_get(int scoped);
+extern void        sl_mouse_sens_step(int scoped, int dir);
+/* The SLIDER rows (#50 owner request, 2026-09-19): the three value rows'
+ * fill fractions and their set-from-a-fraction, the platform layer's own
+ * (sl_input.c / sl_display.c: the same grid and clamps as the steps), and
+ * the face z under a framebuffer y through the page's projection
+ * (sl_watch_pointer.c), so the bar drawn on the face sits over its label. */
+extern float       sl_mouse_sens_fraction(int scoped);
+extern void        sl_mouse_sens_set_fraction(int scoped, float t);
+/* #51: the STICK TUNING child's three controller rows, the same four calls
+ * (src/platform/sl_input.c sl_pad_tune_*; which = SL_WROW_PAD_TUNE_ID). */
+extern int         sl_pad_tune_get(int which);
+extern void        sl_pad_tune_step(int which, int dir);
+extern float       sl_pad_tune_fraction(int which);
+extern void        sl_pad_tune_set_fraction(int which, float t);
+extern float       sl_fov_fraction(void);
+extern void        sl_fov_set_fraction(float t);
+extern f32         sl_watch_face_z_at_fb_y(Mtx *pagemtx, f32 y);
+/* #63: the attached pad's family (sl_input.c), the device-matched controller
+ * draw the Control Options page makes (src/native/sl_watch_controller.c),
+ * and the two LAYOUT rows both the Control Options page and the CONTROLS
+ * child show (2026-09-20, the N64 CONTROL STYLE and the ORIGINAL / MODERN
+ * PROFILE gone): BUTTON LAYOUT is the binding registry's preset
+ * (sl_bindings.c, seeding the pad slots), STICK LAYOUT the settings store's
+ * row the pad mapping reads. The names and the step are the native layer's
+ * (sl_watch_controller.c sl_watch_layout_*); nothing here holds a copy. */
+extern int         sl_input_pad_family(void);
+extern const char *sl_input_pad_family_name(int family);
+extern int         sl_watch_controller_modern(void);
+extern Gfx        *sl_watch_controller_draw(Gfx *gdl, Mtxf *finalmtx, s32 green);
+extern void        sl_watch_controller_probe(Mtxf *finalmtx);   /* SL_PAD_DBG: the facing, both arms */
+extern const char *sl_watch_layout_name(s32 which);        /* 0 BUTTON, 1 STICK */
+extern void        sl_watch_layout_step(s32 which, s32 dir);
+extern Gfx        *sl_watch_layout_rows_draw(Gfx *gdl);    /* the Control Options page's two rows */
+/* #52 (2026-09-20): the DISPLAY child's WINDOW MODE / RESOLUTION / VSYNC,
+ * through the request seam the front end's DISPLAY tab uses
+ * (src/platform/sl_window.h): the rows print the state the SDL backend
+ * applied and read back, a step files a request the backend takes at its
+ * next frame reset - and commits only what SDL confirmed. No copy here. */
+extern int         sl_window_mode_shown(void);
+extern const char *sl_window_mode_name(int mode);
+extern void        sl_window_mode_step(int dir);
+extern int         sl_window_size_shown(int *w, int *h);
+extern int         sl_window_size_editable(void);
+extern void        sl_window_size_step(int dir);
+extern void        sl_window_size_text(int w, int h, char *buf, int n);
+extern int         sl_window_state(int *mode, int *w, int *h, int *vsync);
+extern void        sl_window_request_vsync(int on);
+extern int         sl_window_request_pending(void);
 #endif
 
 #define WATCH_BACKGROUND_VERTEX_COUNT 30
@@ -387,6 +483,19 @@ void init_watch_at_start_of_stage(int stage)
     D_80040B50 = 0x32;
     D_80040B54 = 0x32;
     fileLoadSaveSettingsForSelectedFolder(stage);
+#ifndef __sgi
+    /* NATIVE ONLY (#41): the player's GLOBAL DEFAULTS from the native settings
+     * store, applied on top of the folder's options through the same three
+     * setters the folder load above just used (src/native/sl_settings_apply.c).
+     * Here, and not earlier, because this is the one point every stage start
+     * reaches - the front-end flow and SL_BOOT_LEVEL alike - after the player
+     * exists and after the save has had its say. A no-op when the store is
+     * inactive (trace replay, headless health). */
+    {
+        extern void sl_settings_apply_player_defaults(void);
+        sl_settings_apply_player_defaults();
+    }
+#endif
     mission_failed_or_aborted = FALSE;
 }
 
@@ -751,9 +860,19 @@ void watch_screen0_navigation(void)
 
         if (goto_watch_screen_index_4)
         {
+#ifndef __sgi
+            /* NATIVE (#44): LEFT from the first page wraps onto the LAST page
+             * of the ring, which is now SIGHTLINE (options.h). The original
+             * arm - straight to the briefing - is the #else, verbatim. */
+            watch_screen_index = WATCH_INDEX_SL_SIGHTLINE;
+            sl_reset_sightline_row_index();
+            sub_GAME_7F0A5210();
+            trigger_watch_zoom(WATCHZOOM3, 15.0f);
+#else
             watch_screen_index = WATCH_INDEX_MISSION_BRIEFING;
             sub_GAME_7F0A5210();
             trigger_watch_zoom(WATCHZOOM1, 15.0f);
+#endif
         }
 
         if (goto_watch_screen_index_1)
@@ -920,6 +1039,233 @@ void watch_screen4_navigation(void) {
     {
         if (watch_item_is_actively_selected == 0)
         {
+#ifndef __sgi
+            /* NATIVE (#44): RIGHT from the briefing reaches SIGHTLINE, the
+             * page appended after it; the original arm (back to the first
+             * page) is the #else, verbatim, and now lives in
+             * sl_watch_sightline_navigation's RIGHT. */
+            watch_screen_index = WATCH_INDEX_SL_SIGHTLINE;
+            sl_reset_sightline_row_index();
+            sub_GAME_7F0A5210();
+            trigger_watch_zoom(WATCHZOOM3, 15.0f);
+#else
+            watch_screen_index = WATCH_INDEX_MISSION_STATUS;
+            zero_D_800409A4();
+            sub_GAME_7F0A5210();
+            trigger_watch_zoom(WATCHZOOM2, 15.0f);
+#endif
+        }
+    }
+}
+
+#ifndef __sgi
+/* NATIVE (#44): the SIGHTLINE page's navigation - the same shape as
+ * watch_screen4_navigation (page change on L/R, only while nothing is
+ * latched) plus the row step of sub_GAME_7F0A5998 (up/down, the stick's
+ * y latch, wrapping, the select latch dropped on a row change). LEFT returns
+ * to the briefing (its zoom, WATCHZOOM1); RIGHT wraps onto the first page
+ * exactly as the briefing's RIGHT did (D_800409A4 cleared, WATCHZOOM2). */
+u32 sl_sightline_row_index = 0;
+
+/* The page's nested BINDINGS child (#46, src/native/sl_watch_bindings.c):
+ * while it is open it owns the page's navigation and its drawing, and the
+ * ring's L/R do nothing - its BACK returns here (to the CONTROLS view). */
+extern s32  sl_watch_bindings_is_open(void);
+extern void sl_watch_bindings_open(void);
+extern void sl_watch_bindings_close(void);
+extern void sl_watch_bindings_navigation(void);
+extern Gfx *sl_watch_bindings_draw(Gfx *gdl);
+extern char *getenv(const char *);
+extern int fprintf(void *, const char *, ...);
+extern void *stderr;
+
+/* THE VIEWS (options.h): a heading and a row list each. The SIGHTLINE page
+ * itself is view 0; a SUBMENU row opens the child it names; every child ends
+ * in BACK. GRAPHICS is DIMMED (visible, unselectable - the CHEATS-row
+ * convention) because nothing ships there yet (#43 / #47 / #48 parked). */
+struct sl_watch_row  { const char *label; u8 kind; u8 arg; };
+struct sl_watch_view { const char *heading; struct sl_watch_row rows[SL_WVIEW_ROWS_MAX]; u8 count; };
+
+static const struct sl_watch_view sl_watch_views[SL_WVIEW_COUNT] = {
+    { "sightline\n", { { "graphics\n", SL_WROW_DIMMED, 0 },
+                       { "gameplay\n", SL_WROW_SUBMENU, SL_WVIEW_GAMEPLAY },
+                       { "display\n",  SL_WROW_SUBMENU, SL_WVIEW_DISPLAY },
+                       { "controls\n", SL_WROW_SUBMENU, SL_WVIEW_CONTROLS } }, 4 },
+    { "gameplay\n",  { { "sprint\n",         SL_WROW_TOGGLE_SPRINT, 0 },
+                       { "sprint mode\n",    SL_WROW_TOGGLE_SMODE, 0 },    /* #56: hold / toggle */
+                       { "crouch mode\n",    SL_WROW_TOGGLE_CMODE, 0 },    /* #56 */
+                       { "back\n",           SL_WROW_BACK, 0 } }, 4 },
+    /* #52 (2026-09-20): the three output rows before the two content rows,
+     * as the front end's DISPLAY tab - six rows with one bar, well inside
+     * the face (CONTROLS holds nine with two). */
+    { "display\n",   { { "window mode\n",    SL_WROW_VALUE_WMODE, 0 },     /* #52: windowed / borderless / fullscreen */
+                       { "resolution\n",     SL_WROW_VALUE_RES, 0 },       /* #52: the list; informational in borderless */
+                       { "vsync\n",          SL_WROW_TOGGLE_VSYNC, 0 },    /* #52: off / on */
+                       { "aspect ratio\n",   SL_WROW_VALUE_ASPECT, 0 },
+                       { "field of view\n",  SL_WROW_VALUE_FOV, 0 },
+                       { "back\n",           SL_WROW_BACK, 0 } }, 6 },
+    { "controls\n",  { { "button layout\n",  SL_WROW_VALUE_BLAYOUT, 0 },   /* #63: the pad's preset */
+                       { "stick layout\n",   SL_WROW_VALUE_SLAYOUT, 0 },   /* #63: which thumb looks */
+                       { "stick tuning\n",   SL_WROW_SUBMENU, SL_WVIEW_STICK }, /* #51: the second-level child */
+                       { "controller\n",     SL_WROW_INFO_PAD, 0 },        /* #63: the attached family */
+                       { "invert mouse y\n", SL_WROW_TOGGLE_MINV, 0 },
+                       { "mouse sensitivity\n",  SL_WROW_VALUE_MSENS, 0 },   /* #50 */
+                       { "scoped sensitivity\n", SL_WROW_VALUE_SSENS, 0 },   /* #50 */
+                       { "bindings\n",       SL_WROW_BINDINGS, 0 },
+                       { "back\n",           SL_WROW_BACK, 0 } }, 9 },
+    /* #51 (2026-09-20): the controller's three sliders. A child of CONTROLS
+     * rather than three more rows on it: CONTROLS already reaches the face's
+     * foot with its two bars (nine rows, BACK at y 179 - the bindings
+     * child's own limit), and two more bars would put BACK on the page bar.
+     * BACK here returns to CONTROLS on the row that opened this. */
+    { "stick tuning\n", { { "look sensitivity\n", SL_WROW_VALUE_PSENS, 0 },
+                          { "look deadzone\n",    SL_WROW_VALUE_PDZ, 0 },
+                          { "move deadzone\n",    SL_WROW_VALUE_MDZ, 0 },
+                          { "back\n",             SL_WROW_BACK, 0 } }, 4 },
+};
+
+static s32 sl_wview;              /* the view in force (SL_WVIEW_*) */
+/* THE BACK STACK (#51): the (view, row) to return to at each level, so a
+ * child of a child (STICK TUNING under CONTROLS) returns to CONTROLS on the
+ * row that opened it, and CONTROLS to SIGHTLINE on its row - one level per
+ * BACK / Escape, as the header promises. Depth 0 is the SIGHTLINE page. */
+static s32 sl_wview_stack_view[SL_WVIEW_DEPTH_MAX];
+static s32 sl_wview_stack_row[SL_WVIEW_DEPTH_MAX];
+static s32 sl_wview_depth;
+static s32 sl_wview_back_req;     /* Escape asked for one level up */
+
+s32 sl_sightline_view(void)          { return sl_wview; }
+s32 sl_sightline_row_count(void)     { return sl_watch_views[sl_wview].count; }
+s32 sl_sightline_child_open(void)    { return sl_wview != SL_WVIEW_SIGHTLINE; }
+s32 sl_sightline_row_kind(s32 row)
+{
+    s32 kind;
+    if (row < 0 || row >= sl_watch_views[sl_wview].count) return SL_WROW_DIMMED;
+    kind = sl_watch_views[sl_wview].rows[row].kind;
+    /* #52: RESOLUTION is a control only while the size is the player's to
+     * choose; in BORDERLESS (the desktop owns it) the row reports itself
+     * informational, so the cursor, the pointer and the draw all follow the
+     * one kind. */
+    if (kind == SL_WROW_VALUE_RES && !sl_window_size_editable())
+        return SL_WROW_INFO_RES;
+    return kind;
+}
+const char *sl_sightline_row_label(s32 row)
+{
+    if (row < 0 || row >= sl_watch_views[sl_wview].count) return "\n";
+    return sl_watch_views[sl_wview].rows[row].label;
+}
+
+static void sl_sightline_witness(const char *what)
+{
+    if (getenv("SL_INPUT_DEBUG") != NULL)
+    {
+        const char *h = sl_watch_views[sl_wview].heading;
+        s32 n = 0;
+        while (h[n] != '\0' && h[n] != '\n') n++;
+        fprintf(stderr, "sightline watch: %s -> view=%d(%.*s) row=%u\n",
+                what, (int) sl_wview, (int) n, h, sl_sightline_row_index);
+    }
+}
+
+static void sl_sightline_open_view(s32 view)
+{
+    if (view <= SL_WVIEW_SIGHTLINE || view >= SL_WVIEW_COUNT) return;
+    if (sl_wview_depth >= SL_WVIEW_DEPTH_MAX) return;    /* no deeper child exists */
+    sl_wview_stack_view[sl_wview_depth] = sl_wview;
+    sl_wview_stack_row[sl_wview_depth] = (s32) sl_sightline_row_index;
+    sl_wview_depth++;
+    sl_wview = view;
+    sl_sightline_row_index = 0;
+    disable_watch_stick_y_nav_ready();
+    reset_watch_item_is_actively_selected();       /* the child starts unlatched (watch_play_beep_sound would latch) */
+    sndPlaySfx(g_musicSfxBufferPtr, CAMERA_BEEP1_SFX, 0);
+    sl_sightline_witness("open");
+}
+
+void sl_sightline_back(void)
+{
+    if (sl_wview == SL_WVIEW_SIGHTLINE || sl_wview_depth <= 0) return;
+    sl_wview_depth--;
+    sl_wview = sl_wview_stack_view[sl_wview_depth];
+    sl_sightline_row_index = (u32) sl_wview_stack_row[sl_wview_depth];
+    disable_watch_stick_y_nav_ready();
+    reset_watch_item_is_actively_selected();
+    sndPlaySfx(g_musicSfxBufferPtr, CAMERA_BEEP1_SFX, 0);
+    sl_sightline_witness("back");
+}
+
+void sl_sightline_request_back(void)
+{
+    sl_wview_back_req = 1;
+}
+
+void sl_reset_sightline_row_index(void)
+{
+    sl_sightline_row_index = 0;
+    sl_wview = SL_WVIEW_SIGHTLINE;
+    sl_wview_depth = 0;
+    sl_wview_back_req = 0;
+    sl_watch_bindings_close();
+}
+
+/* The row step of sub_GAME_7F0A5998 over the view in force, skipping a
+ * DIMMED row (the cursor falls past it, as the front end's disabled rows). */
+static void sl_sightline_step_row(s32 dir)
+{
+    s32 count = sl_sightline_row_count();
+    s32 tries = count;
+    do {
+        s32 r = (s32) sl_sightline_row_index + dir;
+        if (r >= count) r = 0;
+        if (r < 0) r = count - 1;
+        sl_sightline_row_index = (u32) r;
+    } while (SL_WROW_IS_INERT(sl_sightline_row_kind((s32) sl_sightline_row_index)) && --tries > 0);
+    disable_watch_stick_y_nav_ready();
+    reset_watch_item_is_actively_selected();
+    sl_sightline_witness(dir < 0 ? "up" : "down");
+}
+
+void sl_watch_sightline_navigation(void)
+{
+    if (sl_watch_bindings_is_open())
+    {
+        sl_watch_bindings_navigation();
+        return;
+    }
+    if (sl_wview_back_req)
+    {
+        sl_wview_back_req = 0;
+        sl_sightline_back();
+        return;
+    }
+
+    if ((joyGetButtonsPressedThisFrame(PLAYER_1, U_CBUTTONS|U_JPAD)) || (sub_GAME_7F0A5088()))
+        sl_sightline_step_row(-1);
+    else if ((joyGetButtonsPressedThisFrame(PLAYER_1, D_CBUTTONS|D_JPAD)) || (sub_GAME_7F0A50C4()))
+        sl_sightline_step_row(+1);
+    if (SL_WROW_IS_INERT(sl_sightline_row_kind((s32) sl_sightline_row_index)))
+        sl_sightline_step_row(+1);                /* never rest on GRAPHICS or an info row */
+
+    /* Inside a child the ring's L/R belong to the latched row; only the
+     * SIGHTLINE page itself steps the ring. */
+    if (sl_wview != SL_WVIEW_SIGHTLINE)
+        return;
+
+    if ((joyGetButtonsPressedThisFrame(PLAYER_1, L_CBUTTONS|L_TRIG|L_JPAD)) || (sub_GAME_7F0A4FB0()))
+    {
+        if ((joyGetButtons(PLAYER_1, Z_TRIG) == 0) && (watch_item_is_actively_selected == 0))
+        {
+            watch_screen_index = WATCH_INDEX_MISSION_BRIEFING;
+            sub_GAME_7F0A5210();
+            trigger_watch_zoom(WATCHZOOM1, 15.0f);
+            return;
+        }
+    }
+    if ((joyGetButtonsPressedThisFrame(PLAYER_1, R_CBUTTONS|R_TRIG|R_JPAD)) || (sub_GAME_7F0A4FEC()))
+    {
+        if ((joyGetButtons(PLAYER_1, Z_TRIG) == 0) && (watch_item_is_actively_selected == 0))
+        {
             watch_screen_index = WATCH_INDEX_MISSION_STATUS;
             zero_D_800409A4();
             sub_GAME_7F0A5210();
@@ -927,7 +1273,7 @@ void watch_screen4_navigation(void) {
         }
     }
 }
-
+#endif
 
 void controller_options_controlstyle_navigation(void)
 {
@@ -1614,6 +1960,12 @@ void sub_GAME_7F0A6A80(void)
 
         case WATCH_INDEX_INVENTORY:
             watch_screen1_navigation();
+#ifndef __sgi
+            break;
+
+        case WATCH_INDEX_SL_SIGHTLINE:               /* #44, native page */
+            sl_watch_sightline_navigation();
+#endif
     }
 }
 
@@ -1815,7 +2167,55 @@ Gfx *draw_background_health_and_armor(Gfx *gdl, Mtx *arg1, s32 zoom_squish)
     */
     gDPSetRenderMode(gdl++, G_RM_XLU_SURF, G_RM_XLU_SURF2);
     gDPSetCombineMode(gdl++, G_CC_SHADE, G_CC_SHADE);
+#ifndef __sgi
+    /* NATIVE (#44): the page bar has SIX segments (options.h,
+     * SL_WATCH_NUMBER_SCREENS). The player struct's five-slot buffers that
+     * trigger_solo_watch_menu fills cannot hold a sixth (the player is a fixed
+     * 0x2A80 allocation and the static bar's vertices follow the fifth
+     * rectangle), so the bar is rebuilt here every frame in the same per-frame
+     * dyn buffer the green background above already uses: the same
+     * setup_watch_rectangles / sub_GAME_7F0A3B40 pair with the six-segment
+     * spacing, coloured as set_page_rectangle_colors colours the five, and
+     * drawn under the same matrices and modes in place of the player's list.
+     * The player's list is still built on open and simply not drawn. */
+    {
+        struct WatchVertex *bar_vtx = (struct WatchVertex *) dynAllocateVertices(SL_WATCH_NUMBER_SCREENS * 4);
+        Gfx *bar_dl = dynAllocate((SL_WATCH_NUMBER_SCREENS * 2 + 1) * sizeof(Gfx));
+        struct WatchVertex *v = bar_vtx;
+        Gfx *d = bar_dl;
+        s32 x, k;
+
+        for (x = 0; x < SL_WATCH_NUMBER_SCREENS * SL_WATCH_SCREEN_SELECT_RECTANGLE_HSTEP; x += SL_WATCH_SCREEN_SELECT_RECTANGLE_HSTEP)
+        {
+            struct WatchVertex *first = v;
+            v = setup_watch_rectangles(v, x, 0, SL_WATCH_SCREEN_SELECT_RECTANGLE_WIDTH, 0x14, -0x12B, 0x136);
+            d = sub_GAME_7F0A3B40(d, OS_K0_TO_PHYSICAL(first));
+        }
+        gSPEndDisplayList(d);
+
+        for (k = 0; k < SL_WATCH_NUMBER_SCREENS * 4; k++)
+        {
+            bar_vtx[k].color.r = 0x20;
+            bar_vtx[k].color.g = 0x70;
+            bar_vtx[k].color.b = 0x20;
+        }
+        for (k = (s32) watch_screen_index * 4; k <= (s32) watch_screen_index * 4 + 3; k++)
+        {
+            bar_vtx[k].color.r = 0x50;
+            bar_vtx[k].color.g = 0xF0;
+            bar_vtx[k].color.b = 0x50;
+            if (watch_item_is_actively_selected)
+            {
+                bar_vtx[k].color.r = 0x30;
+                bar_vtx[k].color.g = 0xA0;
+                bar_vtx[k].color.b = 0x30;
+            }
+        }
+        gSPDisplayList(gdl++, OS_PHYSICAL_TO_K0(bar_dl));
+    }
+#else
     gSPDisplayList(gdl++, OS_PHYSICAL_TO_K0(g_CurrentPlayer->buffer_for_watch_greenbackdrop_DL));
+#endif
     /**
      * // end green rectangles/page select section
     */
@@ -2187,6 +2587,11 @@ Gfx *draw_watch_mission_status_page(Gfx *gdl, Mtx *param_2)
 void sub_GAME_7F0A8378(void)
 {
     if (joyGetButtonsPressedThisFrame(PLAYER_1, Z_TRIG|A_BUTTON) == 0) {
+#ifndef __sgi
+        /* NATIVE (#40): a pointer click on a list row, taken once the list has
+         * settled on it (the only time this runs) - equips like START below. */
+        if (!sl_watch_pointer_take_equip())
+#endif
         if (joyGetButtonsPressedThisFrame(PLAYER_1, START_BUTTON) == 0)
         {
             return;
@@ -3375,6 +3780,25 @@ Gfx *draw_watch_controller(Gfx *gdl)
     gdl = sub_GAME_7F0A6EE8(gdl);
     green = g_WatchBackgroundGreen;
 
+#ifndef __sgi
+    /* THE MODERN PAD (#63): the attached family's own controller, its parts
+     * following the player's hands, in the N64 pad's place - the same
+     * matrices, look-at and perspective - with the family's button names
+     * and the actions the binding registry holds for them around it
+     * (sl_watch_controller.c, 2026-09-20). Everything below is the N64 pad:
+     * the fallback for no model or a generic pad (its labels then read the
+     * pinned 1.1 Honey names, which is what the pad's Z / R mean). The
+     * probe (SL_PAD_DBG only) logs the face's eye-space facing under this
+     * finalmtx for whichever pad draws - the N64 pad's face is +y in
+     * GjoypadZ's frame, the models' is measured from their own mesh. */
+    sl_watch_controller_probe(&finalmtx);
+    if (sl_watch_controller_modern())
+    {
+        gdl = sl_watch_controller_draw(gdl, &finalmtx, green);
+        return gdl;
+    }
+#endif
+
     if (green < 0xe0)
     {
         gdl = watchRenderController(gdl, &finalmtx, green - 6, 1, watchTable, &contpadnum0);
@@ -3488,6 +3912,17 @@ Gfx *draw_watch_control_options_page(Gfx *gdl, Mtx *param_2) {
         pFontChars = ptrFontBankGothicChars;
 
         gdl = microcode_constructor(gdl);
+#ifndef __sgi
+        /* THE NATIVE PAGE (#63, 2026-09-20): the two rows are BUTTON LAYOUT
+         * and STICK LAYOUT (src/native/sl_watch_controller.c), on the same
+         * two row indices the original page's CONTROL STYLE / CONTROLLER
+         * rows used - so the original navigation (controller_options_*),
+         * the A / Z latch and the pointer's rows are untouched - with the
+         * latched LEFT / RIGHT stepping the value. The N64 CONTROL STYLE
+         * row is gone with the styles (the game side is pinned to 1.1
+         * Honey). Everything below is the original page, verbatim. */
+        return sl_watch_layout_rows_draw(gdl);
+#endif
         textptr = langGet(getStringID(LOPTIONS, OPTION_STR_32_CONTROLSTYLE_LF)); //control style
 
         sp5C = XOFFSET_1;
@@ -3736,6 +4171,567 @@ after_state:
 }
 
 
+#ifndef __sgi
+/* NATIVE ONLY (#44, 2026-09-18; the row itself dates from #39, 2026-09-17):
+ * the SIGHTLINE page - the sixth solo-watch page (options.h,
+ * WATCH_INDEX_SL_SIGHTLINE) holding the native-only settings as OFF / ON
+ * rows:
+ *
+ *     sightline
+ *     invert mouse y   off  on      (#39)
+ *     sprint           off  on      (#42)
+ *
+ * WHAT A ROW IS NOT. Not a game_options_entries row: that table is the
+ * per-folder save's option set (fileSaveSettingsForFolder, file2.c:1230), and
+ * these settings must never reach the EEPROM. A row holds no value of its own
+ * either - it is a VIEW onto one state that lives elsewhere and is reached by
+ * its one setter: Invert Mouse Y is the platform layer's g_mouse_invert_y
+ * (sl_input.c, applied once in read_mouse; the setter persists it through the
+ * native settings store), Sprint is the store's sprint_enabled read every
+ * tick by the movement seam (bondview2.c, sl_sprint_enabled) and written
+ * through sl_sprint_enabled_set (sl_settings_apply.c). The front end's
+ * OPTIONS -> SETTINGS page reads and writes the same two through the same
+ * calls, so the two menus never disagree and nothing syncs anything. The
+ * original "look up/down" row on Game Options is untouched and still means
+ * the CONTROLLER stick's vertical convention; it never governs the mouse
+ * (B-060).
+ *
+ * The value change mirrors game_option_toggle_input exactly - the A/Z select
+ * latch (draw_watch_current_page toggles it for every page but the
+ * inventory), then LEFT (C-left / L / d-pad left / the latched stick) = off
+ * and RIGHT = on - and goes through game_option_select_value on a local so
+ * the stick latch and the confirm sound are the rows' own. Effect is
+ * immediate: read_mouse reads the one state on its next poll and the sprint
+ * seam reads the store on its next tick.
+ *
+ * Wording follows the text table's own convention ("look up/down\n",
+ * "off\n", "on\n": lowercase, LF-terminated - assets/obseg/text/LoptionE.h);
+ * the off/on values are the table's own strings, only the heading and the
+ * labels are native. Colours, x positions (0xBE/0xC8 by j_text_trigger,
+ * 0xFA) and the highlighted / selected / outlined states are
+ * draw_toggle_option_values' and draw_toggle_options'. Pointer hit-testing
+ * and clicks for this page are #40's machinery (sl_watch_pointer.c), not
+ * here. */
+/* Toggle rows by KIND: the one state each, read and written through the
+ * same call the front end uses. */
+static u32 sl_sightline_toggle_get(s32 kind)
+{
+    if (kind == SL_WROW_TOGGLE_SPRINT)
+        return sl_sprint_enabled() ? 1 : 0;
+    if (SL_WROW_IS_MODE(kind))                 /* #56: 0 hold / 1 toggle */
+        return sl_action_mode(kind == SL_WROW_TOGGLE_SMODE ? 1 : 0) ? 1 : 0;
+    if (kind == SL_WROW_TOGGLE_VSYNC)          /* #52: the applied swap interval */
+    {
+        int vs = 0;
+        sl_window_state(NULL, NULL, NULL, &vs);
+        return vs ? 1 : 0;
+    }
+    return sl_mouse_invert_y_get() ? 1 : 0;
+}
+
+static void sl_sightline_toggle_set(s32 kind, u32 on)
+{
+    if (kind == SL_WROW_TOGGLE_SPRINT)
+        sl_sprint_enabled_set(on != 0);
+    else if (SL_WROW_IS_MODE(kind))
+        sl_action_mode_set(kind == SL_WROW_TOGGLE_SMODE ? 1 : 0, on != 0);
+    else if (kind == SL_WROW_TOGGLE_VSYNC)
+        sl_window_request_vsync(on != 0);      /* #52: a request; the backend commits what it read back */
+    else
+        sl_mouse_invert_y_set(on != 0);
+    /* The one diagnostic for the toggle rows (#56): what a cell set, beside
+     * what the four states read back. */
+    if (getenv("SL_INPUT_DEBUG") != NULL)
+    {
+        int vs = 0;
+        sl_window_state(NULL, NULL, NULL, &vs);
+        fprintf(stderr, "sightline watch: toggle kind=%d <- %u -> minv=%d sprint=%d smode=%d cmode=%d vsync=%d req=%d\n",
+                (int) kind, on, sl_mouse_invert_y_get(), sl_sprint_enabled(),
+                sl_action_mode(1), sl_action_mode(0), vs, sl_window_request_pending());
+    }
+}
+
+/* The #45 value rows: ASPECT RATIO steps through the four shapes in display
+ * order (4:3, 16:9, 21:9, 32:9, wrapping) and FIELD OF VIEW steps the
+ * displayed 16:9-equivalent degree (60..110, clamped) - the same setters the
+ * front end's DISPLAY tab calls, so the two views can never disagree. A step
+ * carries the confirm sound and the stick latch of game_option_select_value
+ * on a local, as the toggles do. Effect is immediate: the renderer reads the
+ * store at its next frame reset (an aspect change resizes the window on the
+ * next frame, the watch re-centred in it; the FOV shows the moment the watch
+ * closes on the world). */
+static void sl_sightline_value_step(s32 kind, s32 dir)
+{
+    u32 dummy = 0;
+
+    if (dir == 0)
+        return;
+    game_option_select_value(&dummy, 1);
+    if (kind == SL_WROW_VALUE_ASPECT)
+    {
+        s32 col = sl_aspect_order_of(sl_aspect_ratio()) + (dir > 0 ? 1 : -1);
+        if (col < 0) col = 3;
+        if (col > 3) col = 0;
+        sl_aspect_ratio_set(sl_aspect_by_order(col));
+    }
+    else if (kind == SL_WROW_VALUE_FOV)
+    {
+        sl_fov_step(dir > 0 ? 1 : -1);
+    }
+    else if (kind == SL_WROW_VALUE_MSENS || kind == SL_WROW_VALUE_SSENS)
+    {
+        /* #50: one SL_MOUSE_SENS_STEP per press, clamped by the platform
+         * layer; the gameplay poll reads the store, so the change is felt on
+         * the first look after the watch closes. */
+        sl_mouse_sens_step(kind == SL_WROW_VALUE_SSENS, dir > 0 ? 1 : -1);
+    }
+    else if (SL_WROW_IS_PAD_TUNE(kind))
+    {
+        /* #51: one grid step of the controller row, clamped by the platform
+         * layer; the pad seam reads the store on its next poll. */
+        sl_pad_tune_step(SL_WROW_PAD_TUNE_ID(kind), dir > 0 ? 1 : -1);
+    }
+    else if (kind == SL_WROW_VALUE_WMODE)
+    {
+        /* #52: the next mode, wrapping - a request the SDL backend applies
+         * at its next frame reset (the watch stays open: the window changes
+         * under it and the pointer follows the new safe rect next frame). */
+        sl_window_mode_step(dir > 0 ? 1 : -1);
+    }
+    else if (kind == SL_WROW_VALUE_RES)
+    {
+        /* #52: the next size of the current mode's list. */
+        sl_window_size_step(dir > 0 ? 1 : -1);
+    }
+    else if (SL_WROW_IS_NAMED(kind))
+    {
+        /* #63: BUTTON LAYOUT steps through the presets (a step off CUSTOM
+         * lands on a preset and re-seeds the pad slots), STICK LAYOUT
+         * through the four; both wrap, both live on the next poll. */
+        sl_watch_layout_step(kind == SL_WROW_VALUE_BLAYOUT ? 0 : 1, dir > 0 ? 1 : -1);
+    }
+    if ((kind == SL_WROW_VALUE_WMODE || kind == SL_WROW_VALUE_RES) && getenv("SL_INPUT_DEBUG") != NULL)
+    {
+        int m = 0, w = 0, h = 0, v = 0;
+        sl_window_state(&m, &w, &h, &v);
+        fprintf(stderr, "sightline watch: display step kind=%d dir=%d -> mode=%s %dx%d vsync=%d req=%d\n",
+                (int) kind, (int) dir, sl_window_mode_name(sl_window_mode_shown()), w, h, v, sl_window_request_pending());
+    }
+}
+
+/* One press on a row of the view in force - the latched keyboard / pad path
+ * and the pointer (sl_watch_pointer.c) both come here. value < 0 is the
+ * LABEL: a sub-menu opens, BACK returns, BINDINGS opens the #46 child, a
+ * toggle / value row just beeps (its latch is the row highlight). value >= 0
+ * is a CELL: a toggle's off (0) / on (1); a value row's `-` (0), the value
+ * (1, steps up) or `+` (2). */
+void sl_sightline_click(s32 row, s32 value)
+{
+    s32 kind = sl_sightline_row_kind(row);
+    const struct sl_watch_row *r;
+
+    if (row < 0 || row >= sl_sightline_row_count())
+        return;
+    r = &sl_watch_views[sl_wview].rows[row];
+    switch (kind)
+    {
+    case SL_WROW_SUBMENU:
+        if (value < 0) sl_sightline_open_view((s32) r->arg);
+        break;
+    case SL_WROW_BACK:
+        if (value < 0) sl_sightline_back();
+        break;
+    case SL_WROW_BINDINGS:
+        if (value < 0) sl_watch_bindings_open();
+        break;
+    case SL_WROW_TOGGLE_MINV:
+    case SL_WROW_TOGGLE_SPRINT:
+    case SL_WROW_TOGGLE_SMODE:
+    case SL_WROW_TOGGLE_CMODE:
+    case SL_WROW_TOGGLE_VSYNC:
+        if (value < 0) { watch_play_beep_sound(); break; }
+        if (value <= 1 && (s32) sl_sightline_toggle_get(kind) != value)
+        {
+            u32 v = sl_sightline_toggle_get(kind);
+            game_option_select_value(&v, (u32) value);
+            sl_sightline_toggle_set(kind, (u32) value);
+        }
+        break;
+    case SL_WROW_VALUE_ASPECT:
+    case SL_WROW_VALUE_FOV:
+    case SL_WROW_VALUE_MSENS:
+    case SL_WROW_VALUE_SSENS:
+    case SL_WROW_VALUE_BLAYOUT:
+    case SL_WROW_VALUE_SLAYOUT:
+    case SL_WROW_VALUE_PSENS:
+    case SL_WROW_VALUE_PDZ:
+    case SL_WROW_VALUE_MDZ:
+    case SL_WROW_VALUE_WMODE:
+    case SL_WROW_VALUE_RES:
+        if (value < 0) { watch_play_beep_sound(); break; }
+        sl_sightline_value_step(kind, value == 0 ? -1 : +1);
+        break;
+    default:
+        break;
+    }
+}
+
+/* The slider rows' fill, 0..1 - the value's place in its range, from the
+ * platform layer (the same read the front end's bars make). */
+static f32 sl_sightline_row_fill(s32 kind)
+{
+    if (kind == SL_WROW_VALUE_FOV)
+        return sl_fov_fraction();
+    if (SL_WROW_IS_PAD_TUNE(kind))
+        return sl_pad_tune_fraction(SL_WROW_PAD_TUNE_ID(kind));
+    return sl_mouse_sens_fraction(kind == SL_WROW_VALUE_SSENS);
+}
+
+/* A slider row's value as printed: the FOV row's degrees, the percent rows'
+ * percent (mouse, or the #51 controller rows). */
+static s32 sl_sightline_slider_value(s32 kind)
+{
+    if (kind == SL_WROW_VALUE_FOV)
+        return sl_fov_h16_displayed();
+    if (SL_WROW_IS_PAD_TUNE(kind))
+        return sl_pad_tune_get(SL_WROW_PAD_TUNE_ID(kind));
+    return sl_mouse_sens_get(kind == SL_WROW_VALUE_SSENS);
+}
+
+/* A click or a drag on a slider row's bar (sl_watch_pointer.c): the value at
+ * that fraction, on the value's own grid; the confirm sound and stick latch of
+ * a step only when the value actually changes, so a drag that stays on one
+ * grid point is silent, as the MUSIC / FX tracks are. */
+void sl_sightline_slide(s32 row, f32 t)
+{
+    s32 kind = sl_sightline_row_kind(row);
+    s32 before, after;
+    u32 dummy = 0;
+
+    if (!SL_WROW_IS_SLIDER(kind))
+        return;
+    before = sl_sightline_slider_value(kind);
+    if (kind == SL_WROW_VALUE_FOV)
+        sl_fov_set_fraction(t);
+    else if (SL_WROW_IS_PAD_TUNE(kind))
+        sl_pad_tune_set_fraction(SL_WROW_PAD_TUNE_ID(kind), t);
+    else
+        sl_mouse_sens_set_fraction(kind == SL_WROW_VALUE_SSENS, t);
+    after = sl_sightline_slider_value(kind);
+    if (after != before)
+        game_option_select_value(&dummy, 1);
+}
+
+/* The label y of a row of the view in force: SL_SIGHTLINE_ROW_Y0, YINC per
+ * row, plus SL_SIGHTLINE_SLIDER_EXTRA for every slider row at or above it
+ * (the bar's line sits above its own label). */
+s32 sl_sightline_row_y(s32 row)
+{
+    s32 y = SL_SIGHTLINE_ROW_Y0 + row * YINC;
+    s32 i;
+    for (i = 0; i <= row && i < sl_sightline_row_count(); i++)
+        if (SL_WROW_IS_SLIDER(sl_sightline_row_kind(i)))
+            y += SL_SIGHTLINE_SLIDER_EXTRA;
+    return y;
+}
+
+/* The latched row's LEFT / RIGHT (the sl_sightline_row_input shape of #44:
+ * LEFT = off / `-`, RIGHT = on / `+`), on the frame's buttons. */
+static void sl_sightline_latched_input(s32 row)
+{
+    s32 kind = sl_sightline_row_kind(row);
+    if (!watch_item_is_actively_selected)
+        return;
+    if (joyGetButtonsPressedThisFrame(PLAYER_1, L_CBUTTONS|L_TRIG|L_JPAD) || sub_GAME_7F0A4FB0())
+        sl_sightline_click(row, 0);
+    else if (joyGetButtonsPressedThisFrame(PLAYER_1, R_CBUTTONS|R_TRIG|R_JPAD) || sub_GAME_7F0A4FEC())
+        sl_sightline_click(row, SL_WROW_IS_VALUE(kind) ? 2 : 1);
+}
+
+static Gfx *sl_draw_sightline_label(Gfx *gdl, s32 y, char *label, s32 highlighted, s32 selected, s32 dimmed)
+{
+    if (dimmed)
+        return draw_options_labels(gdl, XOFFSET_1, y, label, 0x00500060, 0, -1, 0, 0, 0x3000B0, 0);
+    if (selected)
+        return draw_options_labels(gdl, XOFFSET_1, y, label, -1, 1, 0x7000A0, 0, 0, 0x3000B0, 0);
+    if (highlighted)
+        return draw_options_labels(gdl, XOFFSET_1, y, label, 0xA0FFA0F0, 0, -1, 0, 0, 0x3000B0, 0);
+    return draw_options_labels(gdl, XOFFSET_1, y, label, 0xFF00B0, 0, -1, 0, 0, 0x3000B0, 0);
+}
+
+/* A toggle row: label, then off / on at the toggles' columns (0xBE/0xC8 by
+ * j_text_trigger, 0xFA), the current one lit, the latched one active. The
+ * #56 mode rows print the text table's hold / toggle instead (the aim
+ * control row's own two strings) at the same columns. */
+static Gfx *sl_draw_sightline_toggle(Gfx *gdl, s32 row, s32 y, char *label)
+{
+    s32 kind = sl_sightline_row_kind(row);
+    s32 highlighted = (s32) sl_sightline_row_index == row;
+    s32 selected = highlighted && watch_item_is_actively_selected;
+    u32 colour_off = 0x00800080;
+    u32 colour_on  = 0x00800080;
+    u32 active = selected ? 0xA0FFA0F0 : 0x00FF00B0;
+    s32 x1 = j_text_trigger ? 0xBE : 0xC8;
+    s32 x2 = 0xFA;
+    /* The two cells' string ids, chosen BEFORE getStringID: that macro
+     * (bondconstants.h) does not parenthesise its slot argument, so a
+     * conditional written inside it binds to the bank's addition. */
+    s32 id_lo = SL_WROW_IS_MODE(kind) ? OPTION_STR_1E_HOLD_LF   : OPTION_STR_1A_OFF_LF;
+    s32 id_hi = SL_WROW_IS_MODE(kind) ? OPTION_STR_1D_TOGGLE_LF : OPTION_STR_19_ON_LF;
+
+    if (selected)
+        sl_sightline_latched_input(row);
+    if (sl_sightline_toggle_get(kind))
+        colour_on = active;
+    else
+        colour_off = active;
+    gdl = sl_draw_sightline_label(gdl, y, label, highlighted, selected, 0);
+    gdl = draw_options_labels(gdl, x1, y, langGet(getStringID(LOPTIONS, id_lo)), colour_off, 0, -1, 1, 0, 0x3000B0, 0);
+    gdl = draw_options_labels(gdl, x2, y, langGet(getStringID(LOPTIONS, id_hi)), colour_on,  0, -1, 1, 0, 0x3000B0, 0);
+    return gdl;
+}
+
+/* A value row (#45): label, then `-` value `+`. ASPECT RATIO (four discrete
+ * shapes) - the range rows are sliders since the #50 owner request. */
+static Gfx *sl_draw_sightline_value(Gfx *gdl, s32 row, s32 y, char *label)
+{
+    static char minus[] = "-\n";
+    static char plus[]  = "+\n";
+    static char value[12];
+    s32 highlighted = (s32) sl_sightline_row_index == row;
+    s32 selected = highlighted && watch_item_is_actively_selected;
+    u32 active = selected ? 0xA0FFA0F0 : 0x00FF00B0;
+    const char *n = sl_aspect_name(sl_aspect_ratio());
+    s32 i = 0;
+
+    if (selected)
+        sl_sightline_latched_input(row);
+
+    while (n[i] != '\0' && i < 10) { value[i] = n[i]; i++; }
+    value[i++] = '\n'; value[i] = '\0';
+    gdl = sl_draw_sightline_label(gdl, y, label, highlighted, selected, 0);
+    gdl = draw_options_labels(gdl, SL_SIGHTLINE_X_MINUS, y, minus, 0x00800080, 0, -1, 1, 0, 0x3000B0, 0);
+    gdl = draw_options_labels(gdl, SL_SIGHTLINE_X_VALUE, y, value, active,     0, -1, 1, 0, 0x3000B0, 0);
+    gdl = draw_options_labels(gdl, SL_SIGHTLINE_X_PLUS,  y, plus,  0x00800080, 0, -1, 1, 0, 0x3000B0, 0);
+    return gdl;
+}
+
+/* The NAMED value rows (#63, 2026-09-20): BUTTON LAYOUT and STICK LAYOUT -
+ * the label, then the layout's name right-aligned at SL_SIGHTLINE_X_BARVALUE
+ * (the slider rows' value column: "legacy southpaw" is fifteen glyphs and
+ * the centred value column between `-` and `+` holds eight). The latched
+ * LEFT / RIGHT step, the pointer's click on the name steps up. The names
+ * come from the native layer (sl_watch_layout_name), lowercased here as the
+ * family name is - the watch font draws capitals from either. */
+const char *sl_sightline_row_value_name(s32 row)
+{
+    static char res[16];
+    s32 kind = sl_sightline_row_kind(row);
+    if (kind == SL_WROW_VALUE_WMODE)           /* #52 */
+        return sl_window_mode_name(sl_window_mode_shown());
+    if (kind == SL_WROW_VALUE_RES || kind == SL_WROW_INFO_RES)
+    {
+        int w = 0, h = 0;
+        sl_window_size_shown(&w, &h);
+        sl_window_size_text(w, h, res, 12);
+        return res;
+    }
+    if (!SL_WROW_IS_NAMED(kind)) return "";
+    return sl_watch_layout_name(kind == SL_WROW_VALUE_BLAYOUT ? 0 : 1);
+}
+
+static Gfx *sl_draw_sightline_named(Gfx *gdl, s32 row, s32 y, char *label)
+{
+    static char value[20];
+    s32 highlighted = (s32) sl_sightline_row_index == row;
+    s32 selected = highlighted && watch_item_is_actively_selected;
+    u32 active = selected ? 0xA0FFA0F0 : 0x00FF00B0;
+    const char *n = sl_sightline_row_value_name(row);
+    s32 i = 0;
+
+    if (selected)
+        sl_sightline_latched_input(row);
+    while (n[i] != '\0' && i < 17) { value[i] = (char) ((n[i] >= 'A' && n[i] <= 'Z') ? n[i] + 32 : n[i]); i++; }
+    value[i++] = '\n'; value[i] = '\0';
+    gdl = sl_draw_sightline_label(gdl, y, label, highlighted, selected, 0);
+    gdl = draw_options_labels(gdl, SL_SIGHTLINE_X_BARVALUE, y, value, active, 0, -1, 0, 0, 0x3000B0, 1);
+    return gdl;
+}
+
+/* The informational CONTROLLER row (#63): the label, and the family SDL
+ * classified the driving pad as (xbox / playstation / generic / none) at the
+ * value column. Never highlighted, never latched - the cursor skips it - and
+ * no manual choice: the family is what the device reports. */
+static Gfx *sl_draw_sightline_info(Gfx *gdl, s32 y, char *label, const char *n)
+{
+    static char value[16];
+    s32 i = 0;
+
+    while (n[i] != '\0' && i < 14) { value[i] = (char) ((n[i] >= 'A' && n[i] <= 'Z') ? n[i] + 32 : n[i]); i++; }
+    value[i++] = '\n'; value[i] = '\0';
+    gdl = sl_draw_sightline_label(gdl, y, label, 0, 0, 0);
+    gdl = draw_options_labels(gdl, SL_SIGHTLINE_X_BARVALUE, y, value, 0x00800080, 0, -1, 0, 0, 0x3000B0, 1);
+    return gdl;
+}
+
+/* A slider row's TEXT (#50 owner request): the label under the bar, the
+ * value right-aligned to the bar's right edge on the same line (FIELD OF
+ * VIEW its degrees, the sensitivities their percent) - the MUSIC / FX rows'
+ * label, plus the number (the bar alone would not say 40% from 50%). No
+ * `-` / `+` cells: the
+ * latched LEFT / RIGHT step as before, the pointer sets on the bar. The bar
+ * itself is drawn on the face before the 2D switch (sl_draw_sightline_bar). */
+static Gfx *sl_draw_sightline_slider(Gfx *gdl, s32 row, s32 y, char *label)
+{
+    static char value[8];
+    s32 kind = sl_sightline_row_kind(row);
+    s32 highlighted = (s32) sl_sightline_row_index == row;
+    s32 selected = highlighted && watch_item_is_actively_selected;
+    u32 active = selected ? 0xA0FFA0F0 : 0x00FF00B0;
+    s32 pct = kind == SL_WROW_VALUE_FOV ? 0 : 1;
+    s32 h = sl_sightline_slider_value(kind);
+    s32 i = 0;
+
+    if (selected)
+        sl_sightline_latched_input(row);
+    if (h >= 100) value[i++] = (char) ('0' + (h / 100) % 10);
+    value[i++] = (char) ('0' + (h / 10) % 10);
+    value[i++] = (char) ('0' + h % 10);
+    if (pct) value[i++] = '%';
+    value[i++] = '\n'; value[i] = '\0';
+    gdl = sl_draw_sightline_label(gdl, y, label, highlighted, selected, 0);
+    gdl = draw_options_labels(gdl, SL_SIGHTLINE_X_BARVALUE, y, value, active, 0, -1, 0, 0, 0x3000B0, 1);
+    return gdl;
+}
+
+/* A slider row's BAR: draw_music_volume_slider's three 600x20 rectangles on
+ * the face (setup_watch_rectangles at the tracks' x, this row's z), filled
+ * to the value by update_volume_slider_verts with its 30-unit transition
+ * band - the same verts, the same colours, the same render mode; only the z
+ * and the fill differ. Drawn before microcode_constructor, as the Game
+ * Options page draws its two. z is the face row under the bar's framebuffer
+ * line: the label's y less SL_SIGHTLINE_BAR_ABOVE, through the page's own
+ * projection (sl_watch_face_z_at_fb_y), so the bar follows the label under
+ * any zoom or viewport as the projected hit-test does. */
+static Gfx *sl_draw_sightline_bar(Gfx *gdl, Mtx *pagemtx, s32 y, f32 fill)
+{
+    struct WatchVertex *vtx1;
+    struct WatchVertex *vtx;
+    Gfx *cmd;
+    s32 z = (s32) sl_watch_face_z_at_fb_y(pagemtx, (f32) (y - SL_SIGHTLINE_BAR_ABOVE));
+
+    vtx1 = (struct WatchVertex *) dynAllocateVertices(12);
+
+    cmd = gdl++;
+    gDPSetRenderMode(cmd, G_RM_XLU_SURF, G_RM_XLU_SURF2);
+
+    gdl = sub_GAME_7F0A3B40(gdl, OS_K0_TO_PHYSICAL(vtx1));
+    vtx = setup_watch_rectangles(vtx1, 0, 0, SL_SIGHTLINE_BAR_W, SL_SIGHTLINE_BAR_H, SL_SIGHTLINE_BAR_X0, z);
+
+    gdl = sub_GAME_7F0A3B40(gdl, OS_K0_TO_PHYSICAL(vtx));
+    vtx = setup_watch_rectangles(vtx, 0, 0, SL_SIGHTLINE_BAR_W, SL_SIGHTLINE_BAR_H, SL_SIGHTLINE_BAR_X0, z);
+
+    gdl = sub_GAME_7F0A3B40(gdl, OS_K0_TO_PHYSICAL(vtx));
+    setup_watch_rectangles(vtx, 0, 0, SL_SIGHTLINE_BAR_W, SL_SIGHTLINE_BAR_H, SL_SIGHTLINE_BAR_X0, z);
+
+    update_volume_slider_verts(vtx1, fill, 30);
+
+    return gdl;
+}
+
+/* An action row (a sub-menu, BACK, BINDINGS): the A/Z latch on it (which
+ * draw_watch_current_page has just toggled for this frame) IS the press and
+ * is dropped, so what opens starts unlatched. A DIMMED row only draws. */
+static Gfx *sl_draw_sightline_action(Gfx *gdl, s32 row, s32 y, char *label)
+{
+    s32 kind = sl_sightline_row_kind(row);
+    s32 highlighted = (s32) sl_sightline_row_index == row;
+
+    if (kind == SL_WROW_DIMMED)
+        return sl_draw_sightline_label(gdl, y, label, 0, 0, 1);
+    if (highlighted && watch_item_is_actively_selected)
+    {
+        reset_watch_item_is_actively_selected();
+        sl_sightline_click(row, -1);
+        return gdl;
+    }
+    return sl_draw_sightline_label(gdl, y, label, highlighted, 0, 0);
+}
+
+/* The page, the shape of draw_watch_game_options_page: the shared background
+ * and bar, then the text only once the page zoom has settled - the view in
+ * force's heading and rows. With the BINDINGS child open (#46) the child
+ * draws in place of the rows; the background, the six-segment bar and the
+ * pointer are the page's as ever. */
+Gfx *sl_draw_watch_sightline_page(Gfx *gdl, Mtx *param_2)
+{
+    const struct sl_watch_view *v = &sl_watch_views[sl_wview];
+    s32 i;
+
+    gdl = draw_background_health_and_armor(gdl, param_2, 0);
+
+    if (check_watch_page_transistion_running() != 1)
+    {
+        /* The slider rows' bars first, on the face, as the Game Options page
+         * draws its two tracks before the 2D switch (#50). */
+        if (!sl_watch_bindings_is_open())
+        {
+            for (i = 0; i < (s32) v->count; i++)
+                if (SL_WROW_IS_SLIDER(v->rows[i].kind))
+                    gdl = sl_draw_sightline_bar(gdl, param_2, sl_sightline_row_y(i), sl_sightline_row_fill(v->rows[i].kind));
+        }
+        gdl = microcode_constructor(gdl);
+        if (sl_watch_bindings_is_open())
+            return sl_watch_bindings_draw(gdl);
+        gdl = draw_options_labels(gdl, XOFFSET_1, SL_SIGHTLINE_HEADING_Y, (char *) v->heading, 0xFF00B0, 0, -1, 0, 0, 0x3000B0, 0);
+        for (i = 0; i < (s32) v->count; i++)
+        {
+            s32 y = sl_sightline_row_y(i);
+            char *label = (char *) v->rows[i].label;
+            /* the kind as REPORTED (#52: RESOLUTION reads informational in
+             * BORDERLESS), not the table's */
+            switch (sl_sightline_row_kind(i))
+            {
+            case SL_WROW_INFO_RES:
+                gdl = sl_draw_sightline_info(gdl, y, label, sl_sightline_row_value_name(i));
+                break;
+            case SL_WROW_TOGGLE_MINV:
+            case SL_WROW_TOGGLE_SPRINT:
+            case SL_WROW_TOGGLE_SMODE:
+            case SL_WROW_TOGGLE_CMODE:
+            case SL_WROW_TOGGLE_VSYNC:
+                gdl = sl_draw_sightline_toggle(gdl, i, y, label);
+                break;
+            case SL_WROW_VALUE_FOV:
+            case SL_WROW_VALUE_MSENS:
+            case SL_WROW_VALUE_SSENS:
+            case SL_WROW_VALUE_PSENS:
+            case SL_WROW_VALUE_PDZ:
+            case SL_WROW_VALUE_MDZ:
+                gdl = sl_draw_sightline_slider(gdl, i, y, label);
+                break;
+            case SL_WROW_VALUE_ASPECT:
+                gdl = sl_draw_sightline_value(gdl, i, y, label);
+                break;
+            case SL_WROW_VALUE_BLAYOUT:
+            case SL_WROW_VALUE_SLAYOUT:
+            case SL_WROW_VALUE_WMODE:
+            case SL_WROW_VALUE_RES:
+                gdl = sl_draw_sightline_named(gdl, i, y, label);
+                break;
+            case SL_WROW_INFO_PAD:
+                gdl = sl_draw_sightline_info(gdl, y, label, sl_input_pad_family_name(sl_input_pad_family()));
+                break;
+            default:
+                gdl = sl_draw_sightline_action(gdl, i, y, label);
+                break;
+            }
+        }
+    }
+
+    return gdl;
+}
+#endif
 Gfx *draw_toggle_options(Gfx *gdl)
 {
     s32 y_offset;
@@ -4151,12 +5147,25 @@ const char D_80058454[] = " \n\n";
  */
 Gfx *draw_watch_current_page(Gfx *gdl, Mtx *arg1, s32 watch_transitioning)
 {
+#ifndef __sgi
+    /* NATIVE (#44): the drawn bar is the six-segment one built and coloured
+     * per frame in draw_background_health_and_armor; the player's five-slot
+     * vertex buffer is not drawn, and colouring it for page index 5 would
+     * write past its 20 vertices into the static bar's. */
+#else
     set_page_rectangle_colors(watch_screen_index, (struct WatchVertex *)g_CurrentPlayer->buffer_for_watch_greenbackdrop_vertices);
+#endif
 
     if (watch_transitioning == TRUE)
     {
         set_BONDdata_outside_watch_menu_flag(FALSE);
         sub_GAME_7F0BD8FC(0);
+#ifndef __sgi
+        /* NATIVE (#40): the pointer's hover and clicks for this frame, applied
+         * BEFORE the page reads the pad so a click lands in the same frame's
+         * state the page then draws. */
+        sl_watch_pointer_frame(arg1);
+#endif
 
         // Handle A or Z button click when in any page but inventory page
         if ((watch_screen_index != WATCH_INDEX_INVENTORY) && (joyGetButtonsPressedThisFrame(PLAYER_1, Z_TRIG|A_BUTTON)))
@@ -4180,7 +5189,16 @@ Gfx *draw_watch_current_page(Gfx *gdl, Mtx *arg1, s32 watch_transitioning)
                 break;
             case WATCH_INDEX_MISSION_BRIEFING:
                 gdl = draw_watch_mission_briefing_page(gdl, arg1);
+#ifndef __sgi
+                break;
+            case WATCH_INDEX_SL_SIGHTLINE:               /* #44, native page */
+                gdl = sl_draw_watch_sightline_page(gdl, arg1);
+#endif
         }
+#ifndef __sgi
+        /* NATIVE (#40): the pointer's crosshair, on top of the page. */
+        gdl = sl_watch_pointer_draw(gdl);
+#endif
     }
     else if (watch_transitioning == FALSE)
     {

@@ -33,6 +33,54 @@
  * rationale at sl_portal_conservative in src/platform/sl_ultra_shim.c, the
  * same native-seam extern idiom frametiming.c uses for sl_frame_advance. */
 extern int sl_portal_conservative(void);
+
+/* #45. THE DRAW SET IS WIDER THAN THE SCREEN THE GAME REASONS ABOUT.
+ *
+ * The native renderer widens the 3D view horizontally by the selected aspect
+ * (src/platform/sl_display.c: k = 1 at 4:3, 4/3 at 16:9, 8/3 at 32:9) and
+ * draws the world into the bands to either side of the 4:3 image. Everything
+ * the game submits is drawn there - but the game only submits what its room
+ * traversal reached, and that traversal starts from the player's screen
+ * rectangle (bgUpdateCurrentPlayerScreenMinMax). Measured at 32:9 on the
+ * Facility catwalk (theta 240 / 285 / 300): the bands showed the fog-colour
+ * backdrop where the next room stands, because that room's portal projects
+ * outside [1,319] and the 4:3 traversal never reached it.
+ *
+ * The fix is ONE rectangle: the traversal's root is widened by the band on
+ * each side (sl_view_scale, the same k), in the same screen units the portal
+ * projection already produces - a portal that projects to x = -80 is a
+ * legitimate coordinate under the 4:3 projection, it just used to be outside
+ * the rectangle. Apertures, the per-room scissor (clamped to the view by
+ * bgSetScissorForCurrentRoom, and extended back to the band by the renderer
+ * where it touches an edge) and the prop tests that read the apertures
+ * follow from it. That is the render-visibility side.
+ *
+ * What must NOT follow is the game's own notion of "on screen" where a rule
+ * hangs off it: the AI command list's IF-I'M-ON-SCREEN / IF-MY-ROOM-IS-ON-
+ * SCREEN / IF-ROOM-WITH-PAD-IS-ON-SCREEN tests (chrai.c) and the spawn
+ * placement test chrIsPosOffScreen (chraction.c) are scripting and spawn
+ * rules, and the monitor's shape may not enter them (project rules 1 and 5;
+ * #45's boundary). Those read the ORIGINAL 4:3 rectangle kept here
+ * (sl_view43) through sl_roomIsOnScreen43 / sl_propIsOnScreen43: a room is
+ * on the 4:3 screen when it was reached AND its aperture meets the 4:3
+ * rectangle - which, because an aperture is the intersection of portal boxes
+ * down a path and the 4:3 rectangle is inside the widened one, is exactly
+ * what the 4:3 traversal would have found. The consumers that keep the
+ * WIDE answer on purpose are the ones whose wrong answer the player would
+ * SEE: animation ticks for characters in view (chr.c:2436-2506), the
+ * off-screen "magic" travel of patrolling guards (chraction.c:9164, :9311 -
+ * a guard standing in the band must walk, not teleport), model / hat /
+ * weapon slot recycling, scorch and impact drawing. Every reader is listed
+ * in docs/divergences.md D-008.
+ *
+ * At 4:3 (or with the store inactive: trace replay, headless health) k is 1,
+ * the band is 0 and every value below is the original's. */
+extern float sl_view_scale(void);
+extern float sl_view_scale_y(void);
+static struct bbox2d sl_view43;          /* the screen box BEFORE widening */
+static s32 sl_view43_valid;
+/* sl_roomIsOnScreen43 / sl_clampBoxToView43 are defined beside
+ * getROOMID_isRendered below, after the room table they read. */
 #endif
 
 /* B-032.  Room primary display lists are rewritten to NATIVE word order at
@@ -2377,6 +2425,39 @@ u8 getROOMID_isRendered(s32 roomID)
 {
     return g_BgRoomInfo[roomID].room_rendered;
 }
+
+#ifndef __sgi
+/* #45 (see the block at the top of this file). Is `room` in the 4:3 view -
+ * reached by the traversal and, when it has an aperture, that aperture meets
+ * the 4:3 rectangle? Falls back to the plain rendered flag when the widening
+ * is off or the room has no aperture, which is what every caller did before
+ * #45. */
+u8 sl_roomIsOnScreen43(s32 roomID)
+{
+    struct bbox2d box;
+    if (!g_BgRoomInfo[roomID].room_rendered)
+        return 0;
+    if (!sl_view43_valid || sl_view_scale() <= 1.0f)
+        return 1;
+    if (!bgGet2dBboxByRoomId(roomID, &box))
+        return 1;
+    return box.min.x < sl_view43.max.x && box.max.x > sl_view43.min.x
+        && box.min.y < sl_view43.max.y && box.max.y > sl_view43.min.y;
+}
+
+/* Clamp a room aperture to the 4:3 rectangle for the spawn / script tests.
+ * Returns 0 when nothing of it lies in the 4:3 view. */
+s32 sl_clampBoxToView43(struct bbox2d *box)
+{
+    if (!sl_view43_valid || sl_view_scale() <= 1.0f)
+        return 1;
+    if (box->min.x < sl_view43.min.x) box->min.x = sl_view43.min.x;
+    if (box->max.x > sl_view43.max.x) box->max.x = sl_view43.max.x;
+    if (box->min.y < sl_view43.min.y) box->min.y = sl_view43.min.y;
+    if (box->max.y > sl_view43.max.y) box->max.y = sl_view43.max.y;
+    return box->min.x < box->max.x && box->min.y < box->max.y;
+}
+#endif
 
 
 /*
@@ -5260,6 +5341,34 @@ void bgUpdateCurrentPlayerScreenMinMax(void)
     {
         g_CurrentPlayer->screensize.max.y = fheight;
     }
+
+#ifndef __sgi
+    /* #45. Keep the 4:3 box the game reasons about, then widen the box the
+     * room traversal starts from by the renderer's band on each side (see the
+     * block at the top of this file). A hair over the exact band, so a
+     * portal that projects onto the band's very edge is never lost to the
+     * renderer's pixel rounding; an aperture can only be conservative. */
+    bbox2dCopy(&sl_view43, &g_CurrentPlayer->screensize);
+    sl_view43_valid = 1;
+    {
+        f32 k = sl_view_scale();
+        f32 ky = sl_view_scale_y();
+        if (k > 1.0f)
+        {
+            f32 band = ((k - 1.0f) * 0.5f + 0.02f) * (f32) viGetViewWidth();
+            g_CurrentPlayer->screensize.min.x -= band;
+            g_CurrentPlayer->screensize.max.x += band;
+        }
+        if (ky > 1.0f)
+        {
+            /* the FIELD OF VIEW (#45): the world zoomed out shows more
+             * above and below the 60-degree view too */
+            f32 band = ((ky - 1.0f) * 0.5f + 0.02f) * (f32) viGetViewHeight();
+            g_CurrentPlayer->screensize.min.y -= band;
+            g_CurrentPlayer->screensize.max.y += band;
+        }
+    }
+#endif
 }
 
 

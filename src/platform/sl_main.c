@@ -78,6 +78,7 @@ typedef unsigned char u8;
 extern unsigned sl_frames_completed(void);
 
 void sl_shim_configure(void);
+int  sl_ucode_tables_derive(void);
 int  sl_gfx_init(void);
 void sl_gfx_begin_frame(void);
 void mainproc(void *args);
@@ -1744,6 +1745,13 @@ int main(void)
             for (;;) { }
         }
     }
+
+    /* The audio microcode's data tables come out of the user's ROM here, on
+     * this thread, before anything can build or run an audio command list
+     * (sl_ucode.c). Not derivable = not bootable, with the reason on stderr;
+     * exit 3 is the code sl_rom_load already uses for a ROM it cannot open. */
+    if (sl_ucode_tables_derive() != 0)
+        return 3;
 
     fprintf(stderr, "sightline native: booting via mainproc\n");
     mainproc(0);

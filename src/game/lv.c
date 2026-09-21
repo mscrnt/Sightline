@@ -758,6 +758,36 @@ Gfx* lvlRender(Gfx* DL)
                 attempt_reload_item_in_hand(GUNRIGHT);
                 attempt_reload_item_in_hand(GUNLEFT);
             }
+#ifndef __sgi
+            /* NATIVE INTERACT and RELOAD, the two halves of the contextual
+             * line above, each on its own. Both flags are written in
+             * bondviewProcessInput (src/game/bondview2.c, "NATIVE ACTIONS")
+             * and neither can be set by a recorded stream, a headless run
+             * or a gamepad, so this block is inert everywhere the line
+             * above is the whole story. Declared here, inside this file's
+             * own #ifndef __sgi, so IDO sees zero tokens.
+             *
+             * INTERACT: the same call, the same frame position, the return
+             * ignored - so E in front of nothing does nothing, and E never
+             * reloads. RELOAD: the same two calls the line above makes on a
+             * TRUE return, without asking bond_interact_object at all - so R
+             * in front of a door reloads and leaves the door alone. */
+            {
+                extern s32 sl_bond_pressed_interact(void);
+                extern s32 sl_bond_pressed_reload(void);
+
+                if (sl_bond_pressed_interact())
+                {
+                    bond_interact_object();
+                }
+
+                if (sl_bond_pressed_reload())
+                {
+                    attempt_reload_item_in_hand(GUNRIGHT);
+                    attempt_reload_item_in_hand(GUNLEFT);
+                }
+            }
+#endif
 
             propsTickPlayer();
             DL = bgLevelRender(DL);

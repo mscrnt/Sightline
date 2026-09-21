@@ -154,6 +154,9 @@ TICKOP               objTickPlayer(struct PropRecord* arg0);
 TICKOP               weaponTickPlayer(struct PropRecord* arg0);
 void                 sub_GAME_7F04DD68(DoorRecord *door);
 bool                 posIsOnScreen(PropRecord *prop, coord3d *pos, f32 arg2, bool arg3);
+#ifndef __sgi
+bool                 sl_propIsOnScreen43(PropRecord *prop);   /* #45: the 4:3-view test for the AI's IF-I'M-ON-SCREEN */
+#endif
 void                 update_color_shading(rgba_u8 *dest, rgba_u8 *src);
 void                 chrRenderHeldWeapon(void *renderContext, GUNHAND hand, Gfx **gdl);
 HATTYPE              get_hat_model(PropRecord *prop);

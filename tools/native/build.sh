@@ -48,10 +48,8 @@ else
     ASAN_LIBS=""
 fi
 mkdir -p $OUT
-# The RESAMPLE polyphase table is ROM-derived: generated locally into
-# $OUT (gitignored), never committed. Fails loudly if the extracted
-# microcode segment is missing.
-${PY:-.venv/bin/python3} tools/native/gen_resample_tab.py || exit 1
+# No ROM-derived header is generated any more: the executable derives the
+# audio microcode's tables from the ROM at start-up (src/platform/sl_ucode.c).
 DEFS="-DVERSION_US -DLANG_US -DREFRESH_NTSC -DLEFTOVERDEBUG -DLEFTOVERSPECTRUM -DBUGFIX_R0 -DBYTEMATCH -DTARGET_N64 -D_LANGUAGE_C"
 INC="-I. -Iinclude -Iinclude/PR -Isrc -Isrc/game -Isrc/inflate -Isrc/libultra"
 # Measurement scaffolding flags, applied to BOTH compile classes. Decomp files

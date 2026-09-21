@@ -23,7 +23,34 @@
     in the gameplay mouse-look sections. Making them match the binary's current
     output would be a re-baseline of an owner-validated hand measurement, which
     project rule 1 says is its own commit touching nothing else.
-    Recorded as B-096 in docs/backlog.md.
+    Recorded as B-096 in docs/backlog.md. 2026-09-17 (#38): the harness links
+    again (two link stubs it had rotted past) and gained the native action
+    section, 12 checks, all passing; the pre-existing failures are unchanged
+    in kind (22 of 117 now: the 14 above plus the 8 watch-stick checks that
+    predate SL_WATCH_STICK = 70, 76e9404e). 2026-09-18 (#42): the SPRINT
+    section, 8 checks, all passing; 22 of 125 pre-existing. 2026-09-18 (#46
+    owner replay): the INVERT MOUSE Y precedence cases - SL_MOUSE_INVERT
+    against an ACTIVE store (the config governs, the env is ignored, the
+    setter writes, the consumer's sign follows the state) and an INACTIVE
+    one (the env seeds) - run as two extra PROCESSES before the main run,
+    9 + 5 checks, all passing; the main run stays 225 with the 22 above.
+    2026-09-19 (#50): the MOUSE SENSITIVITY / SCOPED SENSITIVITY case
+    (mouse-sens) runs as a third process - the default identity against the
+    cc3a418a measurement, the step grid and clamps, lower / higher, the
+    scoped percent under the game's scope predicate only, Invert Y composing,
+    the watch pointer and the pad sticks unaffected. 2026-09-20 (#63 round
+    6): the modern-pad case grew from 96 to 124 checks (the d-pad's four
+    registry sources, the bumpers' scope-aware cycle and its stale rule,
+    the held zoom level, the re-seeded presets); the main run is 219 with
+    the same 22 B-096 failures (the wheel-onto-INTERACT case became two).
+    2026-09-20 (#51): the CONTROLLER TUNING cases (pad-tune, and pad-tune-
+    invert with SL_LOOK_INVERT=1) run as two more processes - the default
+    identity against the 04b92554 transfer table, the look sensitivity and
+    the two deadzones, the four stick layouts, the negative controls.
+    2026-09-20 (#56): the HOLD / TOGGLE case (hold-toggle) runs as one more
+    process - the HOLD identity against the 68fd4d1e table, the CROUCH and
+    SPRINT toggle latches, the menu / watch isolation, the mode change, the
+    resets, the remap and the negatives.
 
     Having no Windows runner is exactly why that rot went unnoticed, which is
     the case for this script existing rather than against it.
@@ -88,12 +115,41 @@ $savedCwd  = (Get-Location).Path
 try {
     $env:PATH = "$mingwBin;$env:PATH"
     Set-Location $repo
+    # The decomp's own string routines (src/str.c) OVERRIDE the C library's in
+    # the native link, and its strncpy writes n + 1 bytes for a short source
+    # (Rare's, kept). Linked here too, so the harness runs the same strcpy /
+    # strncpy / strcmp / strncmp the game runs - measured 2026-09-18 (#46): a
+    # one-byte overflow that only the game showed. Compiled on its own against
+    # the N64 include tree (str.h wants ultra64.h), which must not reach the
+    # host-header files below.
+    $strObj = Join-Path $OUT 'inputtest_str.o'
+    & $CC @('-m32', '-O0', '-w', '-mno-ms-bitfields', '-Isrc', '-Iinclude',
+            '-c', 'src/str.c', '-o', $strObj)
+    if ($LASTEXITCODE -ne 0) { throw "inputtest.ps1: compile of src/str.c failed (exit $LASTEXITCODE)" }
     & $CC (@('-m32', '-O0', '-g', '-Wall', '-Wno-unused-parameter',
              '-mno-ms-bitfields', '-o', $exe,
-             'tools/native/inputtest.c', 'src/platform/sl_input.c') + $SDL_CFLAGS)
+             'tools/native/inputtest.c', 'src/platform/sl_input.c',
+             'src/platform/sl_action.c', 'src/platform/sl_bindings.c',
+             'src/platform/sl_bindings_editor.c', 'src/platform/sl_settings.c',
+             $strObj) + $SDL_CFLAGS)
     if ($LASTEXITCODE -ne 0) { throw "inputtest.ps1: compile failed (exit $LASTEXITCODE)" }
+    # The INVERT MOUSE Y precedence cases run in their OWN processes first
+    # (the settings store is a once-only singleton and read_env runs once per
+    # process): a failure there is the exit code; the main run follows either
+    # way so its 22 pre-existing B-096 failures stay visible and unchanged.
+    $rcCases = 0
+    foreach ($case in @('mouse-invert-store', 'mouse-invert-nostore', 'mouse-sens', 'modern-pad', 'pad-tune', 'pad-tune-invert', 'hold-toggle')) {
+        $env:INPUTTEST_CASE = $case
+        & $exe
+        if ($LASTEXITCODE -ne 0) { $rcCases = $LASTEXITCODE }
+    }
+    Remove-Item Env:INPUTTEST_CASE -ErrorAction SilentlyContinue
     & $exe
     $rc = $LASTEXITCODE
+    if ($rcCases -ne 0) {
+        Write-Host "inputtest.ps1: an INVERT MOUSE Y / MOUSE SENSITIVITY case FAILED"
+        $rc = $rcCases
+    }
 } finally {
     Set-Location $savedCwd
     $env:PATH = $savedPath

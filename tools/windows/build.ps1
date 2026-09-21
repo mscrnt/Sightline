@@ -32,6 +32,8 @@
       SL_SDL_CFLAGS    replace what pkgconf reports for SDL2 cflags
       SL_SDL_LIBS      replace the SDL2 link libraries
       SL_PYTHON        python interpreter (default: .venv\Scripts\python.exe)
+      SL_LINKMAP       the link-map input for gen_segments.py (default: the
+                       tracked tools\native\ge007.u.linkmap.txt)
 #>
 [CmdletBinding()]
 param(
@@ -159,18 +161,27 @@ if (-not (Test-Path $python)) {
     $python = $fallback.Source
 }
 
-$mapFile = Join-Path $repo 'build\u\ge007.u.map'
+# THE LINK MAP INPUT. gen_segments.py places the ROM-flavoured symbols and
+# the segment windows from the matching build's linker map. That map is a
+# product of `make matching` (MIPS / IDO), which the Windows workflow cannot
+# run, so what this build reads is the TRACKED extraction of it -
+# tools/native/ge007.u.linkmap.txt, symbol names and link addresses only,
+# with its provenance (source map SHA-256, the commit `make matching` ran
+# at, the ROM it reproduced) in its header. Regenerate / verify it with
+# tools/native/extract_linkmap.py after a `make matching`; SL_LINKMAP can
+# name a raw map or another extraction for that comparison, and nothing
+# else. There is no hidden dependency on a local build\u\ge007.u.map.
+$mapFile = $env:SL_LINKMAP
+if (-not $mapFile) { $mapFile = Join-Path $repo 'tools\native\ge007.u.linkmap.txt' }
 if (-not (Test-Path $mapFile)) {
     Write-Error ("build.ps1: missing $mapFile`n" +
-                 "  gen_segments.py reads the matching build's map to place the`n" +
-                 "  ROM-flavoured symbols. The map comes from the matching build`n" +
-                 "  (make matching), which needs the MIPS/IDO toolchain and is not`n" +
-                 "  part of the Windows workflow.")
+                 "  gen_segments.py reads the tracked extraction of the matching`n" +
+                 "  build's linker map (tools/native/extract_linkmap.py).")
     exit 1
 }
 
 if ($Clean -and (Test-Path $OUT)) { Remove-Item -Recurse -Force $OUT }
-foreach ($d in @($OUT, (Join-Path $repo 'build\native'), (Join-Path $OUT 'tmp'))) {
+foreach ($d in @($OUT, (Join-Path $OUT 'tmp'))) {
     if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
 }
 
@@ -197,9 +208,12 @@ try {
 
     Write-Host "  toolchain: $CC ($target)"
 
-    # ROM-derived, generated locally, never committed. It emits into
-    # build\native\, which is why that directory is on the include path below.
-    Invoke-Tool $python @('tools/native/gen_resample_tab.py') 'gen_resample_tab.py'
+    # NOTHING ROM-DERIVED IS GENERATED HERE. Until v0.2.0 this step ran
+    # tools/native/gen_resample_tab.py, which compiled 528 bytes of the audio
+    # microcode's data segment into sightline.exe from a locally extracted
+    # copy; the executable derives those tables from the player's own ROM at
+    # start-up instead (src/platform/sl_ucode.c), so the build needs no
+    # extracted segment, no bin\ input and no build\native\ header.
 
     # ------------------------------------------------------------- flags ---
 
@@ -443,7 +457,7 @@ try {
                 # $CFLAGS alone would never reveal.
                 Invoke-Tool $CC (@('-m32', '-w', '-mno-ms-bitfields',
                                    '-Werror=implicit-function-declaration',
-                                   '-msse2', '-mfpmath=sse', '-Ibuild/native',
+                                   '-msse2', '-mfpmath=sse',
                                    "-I$OUT") + $OPTFLAGS_NATIVE + $SDL_CFLAGS +
                                  $TRACE_DEFS + $DEMO_DEFS +
                                  @('-c', $rel, '-o', $obj)) "compile $rel"
@@ -458,7 +472,7 @@ try {
     $pruned = 0
     $existing = Get-ChildItem -Path (Join-Path $OUT '*.o') -File -ErrorAction SilentlyContinue
     foreach ($o in $existing) {
-        if (@('stubs.o', 'segments.o', 'modelhit_pool.o') -contains $o.Name) { continue }
+        if (@('stubs.o', 'segments.o', 'modelhit_pool.o', 'sightline_res.o') -contains $o.Name) { continue }
         if (-not $keep.Contains($o.Name)) { Remove-Item -Force $o.FullName; $pruned++ }
     }
     if ($pruned -gt 0) { Write-Host "  pruned $pruned orphaned object(s)" }
@@ -477,6 +491,42 @@ try {
                           "$OUT/modelhit_pool.s") 'pe_asm.py (modelhit_pool)'
     Invoke-Tool $CC @('-m32', '-c', "$OUT/modelhit_pool.s",
                       '-o', "$OUT/modelhit_pool.o") 'assemble modelhit_pool.s'
+
+    # ------------------------------------------------------ exe icon ---
+    # tools/windows/sightline.rc names docs/brand/sightline.ico as icon
+    # resource 1. Compiled here so the *.o glob below carries it into both
+    # links; the -Demo build shares the object directory and takes the same
+    # object, and it is independent of every -D so the .build_key needs no
+    # change (a key change drops every *.o, this one included, and it is
+    # simply rebuilt). It is exempt from the orphan prune above by name.
+    # MEASURED (windres 2.47): the icon path in the .rc resolves against the
+    # .rc's own directory and against --include-dir, NOT against the cwd, so
+    # both the .rc and the include dir are passed absolute.
+    # SDL2 2.32.10 (MEASURED from its import table: EnumResourceNamesW +
+    # LoadIconW, no ExtractIconEx) takes the exe's first RT_GROUP_ICON for the
+    # window class, so no SDL_SetWindowIcon call is needed in src/.
+    $windres = Join-Path $mingwBin 'windres.exe'
+    if (-not (Test-Path $windres)) {
+        throw ("build.ps1: no windres.exe in $mingwBin (MSYS2 'mingw-w64-i686-binutils').`n" +
+               "  It compiles tools/windows/sightline.rc, the exe icon. Run setup.ps1.")
+    }
+    $rcDir = Join-Path $repo 'tools\windows'
+    $rc    = Join-Path $rcDir 'sightline.rc'
+    $ico   = Join-Path $repo 'docs\brand\sightline.ico'
+    $resO  = Join-Path $OUT 'sightline_res.o'
+    foreach ($p in @($rc, $ico)) {
+        if (-not (Test-Path $p)) { throw "build.ps1: missing $p (exe icon)." }
+    }
+    $needRes = $true
+    if (Test-Path $resO) {
+        $rt = (Get-Item $resO).LastWriteTimeUtc
+        $needRes = ((Get-Item $rc).LastWriteTimeUtc -gt $rt) -or
+                   ((Get-Item $ico).LastWriteTimeUtc -gt $rt)
+    }
+    if ($needRes) {
+        Invoke-Tool $windres @('-F', 'pe-i386', "--include-dir=$rcDir",
+                               '-i', $rc, '-o', $resO) 'windres sightline.rc'
+    }
 
     $objs = @(Get-ChildItem -Path (Join-Path $OUT '*.o') -File |
               ForEach-Object { $_.FullName })
@@ -503,7 +553,7 @@ try {
     $unresSorted = Sort-Ordinal @($unres)
     Write-TextFileLf (Join-Path $OUT 'unresolved.txt') (($unresSorted -join "`n") + "`n")
 
-    Invoke-Tool $python @('tools/native/gen_segments.py', 'build/u/ge007.u.map',
+    Invoke-Tool $python @('tools/native/gen_segments.py', $mapFile,
                           "$OUT/unresolved.txt", "$OUT/segments.elf.s") 'gen_segments.py'
     Invoke-Tool $python @('tools/windows/pe_asm.py', "$OUT/segments.elf.s",
                           "$OUT/segments.s") 'pe_asm.py (segments)'

@@ -34,17 +34,21 @@
  * derives the same path from the same id strings; see the note on the
  * resolution rule below. */
 static const char *const sl_aov_relpath[SL_ASSET_ID_COUNT] = {
-    "boot/nintendo_logo.slmodel",     /* boot.nintendo_logo  */
-    "boot/rareware_logo.slmodel",     /* boot.rareware_logo  */
-    "boot/goldeneye_logo.slmodel",    /* boot.goldeneye_logo */
-    "boot/legal_page.slmodel"         /* boot.legal_page     */
+    "boot/nintendo_logo.slmodel",     /* boot.nintendo_logo    */
+    "boot/rareware_logo.slmodel",     /* boot.rareware_logo    */
+    "boot/goldeneye_logo.slmodel",    /* boot.goldeneye_logo   */
+    "boot/legal_page.slmodel",        /* boot.legal_page       */
+    "controllers/xbox.slmodel",       /* controllers.xbox      */
+    "controllers/dualsense.slmodel"   /* controllers.dualsense */
 };
 
 static const char *const sl_aov_idname[SL_ASSET_ID_COUNT] = {
     "boot.nintendo_logo",
     "boot.rareware_logo",
     "boot.goldeneye_logo",
-    "boot.legal_page"
+    "boot.legal_page",
+    "controllers.xbox",
+    "controllers.dualsense"
 };
 
 /* ------------------------------------------------------- path resolution -- */
@@ -342,6 +346,8 @@ static void aov_free(struct sl_amdl *m)
     if (m->prim != NULL) free(m->prim);
     if (m->mat  != NULL) free(m->mat);
     if (m->tex  != NULL) free(m->tex);
+    if (m->part != NULL) free(m->part);
+    if (m->pose != NULL) free(m->pose);
     memset(m, 0, sizeof *m);
 }
 
@@ -367,6 +373,7 @@ static int aov_load_from(int id, const char *path)
     unsigned int   need, i, k;
     unsigned int   off_pos, off_nrm, off_uv, off_col, off_idx;
     unsigned int   off_prim, off_mat, off_tex, declared;
+    unsigned int   off_part = 0u;
     unsigned int   texbytes = 0u;
     unsigned int   nref = 0u;
 
@@ -504,6 +511,17 @@ static int aov_load_from(int id, const char *path)
          * the test suite reads it back with the same number. */
         if (!mul_ok(m.ntex, 32u, &need) || !span_ok(off_tex, need, flen)) {
             aov_reject(id, &m, path, "texture table does not fit the file"); return 0; }
+    }
+    /* The part table (F_PARTS): header +72 / +76. Read ONLY under the flag -
+     * a file without it carries zeros there and gets no parts, whatever the
+     * words say. */
+    if (m.flags & SL_AMDL_F_PARTS) {
+        off_part = rd32(blob + 72);
+        m.npart  = rd32(blob + 76);
+        if (m.npart == 0u || m.npart > SL_AMDL_MAX_PARTS) {
+            aov_reject(id, &m, path, "part count out of range"); return 0; }
+        if (!mul_ok(m.npart, 32u, &need) || !span_ok(off_part, need, flen)) {
+            aov_reject(id, &m, path, "part table does not fit the file"); return 0; }
     }
 
     /* --- indices --------------------------------------------------------
@@ -695,12 +713,54 @@ static int aov_load_from(int id, const char *path)
                     sl_aov_idname[id], gen, m.nmat, implied, forced);
     }
 
+    /* --- parts -----------------------------------------------------------
+     *
+     * Each entry names a canonical part ONCE: a duplicate would make "move
+     * the right stick" ambiguous, so it is refused, as is an id outside the
+     * canonical table (a reader that guessed would move nothing, silently).
+     * The pivot is any finite float; the pose array starts at rest. */
+    if (m.npart != 0u) {
+        m.part = (struct sl_amdl_part *) calloc(m.npart, sizeof *m.part);
+        m.pose = (struct sl_amdl_pose *) calloc(m.npart, sizeof *m.pose);
+        if (m.part == NULL || m.pose == NULL) { aov_free(&m); return 0; }
+        for (i = 0u; i < m.npart; i++) {
+            const unsigned char *r = blob + off_part + i * 32u;
+            unsigned int pid = rd32(r);
+            unsigned int j;
+
+            if (pid == 0u || pid >= SL_PART_ID_COUNT) {
+                aov_reject(id, &m, path, "a part has an id outside the"
+                                         " canonical table");
+                return 0;
+            }
+            for (j = 0u; j < i; j++) {
+                if (m.part[j].id == pid) {
+                    aov_reject(id, &m, path, "a canonical part appears twice");
+                    return 0;
+                }
+            }
+            m.part[i].id = pid;
+            for (k = 0u; k < 3u; k++) {
+                float v = rdf32(r + 4u + k * 4u);
+                if (!(v == v) || v > 1.0e9f || v < -1.0e9f) {
+                    aov_reject(id, &m, path, "a part pivot is not a finite"
+                                             " coordinate");
+                    return 0;
+                }
+                m.part[i].pivot[k] = v;
+            }
+            m.part[i].flags = rd32(r + 16);
+            m.pose[i].tint[0] = m.pose[i].tint[1] = m.pose[i].tint[2] = 1.0f;
+        }
+    }
+
     /* --- primitives ------------------------------------------------------ */
     m.prim = (struct sl_amdl_prim *) calloc(m.nprim, sizeof *m.prim);
     if (m.prim == NULL) { aov_free(&m); return 0; }
     for (i = 0u; i < m.nprim; i++) {
         const unsigned char *r = blob + off_prim + i * 16u;
         unsigned int first = rd32(r), count = rd32(r + 4), mat = rd32(r + 8);
+        unsigned int part = rd32(r + 12);
 
         if (count == 0u || (count % 3u) != 0u || first > m.nidx
             || count > m.nidx - first) {
@@ -713,19 +773,55 @@ static int aov_load_from(int id, const char *path)
                                      " exist");
             return 0;
         }
+        /* Without a part table the word is reserved and ignored; with one it
+         * must name a part or say NONE. */
+        if (m.npart == 0u) {
+            part = SL_PART_NONE;
+        } else if (part != SL_PART_NONE && part >= m.npart) {
+            aov_reject(id, &m, path, "a primitive names a part that does not"
+                                     " exist");
+            return 0;
+        }
         m.prim[i].first = first;
         m.prim[i].count = count;
         m.prim[i].material = mat;
+        m.prim[i].part = part;
     }
 
+    /* --- part bounds (#63 / #64) ------------------------------------------
+     *
+     * The bounds of each part's vertices about its pivot, measured once here
+     * over the primitives that name it (the indices were range-checked
+     * above). The watch page draws a part alone as a button icon and fits it
+     * to an icon height from these; nothing on disk changes. */
+    {
+        unsigned char seen[SL_AMDL_MAX_PARTS];
+        memset(seen, 0, sizeof seen);
+        for (i = 0u; i < m.nprim && m.npart != 0u; i++) {
+            unsigned int part = m.prim[i].part, e;
+            struct sl_amdl_part *pt;
+            if (part == SL_PART_NONE) continue;
+            pt = &m.part[part];
+            for (e = m.prim[i].first; e < m.prim[i].first + m.prim[i].count; e++) {
+                const float *v = m.pos + (size_t) m.idx[e] * 3u;
+                for (k = 0u; k < 3u; k++) {
+                    if (!seen[part] || v[k] < pt->lo[k]) pt->lo[k] = v[k];
+                    if (!seen[part] || v[k] > pt->hi[k]) pt->hi[k] = v[k];
+                }
+                seen[part] = 1;
+            }
+        }
+    }
+
+    m.exposure = 1.0f;
     g_aov[id].m = m;
     if (strlen(path) + 1u <= sizeof g_aov[id].path)
         strcpy(g_aov[id].path, path);
     fprintf(stderr, "sl_asset: %s override loaded from %s"
                     " - %u verts, %u tris, %u prims, %u mats, %u tex"
-                    " (%u embedded, %u referenced)\n",
+                    " (%u embedded, %u referenced), %u parts\n",
             sl_aov_idname[id], path, m.nvert, m.nidx / 3u, m.nprim, m.nmat,
-            m.ntex, m.ntex - nref, nref);
+            m.ntex, m.ntex - nref, nref, m.npart);
     return 1;
 }
 
@@ -898,6 +994,73 @@ void *sl_asset_override_emit(void *gdlv, int id, int fade)
     gdl->words.w1 = (uintptr_t) (SL_AOV_DL_W1_BASE | (unsigned int) fade);
     gdl++;
     return (void *) gdl;
+}
+
+void *sl_asset_override_emit_part(void *gdlv, int id, unsigned int part_id, int fade)
+{
+    Gfx *gdl = (Gfx *) gdlv;
+
+    if (gdl == NULL || id < 0 || id >= SL_ASSET_ID_COUNT) return gdlv;
+    if (part_id == 0u || part_id >= SL_PART_ID_COUNT) return gdlv;
+    if (fade < 0) fade = 0;
+    if (fade > 255) fade = 255;
+
+    gdl->words.w0 = (uintptr_t) (SL_AOV_DL_W0_BASE | (unsigned int) id);
+    gdl->words.w1 = (uintptr_t) (SL_AOV_DL_W1_BASE
+                                 | (((part_id + 1u) << SL_AOV_DL_W1_PART_SHIFT) & SL_AOV_DL_W1_PART_MASK)
+                                 | (unsigned int) fade);
+    gdl++;
+    return (void *) gdl;
+}
+
+/* ---- parts ---------------------------------------------------------------
+ *
+ * The pose table is per loaded model and read by the draw path at the bridge
+ * command. The watch sets it while it constructs its display list; the list
+ * is walked in the same frame, so the pose it drew is the one it set. */
+
+int sl_asset_override_part_index(int id, unsigned int part_id)
+{
+    const struct sl_amdl *m;
+    unsigned int i;
+
+    if (id < 0 || id >= SL_ASSET_ID_COUNT) return -1;
+    if (g_aov[id].state != 1) return -1;
+    m = &g_aov[id].m;
+    for (i = 0u; i < m->npart; i++)
+        if (m->part[i].id == part_id) return (int) i;
+    return -1;
+}
+
+int sl_asset_override_pose_set(int id, unsigned int part_id,
+                               const struct sl_amdl_pose *pose)
+{
+    int i = sl_asset_override_part_index(id, part_id);
+
+    if (i < 0 || pose == NULL) return 0;
+    g_aov[id].m.pose[i] = *pose;
+    return 1;
+}
+
+void sl_asset_override_pose_reset(int id)
+{
+    struct sl_amdl *m;
+    unsigned int i;
+
+    if (id < 0 || id >= SL_ASSET_ID_COUNT || g_aov[id].state != 1) return;
+    m = &g_aov[id].m;
+    for (i = 0u; i < m->npart; i++) {
+        memset(&m->pose[i], 0, sizeof m->pose[i]);
+        m->pose[i].tint[0] = m->pose[i].tint[1] = m->pose[i].tint[2] = 1.0f;
+    }
+}
+
+void sl_asset_override_exposure_set(int id, float exposure)
+{
+    if (id < 0 || id >= SL_ASSET_ID_COUNT || g_aov[id].state != 1) return;
+    if (!(exposure >= 1.0f)) exposure = 1.0f;
+    if (exposure > 4.0f) exposure = 4.0f;
+    g_aov[id].m.exposure = exposure;
 }
 
 #endif /* !__sgi */

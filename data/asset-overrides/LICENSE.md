@@ -14,6 +14,16 @@ does **not** apply to:
   player's own game data.
 - ROM-derived data of any kind.
 - Upstream game content, or any other third-party material.
+- **The third-party packages under `source/controllers/`** (`xbox/`,
+  `dualsense/`): CC-BY-4.0 work by their Sketchfab authors, modified for
+  Sightline, declared in their glTF as `extras.sl_third_party` (never
+  `sl_authored`). Their licence, authors, sources and the credit line a
+  release must reproduce are in each package's `ATTRIBUTION.md` and
+  `metadata.json`, and in the inventory at
+  [../../LICENSES/README.md](../../LICENSES/README.md). Only the two
+  replacement parts flagged `sl_authored_part` in those packages (the plain
+  Guide and PS buttons, drawn by the project owner to remove the
+  manufacturers' logos) are Sightline-authored.
 
 Nothing here changes the no-ROM-derived-pixels rule or the `sl_authored`
 provenance model; both are described in [./README.md](./README.md) and

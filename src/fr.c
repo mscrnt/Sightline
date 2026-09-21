@@ -714,6 +714,18 @@ Gfx *viSetupCurrentPlayerView(Gfx *gdl)
      * All subsequent rendering uses this projection until a another projection matrix is loaded.
      */
     gSPMatrix(gdl++, OS_K0_TO_PHYSICAL(g_viProjectionMatrix), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+#ifndef __sgi
+    /* #45 FIELD OF VIEW: name THIS matrix - the player's world projection,
+     * the one the aspect and FOV presentation applies to - to the native
+     * renderer by the address the command above carries (src/gfx/sl_gfx_dl.c
+     * sl_gfx_note_world_projection). The watch, the options screens and the
+     * title load projections of their own and are not named. A note, not a
+     * change: nothing here is computed differently. */
+    {
+        extern void sl_gfx_note_world_projection(unsigned int addr);
+        sl_gfx_note_world_projection((unsigned int) OS_K0_TO_PHYSICAL(g_viProjectionMatrix));
+    }
+#endif
     gSPPerspNormalize(gdl++, g_viPerspNorm);
 
     // Store the float and non-float projection matrices so we can recall them later instead of having to rebuild them.

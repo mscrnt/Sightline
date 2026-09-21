@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import base64
 import json
+import math
+import re
 import struct
 import sys
 import tempfile
@@ -255,18 +257,44 @@ def check_slm1(blob: bytes) -> dict:
             raise ValueError("material names a texture that does not exist")
         mats.append({"base": (r, g, b, a), "texture": t, "flags": mf, "cutoff": cut})
 
+    # The PART TABLE (F_PARTS, #63): header +72 / +76, read ONLY under the
+    # flag, exactly as sl_asset_override.c reads it.
+    parts = []
+    npart = 0
+    if flags & gi.F_PARTS:
+        o_part, npart = struct.unpack_from("<II", blob, 72)
+        if not (0 < npart <= gi.MAX_PARTS):
+            raise ValueError("part count out of range")
+        span(o_part, npart * 32, "part table")
+        seen = set()
+        for i in range(npart):
+            pid, px, py, pz, pf = struct.unpack_from("<IfffI", blob, o_part + i * 32)
+            if pid == 0 or pid >= max(gi.PARTS.values()) + 1:
+                raise ValueError("part id outside the canonical table")
+            if pid in seen:
+                raise ValueError("a canonical part appears twice")
+            seen.add(pid)
+            for v in (px, py, pz):
+                if v != v or abs(v) > 1.0e9:
+                    raise ValueError("part pivot is not finite")
+            parts.append({"id": pid, "pivot": (px, py, pz), "flags": pf})
+
     prims = []
     for i in range(nprim):
-        first, count, mi, _ = struct.unpack_from("<IIII", blob, o_prim + i * 16)
+        first, count, mi, part = struct.unpack_from("<IIII", blob, o_prim + i * 16)
         if count == 0 or count % 3 or first > nidx or count > nidx - first:
             raise ValueError("primitive index range outside the index array")
         if mi >= nmat:
             raise ValueError("primitive names a material that does not exist")
-        prims.append({"first": first, "count": count, "material": mi})
+        if npart == 0:
+            part = gi.PART_NONE
+        elif part != gi.PART_NONE and part >= npart:
+            raise ValueError("primitive names a part that does not exist")
+        prims.append({"first": first, "count": count, "material": mi, "part": part})
 
     out = {
         "flags": flags, "nvert": nvert, "nidx": nidx, "idx": idx,
-        "prims": prims, "mats": mats, "tex": texs,
+        "prims": prims, "mats": mats, "tex": texs, "parts": parts,
         "pos": struct.unpack_from("<%df" % (nvert * 3), blob, o_pos),
     }
     if flags & gi.F_NORMALS:
@@ -345,7 +373,7 @@ def t_two_primitives():
     m = check_slm1(blob)
     check("two primitives", len(m["prims"]) == 2, str(len(m["prims"])))
     check("disjoint, contiguous index ranges",
-          m["prims"][0] == {"first": 0, "count": 3, "material": 0}
+          m["prims"][0] == {"first": 0, "count": 3, "material": 0, "part": gi.PART_NONE}
           and m["prims"][1]["first"] == 3 and m["prims"][1]["count"] == 3,
           str(m["prims"]))
     check("vertices are concatenated, not shared", m["nvert"] == 6, str(m["nvert"]))
@@ -1161,6 +1189,510 @@ def t_authored_textures():
               check_slm1(blob)["tex"][0]["kind"] == gi.TEX_EMBEDDED)
 
 
+# ------------------------------------------------- #63: parts, third party --
+
+THIRD_PARTY_OK = {
+    "title": "A Pad", "author": "someone", "author_url": "https://example.invalid/someone",
+    "source_url": "https://example.invalid/a-pad", "license": "CC-BY-4.0",
+    "attribution": "This work is based on \"A Pad\" by someone licensed under CC-BY-4.0",
+    "changes": "split into parts",
+}
+
+
+def mark_third_party(doc, info=None, index=0, also_authored=False):
+    ex = {gi.THIRD_PARTY_KEY: dict(THIRD_PARTY_OK if info is None else info)}
+    if also_authored:
+        ex[gi.AUTHORED_KEY] = True
+        ex[gi.AUTHORED_PROVENANCE_KEY] = "mine too, supposedly"
+    doc["images"][index]["extras"] = ex
+    return doc
+
+
+def t_third_party_textures():
+    print("\n[32] --repo accepts pixels the file declares as THIRD-PARTY (CC-BY-4.0), never as sl_authored")
+    plain = bytes([9, 9, 9, 255] * 4)
+
+    def doc():
+        return build_gltf([simple_triangle(uv=True)], materials=TEXMAT,
+                          images=[png(2, 2, plain)])
+
+    with fake_registry(synthetic_registry()):
+        blob = convert_doc(mark_third_party(doc()), repo_safe=True)
+        m = check_slm1(blob)
+        check("a third-party texture is EMBEDDED under --repo",
+              m["tex"][0]["kind"] == gi.TEX_EMBEDDED and plain in blob)
+        expect_reject("a texture claiming sl_authored AND sl_third_party is REFUSED",
+                      lambda: convert_doc(mark_third_party(doc(), also_authored=True),
+                                          repo_safe=True))
+        bad = dict(THIRD_PARTY_OK); bad["license"] = "CC-BY-NC-4.0"
+        expect_reject("a licence outside the allowed set is REFUSED by name",
+                      lambda: convert_doc(mark_third_party(doc(), bad), repo_safe=True))
+        for f in gi.THIRD_PARTY_FIELDS:
+            bad = dict(THIRD_PARTY_OK); del bad[f]
+            expect_reject("a third-party marker missing %s is REFUSED" % f,
+                          lambda b=bad: convert_doc(mark_third_party(doc(), b), repo_safe=True))
+        expect_reject("a non-object sl_third_party is REFUSED",
+                      lambda: convert_doc(mark_third_party(doc(), "CC-BY-4.0"), repo_safe=True))
+        # THE ROM GUARD IS NOT WEAKENED: a game texture marked third-party is
+        # still a reference and its pixels are still absent.
+        blob = convert_doc(
+            mark_third_party(build_gltf([simple_triangle(uv=True)], materials=TEXMAT,
+                                        images=[png(GAME_TEX_W, GAME_TEX_H, GAME_TEX_PX)])),
+            repo_safe=True)
+        m = check_slm1(blob)
+        check("a GAME texture marked third-party is STILL a reference",
+              m["tex"][0]["kind"] == gi.TEX_REF and GAME_TEX_PX not in blob)
+
+
+def parts_doc(labels, declared=True):
+    """Two triangles, each its own node with a translation; the nodes carry
+    extras.sl_part = label (or only the node name when declared is False)."""
+    prims = [simple_triangle(normals=True), simple_triangle(normals=True)]
+    nodes = []
+    for i, lbl in enumerate(labels):
+        n = {"mesh": i, "name": "node%d" % i, "translation": [100.0 * (i + 1), 5.0, -7.0]}
+        if lbl is not None:
+            if declared:
+                n["extras"] = {gi.PART_KEY: lbl}
+            else:
+                n["name"] = lbl
+        nodes.append(n)
+    return build_gltf(prims, nodes=nodes)
+
+
+def t_parts_table():
+    print("\n[33] the PART TABLE: pivots, part-relative geometry, prim part index, exactly-once")
+    # no parts at all: no flag, header words zero, prim word zero
+    blob = convert_doc(parts_doc([None, None]))
+    m = check_slm1(blob)
+    check("a partless model carries no F_PARTS and no part table",
+          not (m["flags"] & gi.F_PARTS) and m["parts"] == []
+          and struct.unpack_from("<II", blob, 72) == (0, 0))
+    check("a partless model's prim part word is the reserved zero",
+          all(struct.unpack_from("<IIII", blob, struct.unpack_from("<I", blob, 56)[0] + i * 16)[3] == 0
+              for i in range(m["prims"].__len__())))
+    check("a partless model's vertices are baked as before (node translation applied)",
+          m["pos"][0:3] == (100.0, 5.0, -7.0))
+
+    # two parts through a mapping, and by canonical name directly
+    blob = convert_doc(parts_doc(["btn_a", "stick_r"]),
+                       part_map={"btn_a": "FACE_SOUTH", "stick_r": "RIGHT_STICK"})
+    m = check_slm1(blob)
+    check("F_PARTS set, two parts", (m["flags"] & gi.F_PARTS) != 0 and len(m["parts"]) == 2)
+    check("canonical ids from the mapping",
+          [p["id"] for p in m["parts"]] == [gi.PARTS["FACE_SOUTH"], gi.PARTS["RIGHT_STICK"]])
+    check("pivots are the node origins", m["parts"][0]["pivot"] == (100.0, 5.0, -7.0)
+          and m["parts"][1]["pivot"] == (200.0, 5.0, -7.0))
+    check("geometry is stored RELATIVE to its pivot",
+          m["pos"][0:3] == (0.0, 0.0, 0.0) and m["pos"][9:12] == (0.0, 0.0, 0.0))
+    check("each prim names its part", [p["part"] for p in m["prims"]] == [0, 1])
+    blob = convert_doc(parts_doc(["FACE_SOUTH", "DPAD"]))
+    check("a canonical name on the node maps to itself",
+          [p["id"] for p in check_slm1(blob)["parts"]] == [gi.PARTS["FACE_SOUTH"], gi.PARTS["DPAD"]])
+    # a mix: one part node, one plain node -> the plain prim is PART_NONE
+    blob = convert_doc(parts_doc(["FACE_SOUTH", None]))
+    m = check_slm1(blob)
+    check("a prim outside every part is PART_NONE beside a part table",
+          [p["part"] for p in m["prims"]] == [0, gi.PART_NONE] and m["pos"][9:12] == (200.0, 5.0, -7.0))
+    # sl_authored_part preserved as a part flag
+    d = parts_doc(["FACE_SOUTH", "GUIDE"])
+    d["nodes"][1]["extras"]["sl_authored_part"] = "plain dome replacing the logo"
+    m = check_slm1(convert_doc(d))
+    check("extras.sl_authored_part becomes the part's AUTHORED flag",
+          m["parts"][1]["flags"] == gi.PART_F_AUTHORED and m["parts"][0]["flags"] == 0)
+    # refusals
+    expect_reject("an sl_part label with no mapping is REFUSED",
+                  lambda: convert_doc(parts_doc(["btn_a", None])))
+    expect_reject("a canonical part claimed twice is REFUSED",
+                  lambda: convert_doc(parts_doc(["FACE_SOUTH", "FACE_SOUTH"])))
+    expect_reject("a mapping onto a non-canonical name is REFUSED",
+                  lambda: convert_doc(parts_doc(["btn_a", None]), part_map={"btn_a": "BUTTON_A"}))
+    expect_reject("a --part naming a label no node carries is REFUSED",
+                  lambda: convert_doc(parts_doc(["FACE_SOUTH", None]), part_map={"ghost": "DPAD"}))
+    # the loader's own refusals, through the mirror: a duplicate id, an id
+    # outside the table, a prim naming a missing part
+    good = bytearray(convert_doc(parts_doc(["FACE_SOUTH", "DPAD"])))
+    o_part = struct.unpack_from("<I", good, 72)[0]
+    o_prim = struct.unpack_from("<I", good, 56)[0]
+    b = bytearray(good); struct.pack_into("<I", b, o_part + 32, gi.PARTS["FACE_SOUTH"])
+    expect_reject("the loader refuses a canonical part that appears twice", lambda: check_slm1(bytes(b)))
+    b = bytearray(good); struct.pack_into("<I", b, o_part, 99)
+    expect_reject("the loader refuses a part id outside the canonical table", lambda: check_slm1(bytes(b)))
+    b = bytearray(good); struct.pack_into("<I", b, o_prim + 12, 7)
+    expect_reject("the loader refuses a prim naming a part that does not exist", lambda: check_slm1(bytes(b)))
+    b = bytearray(good); struct.pack_into("<I", b, 76, 0)
+    expect_reject("the loader refuses F_PARTS with a zero part count", lambda: check_slm1(bytes(b)))
+
+
+def t_parts_table_agrees_with_the_runtime():
+    print("\n[34] the canonical part table agrees with src/sl_asset_override.h")
+    hdr = (REPO / "src" / "sl_asset_override.h").read_text(encoding="utf-8")
+    ok = True
+    for name, val in gi.PARTS.items():
+        if re.search(r"#define SL_PART_%s\s+%du\b" % (name, val), hdr) is None:
+            ok = False
+            print("        SL_PART_%s = %d not found in the header" % (name, val))
+    check("every PARTS entry is #defined with the same value", ok)
+    check("SL_PART_ID_COUNT is one past the largest id",
+          re.search(r"#define SL_PART_ID_COUNT\s+%du\b" % (max(gi.PARTS.values()) + 1), hdr) is not None)
+    check("SL_AMDL_MAX_PARTS agrees", re.search(r"#define SL_AMDL_MAX_PARTS\s+%du\b" % gi.MAX_PARTS, hdr) is not None)
+    check("SL_AMDL_F_PARTS agrees", re.search(r"#define SL_AMDL_F_PARTS\s+0x%04xu" % gi.F_PARTS, hdr) is not None)
+    check("SL_PART_NONE agrees", "0xFFFFFFFFu" in hdr and gi.PART_NONE == 0xFFFFFFFF)
+    check("SL_AMDL_P_AUTHORED agrees", re.search(r"#define SL_AMDL_P_AUTHORED\s+0x%04xu" % gi.PART_F_AUTHORED, hdr) is not None)
+
+
+CONTROLLER_REQUIRED = ["BODY", "LEFT_STICK", "RIGHT_STICK", "DPAD", "FACE_SOUTH", "FACE_EAST",
+                       "FACE_WEST", "FACE_NORTH", "LEFT_SHOULDER", "RIGHT_SHOULDER",
+                       "LEFT_TRIGGER", "RIGHT_TRIGGER", "MENU", "BACK", "GUIDE"]
+
+
+def t_controller_packages():
+    print("\n[35] the committed controller packages: manifests, provenance, every canonical part once")
+    root = REPO / "data" / "asset-overrides" / "source" / "controllers"
+    if not root.is_dir():
+        check("no controller packages to check (this is not a failure)", True)
+        return
+    import build_repo_assets as bra
+    for name, extra in (("xbox", []), ("dualsense", ["MUTE", "TOUCHPAD"])):
+        pkg = root / name
+        meta = json.loads((pkg / "metadata.json").read_text(encoding="utf-8"))
+        parts = bra.parts_of(pkg)
+        src, err = bra.find_source(pkg)
+        check("%s: one glTF in the package" % name, src is not None, str(err))
+        doc = json.loads(src.read_text(encoding="utf-8"))
+        labels = [n["extras"][gi.PART_KEY] for n in doc["nodes"]
+                  if isinstance(n.get("extras"), dict) and gi.PART_KEY in n["extras"]]
+        check("%s: every sl_part label is mapped" % name, set(labels) == set(parts),
+              str(set(labels) ^ set(parts)))
+        canon = sorted(parts.values())
+        check("%s: each canonical part resolves exactly once" % name, len(canon) == len(set(canon)))
+        want = CONTROLLER_REQUIRED + extra
+        check("%s: the required part set is complete (%d)" % (name, len(want)),
+              set(canon) == set(want), str(set(canon) ^ set(want)))
+        check("%s: no node claims sl_authored (third-party model)" % name,
+              all(not (isinstance(n.get("extras"), dict) and n["extras"].get(gi.AUTHORED_KEY))
+                  for n in doc["nodes"])
+              and all(gi.AUTHORED_KEY not in (im.get("extras") or {}) for im in doc["images"])
+              and gi.AUTHORED_KEY not in (doc["asset"].get("extras") or {}))
+        check("%s: every image declares sl_third_party CC-BY-4.0" % name,
+              all(((im.get("extras") or {}).get(gi.THIRD_PARTY_KEY) or {}).get("license") == "CC-BY-4.0"
+                  for im in doc["images"]))
+        tp = meta.get("third_party", {})
+        check("%s: metadata third_party carries the required fields" % name,
+              all(isinstance(tp.get(f), str) and tp[f] for f in gi.THIRD_PARTY_FIELDS))
+        attr = (pkg / "ATTRIBUTION.md").read_text(encoding="utf-8")
+        check("%s: ATTRIBUTION.md carries the credit line metadata declares" % name,
+              tp.get("attribution", "\0") in attr)
+        check("%s: the glTF images carry the same credit line" % name,
+              all(((im.get("extras") or {}).get(gi.THIRD_PARTY_KEY) or {}).get("attribution") == tp.get("attribution")
+                  for im in doc["images"]))
+        authored = {n["extras"][gi.PART_KEY]: n["extras"]["sl_authored_part"] for n in doc["nodes"]
+                    if isinstance(n.get("extras"), dict) and "sl_authored_part" in n["extras"]}
+        check("%s: the owner's replacement parts are flagged and listed in metadata" % name,
+              authored == meta.get("authored_parts") and parts.get(list(authored)[0]) == "GUIDE"
+              if authored else False, str(authored))
+        check("%s: no historical sl_n64 metadata remains" % name,
+              all("sl_n64" not in (n.get("extras") or {}) for n in doc["nodes"]))
+        # the compile itself, through the same call build.ps1 makes
+        blob = gi.convert(gi.Gltf(src), verbose=False, asset="controllers." + name,
+                          repo_safe=True, part_map=parts)
+        m = check_slm1(blob)
+        ids = sorted(p["id"] for p in m["parts"])
+        check("%s: the compiled model carries every part once" % name,
+              ids == sorted(gi.PARTS[c] for c in canon))
+        check("%s: the AUTHORED flag survives compilation on exactly the flagged parts" % name,
+              sorted(p["id"] for p in m["parts"] if p["flags"] & gi.PART_F_AUTHORED)
+              == sorted(gi.PARTS[parts[l]] for l in authored))
+        check("%s: every prim belongs to a part" % name,
+              all(p["part"] != gi.PART_NONE for p in m["prims"]))
+        # The BODY's pivot is the origin, so its (part-relative) x extent is
+        # the model's fitted width; every other part is small about its own.
+        xs = m["pos"][0::3]
+        w = max(xs) - min(xs)
+        check("%s: the body spans the GjoypadZ width (788)" % name, abs(w - 788.0) < 1.0, "%.1f" % w)
+        # THE NORMALS (#63, defect round 2): the packages' NORMAL data is in
+        # the source frame while POSITION was re-based (measured -0.237 /
+        # +0.253 agreement with the winding as shipped); the compiled model
+        # must carry normals the geometry vouches for, or the lit draw takes
+        # the ambient term alone and the pad is a silhouette.
+        pos3 = [tuple(m["pos"][i:i + 3]) for i in range(0, len(m["pos"]), 3)]
+        nrm3 = [tuple(m["nrm"][i:i + 3]) for i in range(0, len(m["nrm"]), 3)]
+        agree = gi.normal_agreement(pos3, nrm3, list(m["idx"]))
+        check("%s: the compiled normals agree with the winding (>= %.1f)" % (name, gi.NORMAL_FIT),
+              agree >= gi.NORMAL_FIT, "%.3f" % agree)
+        # THE FACE (#63, defect round 4): the compiled model's face-level
+        # parts lie on a level plane in the watch frame (the Xbox package
+        # arrives pitched 16.5 degrees, top edge down; the importer levels
+        # it; the DualSense arrives level and passes through).
+        fit = gi.face_level_fit([(p["id"], p["pivot"]) for p in m["parts"]])
+        check("%s: the compiled face plane is level (|pitch|, |roll| <= %.0f deg)" % (name, gi.FACE_LEVEL_DEG),
+              fit is not None and abs(fit[0]) <= gi.FACE_LEVEL_DEG and abs(fit[1]) <= gi.FACE_LEVEL_DEG,
+              "pitch %.1f roll %.1f over %d parts" % fit if fit else "no fit")
+        # ... and the face buttons sit ABOVE the body's centre plane (+y is
+        # toward the camera), the top edge (shoulders) at -z, the sticks'
+        # tops higher than the face: the pad faces the page's camera.
+        piv = {p["id"]: p["pivot"] for p in m["parts"]}
+        check("%s: the face buttons are above the body plane, the shoulders at the top edge, the sticks proud" % name,
+              all(piv[gi.PARTS[k]][1] > 20.0 for k in ("FACE_SOUTH", "FACE_EAST", "FACE_WEST", "FACE_NORTH"))
+              and piv[gi.PARTS["LEFT_SHOULDER"]][2] < -150.0 and piv[gi.PARTS["RIGHT_SHOULDER"]][2] < -150.0
+              and piv[gi.PARTS["LEFT_STICK"]][1] > piv[gi.PARTS["FACE_SOUTH"]][1]
+              and piv[gi.PARTS["RIGHT_STICK"]][1] > piv[gi.PARTS["FACE_SOUTH"]][1])
+
+
+def t_normal_frame():
+    print("\n[36] normals that disagree with the winding are re-based or rebuilt; agreeing ones are untouched")
+    # A closed shape with a KNOWN outward orientation: a pyramid with a
+    # square base (6 triangles, CCW outward), smooth-ish normals per face
+    # written per vertex (vertices split per face, as exporters do).
+    apex = (0.0, 10.0, 0.0)
+    base = [(-5.0, 0.0, -5.0), (5.0, 0.0, -5.0), (5.0, 0.0, 5.0), (-5.0, 0.0, 5.0)]
+    faces = [(base[0], base[1], apex), (base[1], base[2], apex),
+             (base[2], base[3], apex), (base[3], base[0], apex),
+             (base[0], base[3], base[1]), (base[1], base[3], base[2])]
+
+    def face_normal(a, b, c):
+        u = [b[i] - a[i] for i in range(3)]; v = [c[i] - a[i] for i in range(3)]
+        n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+        ln = sum(x * x for x in n) ** 0.5
+        return tuple(x / ln for x in n)
+
+    pos, nrm, idx = [], [], []
+    for f in faces:
+        n = face_normal(*f)
+        for v in f:
+            idx.append(len(pos)); pos.append(v); nrm.append(n)
+
+    def doc_with(normals):
+        return build_gltf([{"attributes": {"POSITION": (pos, 5126, "VEC3"),
+                                            "NORMAL": (normals, 5126, "VEC3")},
+                            "indices": idx, "material": 0}])
+
+    good = convert_doc(doc_with(nrm))
+    mg = check_slm1(good)
+    check("correct normals: agreement is ~1", gi.normal_agreement(pos, nrm, idx) > 0.999)
+    check("correct normals survive untouched",
+          [round(v, 5) for v in mg["nrm"]] == [round(c, 5) for n in nrm for c in n])
+
+    # The DualSense's measured mismatch: stored (x, y, z) where the geometry
+    # says (-x, -z, -y) - i.e. the builder rotated positions, not normals.
+    wrong = [(-n[0], -n[2], -n[1]) for n in nrm]
+    before = gi.normal_agreement(pos, wrong, idx)
+    check("mis-framed normals measure below the trust threshold", before < gi.NORMAL_AGREE, "%.3f" % before)
+    fixed, what, b, a = gi.rebase_normals(pos, wrong, idx)
+    check("the deriver re-bases them by a signed permutation", what.startswith("re-based"), what)
+    check("the re-base names the measured mapping", "-x -z -y" in what, what)
+    check("agreement after the re-base is ~1", a > 0.999, "%.3f" % a)
+    def same_model(blob) -> bool:
+        """The compiled model equals the correctly-framed one: every block
+        the same and the normals equal in VALUE (a -0.0 the source transform
+        leaves behind packs differently from the +0.0 a re-base produces,
+        and the renderer cannot tell them apart)."""
+        m = check_slm1(blob)
+        return (m["pos"] == mg["pos"] and m["idx"] == mg["idx"]
+                and m["prims"] == mg["prims"] and m["mats"] == mg["mats"]
+                and m["flags"] == mg["flags"]
+                and [round(v, 5) for v in m["nrm"]] == [round(v, 5) for v in mg["nrm"]])
+
+    check("the compiled model equals the correctly-framed model's",
+          same_model(convert_doc(doc_with(wrong))))
+
+    # A 90-degree frame (the Xbox pad's shape of mistake), and an inward
+    # flip (-I, a mirrored bake).
+    for label, f in (("90-degree frame", lambda n: (n[0], -n[2], n[1])),
+                     ("inward (-x -y -z)", lambda n: (-n[0], -n[1], -n[2]))):
+        w2 = [f(n) for n in nrm]
+        fixed, what, b, a = gi.rebase_normals(pos, w2, idx)
+        check("%s: re-based, agreement %.3f -> %.3f" % (label, b, a),
+              what.startswith("re-based") and a > 0.999)
+        check("%s: compiles to the correct model" % label,
+              same_model(convert_doc(doc_with(w2))))
+
+    # Nothing so simple: normals that point every which way (a fixed
+    # pseudo-random spray) are REBUILT from the winding.
+    spray = []
+    s = 12345
+    for _ in nrm:
+        v = []
+        for _ in range(3):
+            s = (s * 1103515245 + 12345) & 0x7fffffff
+            v.append((s / 0x7fffffff) * 2.0 - 1.0)
+        ln = sum(x * x for x in v) ** 0.5 or 1.0
+        spray.append(tuple(x / ln for x in v))
+    fixed, what, b, a = gi.rebase_normals(pos, spray, idx)
+    check("random normals: rebuilt from the winding (%.3f -> %.3f)" % (b, a),
+          what == "rebuilt from the winding" and a > 0.999)
+    mr = check_slm1(convert_doc(doc_with(spray)))
+    check("the rebuilt file carries the face normals (split vertices -> flat)",
+          [round(v, 5) for v in mr["nrm"]] == [round(c, 5) for n in nrm for c in n])
+
+    # A model WITHOUT normals is not given any: the flag stays clear.
+    mn = check_slm1(convert_doc(build_gltf([{"attributes": {"POSITION": (pos, 5126, "VEC3")},
+                                              "indices": idx, "material": 0}])))
+    check("a model without NORMAL gets none invented", mn["flags"] & gi.F_NORMALS == 0)
+
+
+def t_face_level():
+    print("\n[37] a parts model whose face is pitched or rolled is levelled as a whole; a level one is untouched")
+    # Seven face-level parts on a plane, plus a BODY and a LEFT_SHOULDER off
+    # it, each a triangle about its own pivot; a body triangle with no part.
+    face = {"FACE_SOUTH": (200.0, -80.0), "FACE_EAST": (250.0, -130.0), "FACE_WEST": (150.0, -130.0),
+            "FACE_NORTH": (200.0, -180.0), "DPAD": (-100.0, -10.0), "MENU": (55.0, -130.0), "BACK": (-55.0, -130.0)}
+    other = {"BODY": (0.0, 0.0, 0.0), "LEFT_SHOULDER": (-190.0, -40.0, -235.0), "RIGHT_STICK": (100.0, 100.0, -30.0)}
+
+    def rot_x(v, deg):
+        c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        x, y, z = v
+        return (x, y * c - z * s, y * s + z * c)
+
+    def rot_z(v, deg):
+        c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+        x, y, z = v
+        return (x * c - y * s, x * s + y * c, z)
+
+    def doc(pitch, roll, face_y=60.0):
+        """The model turned as a whole: every node's origin AND its geometry
+        (a glTF rotation on the node) by `pitch` about x and `roll` about z,
+        with the fit's sign convention (a positive pitch raises the face
+        toward +z, the Xbox package's shape: top edge down)."""
+        prims, nodes = [], []
+        pts = [(k, (x, face_y, z)) for k, (x, z) in face.items()] + list(other.items())
+        hp, hr = math.radians(-pitch) / 2.0, math.radians(roll) / 2.0
+        # q = q_z(roll) * q_x(-pitch): the same order level_model undoes
+        qx = (math.sin(hp), 0.0, 0.0, math.cos(hp))
+        qz = (0.0, 0.0, math.sin(hr), math.cos(hr))
+        q = (qz[3] * qx[0] + qz[0] * qx[3] + qz[1] * qx[2] - qz[2] * qx[1],
+             qz[3] * qx[1] - qz[0] * qx[2] + qz[1] * qx[3] + qz[2] * qx[0],
+             qz[3] * qx[2] + qz[0] * qx[1] - qz[1] * qx[0] + qz[2] * qx[3],
+             qz[3] * qx[3] - qz[0] * qx[0] - qz[1] * qx[1] - qz[2] * qx[2])
+        for k, p in pts:
+            p = rot_z(rot_x(p, -pitch), roll)
+            prims.append(simple_triangle(normals=True))
+            nodes.append({"mesh": len(nodes), "name": k, "translation": [p[0], p[1], p[2]],
+                          "rotation": [q[0], q[1], q[2], q[3]],
+                          "extras": {gi.PART_KEY: k}})
+        return build_gltf(prims, nodes=nodes)
+
+    level = check_slm1(convert_doc(doc(0.0, 0.0)))
+    fit = gi.face_level_fit([(p["id"], p["pivot"]) for p in level["parts"]])
+    check("a level face measures 0 / 0 over seven parts", fit is not None and abs(fit[0]) < 0.01 and abs(fit[1]) < 0.01 and fit[2] == 7,
+          str(fit))
+    check("a level model's pivots are its node origins (untouched)",
+          all(abs(p["pivot"][1] - 60.0) < 1e-3 for p in level["parts"] if p["id"] in {gi.PARTS[k] for k in face}))
+    raw = gi.face_level_fit([(gi.PARTS[k], p) for k, p in
+                             [(k, rot_x((x, 60.0, z), -16.5)) for k, (x, z) in face.items()]])
+    check("the fit reads a 16.5-degree pitch off the turned pivots, with the Xbox package's sign",
+          raw is not None and abs(raw[0] - 16.5) < 0.05, str(raw))
+    tilted = check_slm1(convert_doc(doc(16.5, 0.0)))
+    fit_t = gi.face_level_fit([(p["id"], p["pivot"]) for p in tilted["parts"]])
+    check("a 16.5-degree pitch (the Xbox package's) compiles level", fit_t is not None and abs(fit_t[0]) < 0.05, str(fit_t))
+    piv_l = {p["id"]: p["pivot"] for p in level["parts"]}
+    piv_t = {p["id"]: p["pivot"] for p in tilted["parts"]}
+    check("... every pivot lands back on the level model's (the whole model turned, the layout kept)",
+          all(max(abs(piv_l[i][j] - piv_t[i][j]) for j in range(3)) < 0.05 for i in piv_l))
+    check("... the part-relative geometry and the normals turned with it",
+          all(abs(a - b) < 1e-3 for a, b in zip(tilted["pos"], level["pos"]))
+          and all(abs(a - b) < 1e-4 for a, b in zip(tilted["nrm"], level["nrm"])))
+    rolled = check_slm1(convert_doc(doc(0.0, -6.0)))
+    fit_r = gi.face_level_fit([(p["id"], p["pivot"]) for p in rolled["parts"]])
+    check("a 6-degree roll compiles level", fit_r is not None and abs(fit_r[1]) < 0.05, str(fit_r))
+    both = check_slm1(convert_doc(doc(-12.0, 4.0)))
+    fit_b = gi.face_level_fit([(p["id"], p["pivot"]) for p in both["parts"]])
+    check("pitch and roll together compile level", fit_b is not None and abs(fit_b[0]) < 0.3 and abs(fit_b[1]) < 0.3, str(fit_b))
+    small = check_slm1(convert_doc(doc(2.0, 0.0)))
+    fit_s = gi.face_level_fit([(p["id"], p["pivot"]) for p in small["parts"]])
+    check("a 2-degree pitch is within the threshold and passes through untouched", fit_s is not None and abs(fit_s[0] - 2.0) < 0.05, str(fit_s))
+    # Too few face parts to fit: nothing is done, nothing is claimed.
+    few = check_slm1(convert_doc(parts_doc(["FACE_SOUTH", "DPAD"])))
+    check("two face parts: no plane, no change", gi.face_level_fit([(p["id"], p["pivot"]) for p in few["parts"]]) is None
+          and few["parts"][0]["pivot"] == (100.0, 5.0, -7.0))
+    check("a partless model has nothing to level", gi.face_level_fit([]) is None)
+
+
+def t_symbol_edit():
+    print("\n[38] the DualSense symbol edit is the script's output, recorded, and a re-run is a no-op")
+    root = REPO / "data" / "asset-overrides" / "source" / "controllers"
+    pkg = root / "dualsense"
+    if not pkg.is_dir():
+        check("no DualSense package to check (this is not a failure)", True)
+        return
+    import darken_symbols as ds
+    cfg = ds.PACKAGES["dualsense"]
+    meta = json.loads((pkg / "metadata.json").read_text(encoding="utf-8"))
+    rec = (meta.get("sightline_edits") or {}).get(cfg["texture"]) or {}
+    check("metadata records the edit: script, regions, rule, both SHA-1s",
+          all(isinstance(rec.get(k), str) and rec[k] for k in ("script", "rule", "source_sha1", "sha1"))
+          and rec.get("regions") == {k: list(v) for k, v in cfg["regions"].items()},
+          str(sorted(rec)))
+    tile = pkg / cfg["texture"]
+    check("the committed tile's SHA-1 is the recorded one", ds.sha1_of(tile) == rec.get("sha1", "").upper(),
+          ds.sha1_of(tile))
+    w, h, px = gi.png_decode(tile.read_bytes())
+    check("the tile keeps its size (1024 square)", (w, h) == (1024, 1024))
+    # A re-run finds no grey stroke left and paints nothing; the tile's bytes
+    # would be unchanged.
+    import io, contextlib
+    with contextlib.redirect_stdout(io.StringIO()):
+        painted = ds.apply(w, h, bytearray(px), cfg)
+    check("a re-run of the script paints nothing (idempotent)", painted == 0, str(painted))
+    # Inside each region the stroke is the painted colour and reads dark:
+    # at least a fifth of the box is stroke, none of it the original grey.
+    cr, cg, cb = cfg["colour"]
+    for name, (x0, y0, x1, y1) in cfg["regions"].items():
+        n = 0; grey = 0; dark = 0
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                o = (y * w + x) * 4
+                n += 1
+                if (px[o], px[o + 1], px[o + 2]) == (cr, cg, cb):
+                    dark += 1
+                elif cfg["lum_lo"] <= ds.lum(px[o], px[o + 1], px[o + 2]) <= cfg["lum_hi"] and max(px[o:o + 3]) - min(px[o:o + 3]) <= cfg["sat_max"]:
+                    grey += 1
+        check("%s: the stroke is painted (%.0f%% of its box), no grey stroke left" % (name, 100.0 * dark / n),
+              dark >= n // 5 and grey == 0, "dark %d grey %d of %d" % (dark, grey, n))
+    # Outside the regions (plus the dilation margin) the painted colour
+    # occurs exactly as often as in the source tile - six texels of RGB
+    # 56/56/64 on antialiased edges elsewhere, counted on the original
+    # (SHA-1 826BA223..., 2026-09-20) - so the edit is bounded to the boxes.
+    outside = 0
+    for y in range(h):
+        row = y * w * 4
+        for x in range(w):
+            o = row + x * 4
+            if (px[o], px[o + 1], px[o + 2]) != (cr, cg, cb):
+                continue
+            inside = False
+            for (x0, y0, x1, y1) in cfg["regions"].values():
+                m = cfg["margin"]
+                if x0 - m <= x <= x1 + m and y0 - m <= y <= y1 + m:
+                    inside = True
+                    break
+            if not inside:
+                outside += 1
+    check("outside the four boxes and their margin the painted colour occurs the source's six times, no more",
+          outside == 6, str(outside))
+    # The script's own check mode agrees.
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc = ds.main(["dualsense", "--check"])
+    check("darken_symbols.py dualsense --check exits 0", rc == 0, str(rc))
+    # The button-top material is alpha-MASKED (the tile's clear-coat caps
+    # would otherwise draw opaque over the symbols) and the compiled model
+    # carries the flag and the cutoff.
+    doc = json.loads((pkg / "dualsense.gltf").read_text(encoding="utf-8"))
+    mat1 = [m for m in doc["materials"] if m.get("name") == "dualsense_mat1"]
+    check("dualsense_mat1 declares alphaMode MASK at cutoff 0.5",
+          len(mat1) == 1 and mat1[0].get("alphaMode") == "MASK" and abs(float(mat1[0].get("alphaCutoff", 0)) - 0.5) < 1e-6)
+    check("metadata records the material change", "dualsense.gltf materials[dualsense_mat1]" in (meta.get("sightline_edits") or {}))
+    import build_repo_assets as bra
+    blob = gi.convert(gi.Gltf(pkg / "dualsense.gltf"), verbose=False, asset="controllers.dualsense",
+                      repo_safe=True, part_map=bra.parts_of(pkg))
+    m = check_slm1(blob)
+    masked = [mt for mt in m["mats"] if mt["flags"] & gi.M_ALPHA_MASK]
+    check("the compiled model's button-top materials carry the MASK flag with cutoff 0.5",
+          len(masked) > 0 and all(abs(mt["cutoff"] - 0.5) < 1e-6 for mt in masked)
+          and not any(mt["flags"] & gi.M_ALPHA_BLEND for mt in m["mats"]),
+          "%d masked of %d" % (len(masked), len(m["mats"])))
+
+
 def main() -> int:
     print("asset-override importer - synthetic tests (no ROM, no fixtures)")
     for fn in (t_minimal, t_attributes, t_colour_fold, t_two_primitives, t_alpha_mask,
@@ -1176,7 +1708,10 @@ def main() -> int:
                t_committed_models_carry_no_pixels,
                t_texgen_flags, t_texgen_flag_bits_agree,
                t_committed_models_keep_the_implied_default,
-               t_authored_textures):
+               t_authored_textures,
+               t_third_party_textures, t_parts_table,
+               t_parts_table_agrees_with_the_runtime, t_controller_packages,
+               t_normal_frame, t_face_level, t_symbol_edit):
         fn()
     print("\n%d passed, %d failed" % (PASSES, len(FAILURES)))
     for f in FAILURES:

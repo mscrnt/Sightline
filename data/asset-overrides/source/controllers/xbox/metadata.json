@@ -1,0 +1,47 @@
+{
+ "asset_id": "controllers.xbox",
+ "family": "Xbox",
+ "provenance": "THIRD-PARTY, CC-BY-4.0 - NOT Sightline-authored, NOT CC0.",
+ "third_party": {
+  "title": "Xbox Controller",
+  "author": "umkhero",
+  "author_url": "https://sketchfab.com/umkhero",
+  "source_url": "https://sketchfab.com/3d-models/xbox-controller-32d17951703b4e05abed11a1c65f5909",
+  "license": "CC-BY-4.0",
+  "license_url": "http://creativecommons.org/licenses/by/4.0/",
+  "attribution": "This work is based on \"Xbox Controller\" (https://sketchfab.com/3d-models/xbox-controller-32d17951703b4e05abed11a1c65f5909) by umkhero (https://sketchfab.com/umkhero) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)",
+  "changes": "mesh split into one node per physical control with pivots; re-based into the GoldenEye joypad model frame (GjoypadZ) and scaled to its 788-unit width; normal / metallic-roughness / emissive maps dropped; base-colour textures resized to 1024 px and re-encoded as PNG; manufacturer logos removed (button symbols and letters kept); compiled to Sightline's native .slmodel format with a part table"
+ },
+ "authored_parts": {
+  "btn_guide": "plain btn_guide replacing the original logo-shaped part"
+ },
+ "authored_parts_note": "These parts are the project owner's own replacement geometry (manufacturer logos removed); everything else in the mesh and every texture is the third party's CC-BY-4.0 work as changed above.",
+ "debranding": "btn_guide: the embossed manufacturer logo (an 836-face shell) and its dome replaced by an owner-authored plain dome of the same footprint, textured with the plain disc colour the original used (extras.sl_authored_part on the node).",
+ "frame": "GjoypadZ: +x = player's right, +y = up toward the watch camera, -z = the top edge; N64 body 788 x 253 x 836; fitted to width 788",
+ "fitted_width": 788.0,
+ "parts": {
+  "body": "BODY",
+  "stick_l": "LEFT_STICK",
+  "stick_r": "RIGHT_STICK",
+  "dpad": "DPAD",
+  "btn_a": "FACE_SOUTH",
+  "btn_b": "FACE_EAST",
+  "btn_x": "FACE_WEST",
+  "btn_y": "FACE_NORTH",
+  "bumper_l": "LEFT_SHOULDER",
+  "bumper_r": "RIGHT_SHOULDER",
+  "trigger_l": "LEFT_TRIGGER",
+  "trigger_r": "RIGHT_TRIGGER",
+  "btn_menu": "MENU",
+  "btn_view": "BACK",
+  "btn_guide": "GUIDE"
+ },
+ "parts_note": "package node label (extras.sl_part) -> canonical physical part (tools/asset/gltf_import.py PARTS); physical controls only, never actions",
+ "source_oracle_sha1": {
+  "textures/xbox_basecolor_0.png": "3CEDFF8DFF5F45A6749B25626CABE5A3F3E2C9D2",
+  "controller_xbox.bin": "866494F27A7E18505E8AA751EC96903CDF0DA325",
+  "controller_xbox.gltf": "95469358A5677BB669BE237983FE5E8A3E185431"
+ },
+ "source_oracle_note": "sha1 of the owner's staged package files as received (2026-09-19); the .bin and textures are committed verbatim, the .gltf's extras were rewritten",
+ "texture_refs": {}
+}

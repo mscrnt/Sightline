@@ -192,4 +192,11 @@ void     sl_acmd_sset32(sl_acmd_state *s, uint32_t off, uint32_t v);
 const char *sl_acmd_errstr(int err);
 const char *sl_acmd_opname(int op);
 
+/* The microcode's own data tables - the ENVMIXER per-lane ramp (8) and the
+ * RESAMPLE 64x4 polyphase table (256) - set ONCE at start-up by sl_ucode.c
+ * from the user's ROM. They are never compiled in; until they are set,
+ * sl_acmd_exec returns SL_ACMD_ERR_UNGROUNDED without running anything. */
+void sl_acmd_set_ucode_tables(const short *ramp, const short *taps);
+int  sl_acmd_ucode_tables_ready(void);
+
 #endif /* SL_ACMD_H */

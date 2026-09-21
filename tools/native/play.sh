@@ -38,10 +38,11 @@ fi
 [ -x build/native/skeleton ] || tools/native/build.sh
 
 # The cartridge save. Without one the game starts from defaults every launch
-# and nothing changed in the options survives. The native cold-start style is
-# 1.2 Solitaire (see sl_style_load); an existing <save>.style sidecar wins over
-# it, so the player's own choice is never overridden. Lives outside the repo:
-# it is player data,
+# and nothing changed in the options survives. The native control defaults
+# (cold-start style 1.2 Solitaire, Look Up/Down, Aim Control, Invert Mouse Y)
+# live in the settings store beside it (src/platform/sl_settings.c; an old
+# <save>.style sidecar is imported once, then never read again). Lives
+# outside the repo: it is player data,
 # and rule 2 keeps ROM-derived bytes out of the tree regardless.
 SAVE="${SL_SAVE:-${XDG_DATA_HOME:-$HOME/.local/share}/sightline/eeprom.bin}"
 mkdir -p "$(dirname "$SAVE")" 2>/dev/null || true
@@ -91,12 +92,17 @@ it is not needed to begin.
 
   SL_LEVEL=dam SL_DIFFICULTY=2 $0     other level / difficulty
   SL_MOUSE_SENS=10                    faster look (default 6)
-  SL_MOUSE_INVERT=1                   invert pitch
+  SL_MOUSE_INVERT=1                   invert MOUSE pitch for a run WITHOUT a
+                                      config (replay, headless); a player launch
+                                      reports and ignores it - use the INVERT
+                                      MOUSE Y row in the menus, which persists
+                                      (Look Up/Down in the watch is the gamepad's)
   SL_MOUSE=0                          never capture the pointer
   SL_MOUSE_WARP=1                     warp-based relative mode (diagnostic only)
   SL_MOUSE_DX_SIGN=1                  un-invert mouse X (not needed normally)
   SL_MOUSE_DY_SIGN=1                  un-invert mouse Y (not needed normally)
-  SL_LOOK_INVERT=1                    invert pitch on every device
+  SL_LOOK_INVERT=1                    invert GAMEPAD stick pitch (developer
+                                      override; not the mouse)
   SL_FPS=30                           pace to something other than 60
 
 EOF

@@ -10,5 +10,6 @@ OUT=build/native
 mkdir -p $OUT
 gcc -m32 -O0 -g -Wall -Wno-unused-parameter \
     -o $OUT/inputtest tools/native/inputtest.c src/platform/sl_input.c \
+    src/platform/sl_action.c \
     $(pkg-config --cflags sdl2 2>/dev/null || echo -I/usr/include/SDL2)
 exec $OUT/inputtest

@@ -80,6 +80,35 @@
  * is unchanged. */
 #define SL_DEMO_MULTIPLAYER_SELECTABLE 0
 #endif
+#ifndef __sgi
+/* NATIVE ONLY (#41): the mode-select group - Select Mission / Multiplayer /
+ * Options - drawn and hit-tested SL_MODESEL_DY units above where Rare put
+ * Select Mission / Multiplayer / Cheat Options. One constant, applied to every
+ * row's text y, every highlight box, every hit-test threshold and the cursor
+ * return position (setCursorPOSforMode), so the group moves as one and its
+ * spacing (0x20 per row, thresholds 9 above each row's text) is untouched.
+ * Half a row pitch: "moved up a little" (owner, 2026-09-17), an owner visual
+ * gate rather than a fidelity question. The third row is always drawn and
+ * always selectable - it opens the Options screen (src/native/
+ * sl_front_options.c), and the cheat menu now lives under it, so the original
+ * "only when a cheat is unlocked" test moves to the Options screen's Cheats
+ * row. gamemode keeps GAMEMODE_CHEATS as the third row's value: the cursor
+ * return path (setCursorPOSforMode(gamemode)) is Rare's and unchanged. */
+#define SL_MODESEL_DY  (-16)
+/* The same value, readable from src/native/sl_front_options.c so the Options
+ * screen's rows sit at exactly this height too - one constant, one place. */
+const s32 sl_modesel_dy = SL_MODESEL_DY;
+/* The fourth row, QUIT GAME (native only; owner-observed 2026-09-20: with
+ * no such entry there was no normal way to close the game at a large
+ * resolution or fullscreen). Its highlight value in
+ * mission_difficulty_highlighted - the value after Rare's three rows; on this
+ * screen the variable is only the highlight, and every transition off it
+ * sets it afresh. The row sits one pitch (0x20) below OPTIONS by the menu's
+ * own rule: text at 0x13C, box 0x13A..0x14A, band from 0x13C - 9 = 307, all
+ * plus SL_MODESEL_DY; the cursor's own 20-unit inset (frontUpdateControlStick
+ * Position) leaves the band 291..310 reachable by stick, key and pointer. */
+#define SL_MODESEL_ROW_QUIT  3
+#endif
 
 
 /**
@@ -1350,6 +1379,18 @@ Gfx *frontDrawCursor(Gfx *DL)
 
     halfedxy[0] = image->width * 0.5f;
     halfedxy[1] = image->height * 0.5f;
+
+#ifndef __sgi
+    /* NATIVE ONLY - the PC mouse's cursor is DRAWN where the pointer is, the
+     * bands a wider aspect adds beside this 4:3 image included, while the
+     * position hit-tested above stays Rare's. One tagged no-op the renderer
+     * consumes with the texrect below; nothing when the keyboard or the pad
+     * owns the cursor. See src/native/sl_menu_pointer.c sl_menu_cursor_tag. */
+    {
+        extern Gfx *sl_menu_cursor_tag(Gfx *DL, f32 halfw, f32 halfh);
+        DL = sl_menu_cursor_tag(DL, halfedxy[0], halfedxy[1]);
+    }
+#endif
 
     display_image_at_position(&DL, &xypos, &halfedxy, image->width, image->height, 0, 0, 1, 255, 255, 255, 220, (image->level > 0), 0);
 
@@ -3086,7 +3127,30 @@ void interface_menu06_modesel(void)
             sndPlaySfx(g_musicSfxBufferPtr, DOOR_METAL_CLOSE2_SFX, 0);
         }
     }
+#ifndef __sgi
+    /* The fourth row is QUIT GAME (native only; owner-observed 2026-09-20:
+     * no normal way to close at a large resolution or fullscreen). The next
+     * band down by the menu's own rule - a row every 0x20, its band from 9
+     * above its text (the 243 / 275 compares) - so 0x13C - 9 = 307, plus the
+     * group's offset. Tested first because the bands are lower bounds. A
+     * confirm files the ONE quit request the frame pump honours at the next
+     * frame boundary (src/platform/sl_ultra_shim.c sl_quit_request): the
+     * same clean path closing the window takes; nothing exits from here. */
+    else if ((307.0f + SL_MODESEL_DY) <= cursor_v_pos)
+    {
+        mission_difficulty_highlighted = SL_MODESEL_ROW_QUIT;
+        if (joyGetButtonsPressedThisFrame(PLAYER_1, START_BUTTON|Z_TRIG|A_BUTTON))
+        {
+            extern void sl_quit_request(void);
+            sndPlaySfx(g_musicSfxBufferPtr, DOOR_METAL_CLOSE_SFX, 0);
+            sl_quit_request();
+        }
+    }
+    /* The third row is OPTIONS now, always present (see SL_MODESEL_DY). */
+    else if ((275.0f + SL_MODESEL_DY) <= cursor_v_pos)
+#else
     else if ((is_cheat_menu_available) && (275.0f <= cursor_v_pos))
+#endif
     {
         mission_difficulty_highlighted = DIFFICULTY_00;
         if (joyGetButtonsPressedThisFrame(PLAYER_1, START_BUTTON|Z_TRIG|A_BUTTON))
@@ -3116,7 +3180,9 @@ void interface_menu06_modesel(void)
      * The multiplayer CODE is untouched - GAMEMODE_MULTI, MENU_MP_OPTIONS and
      * everything under them still exist and still work in a normal build. This
      * is access policy, not removal. */
-    else if (SL_DEMO_MULTIPLAYER_SELECTABLE && (243.0f <= cursor_v_pos) && (joyGetControllerCount() >= 2))
+    else if (SL_DEMO_MULTIPLAYER_SELECTABLE && ((243.0f + SL_MODESEL_DY) <= cursor_v_pos) && (joyGetControllerCount() >= 2))
+#elif !defined(__sgi)
+    else if (((243.0f + SL_MODESEL_DY) <= cursor_v_pos) && (joyGetControllerCount() >= 2))
 #else
     else if ((243.0f <= cursor_v_pos) && (joyGetControllerCount() >= 2))
 #endif
@@ -3143,6 +3209,14 @@ void interface_menu06_modesel(void)
         tab_prev_selected = TRUE;
         sndPlaySfx(g_musicSfxBufferPtr, DOOR_METAL_CLOSE2_SFX, 0);
     }
+#ifndef __sgi
+    /* #41 witness (SL_INPUT_DEBUG only): the row this screen's own hit test
+     * resolved the cursor to, before the stick moves it. */
+    {
+        extern void sl_front_witness(s32 menu, s32 row, s32 col);
+        sl_front_witness(MENU_MODE_SELECT, tab_prev_highlight ? -1 : (s32) mission_difficulty_highlighted, -1);
+    }
+#endif
     frontUpdateControlStickPosition();
     if (gamemode == GAMEMODE_SOLO)
     {
@@ -3157,7 +3231,12 @@ void interface_menu06_modesel(void)
     }
     if (gamemode == GAMEMODE_CHEATS)
     {
+#ifndef __sgi
+        /* #41: the third row opens Options; the cheat menu is inside it. */
+        frontChangeMenu(MENU_SL_OPTIONS, FALSE);
+#else
         frontChangeMenu(MENU_CHEAT, FALSE);
+#endif
         return;
     }
     if (tab_prev_selected)
@@ -3224,7 +3303,11 @@ Gfx *frontSetupMenuBackground(Gfx *DL)
 void setCursorPOSforMode(int mode)
 {
     cursor_h_pos = 126.0f;
+#ifndef __sgi
+    cursor_v_pos = mode * 0x20 + 0xe2 + SL_MODESEL_DY;
+#else
     cursor_v_pos = mode * 0x20 + 0xe2;
+#endif
 }
 
 
@@ -3248,6 +3331,33 @@ Gfx* constructor_menu06_modesel(Gfx* DL)
     DL = frontSetupMenuBackground(DL);
     DL = microcode_constructor(DL);
 
+#ifndef __sgi
+    /* NATIVE ONLY (#41): the same three rows, each at Rare's y plus
+     * SL_MODESEL_DY, and the third row is OPTIONS, always drawn. The label is
+     * a native string in the title table's own convention (uppercase,
+     * LF-terminated - "SELECT MISSION\n", "CHEAT OPTIONS\n"); the text tables
+     * come out of the ROM at run time, so a new string cannot be added there.
+     * The original arm below is verbatim. */
+    x = 0x96;
+    y = 0xdc + SL_MODESEL_DY;
+    DL = frontPrintText(DL, &x, &y, "1.\n", ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
+
+    textstring = langGet((g_AppendCheatSinglePlayer != 0) ? getStringID(LTITLE, TITLE_STR_117_CHEATSELECTMISSION) : getStringID(LTITLE, TITLE_STR_29_SELECTMISSION));
+
+    textMeasure(&x2, &y2, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0);
+
+    x = 0xAA;
+    y = 0xdc + SL_MODESEL_DY;
+    if (mission_difficulty_highlighted == 0)
+    {
+        DL = microcode_constructor_related_to_menus(DL, 0x94, 0xDA + SL_MODESEL_DY, y2 + 0xAF, 0xEA + SL_MODESEL_DY, 0x32);
+    }
+
+    DL = frontPrintText(DL, &x, &y, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
+
+    x = 0x96;
+    y = 0xFC + SL_MODESEL_DY;
+#else
     x = 0x96;
     y = 0xdc;
     DL = frontPrintText(DL, &x, &y, "1.\n", ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
@@ -3267,6 +3377,7 @@ Gfx* constructor_menu06_modesel(Gfx* DL)
 
     x = 0x96;
     y = 0xFC;
+#endif
 #if defined(SL_DEMO_BUILD) && !defined(__sgi)
     /* Same policy, its visible half. 0x70 is the front end's OWN "not
      * available" shade - the value Rare already shows when fewer than two
@@ -3291,6 +3402,55 @@ Gfx* constructor_menu06_modesel(Gfx* DL)
 
     textMeasure(&x2, &y2, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0);
 
+#ifndef __sgi
+    x = 0xAA;
+    y = 0xFC + SL_MODESEL_DY;
+    if (mission_difficulty_highlighted == 1)
+    {
+        DL = microcode_constructor_related_to_menus(DL, 0x94, 0xFA + SL_MODESEL_DY, y2 + 0xAF, 0x10A + SL_MODESEL_DY, 0x32);
+    }
+    DL = frontPrintText(DL, &x, &y, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, text_color, viGetX(), viGetY(), 0, 0);
+
+    {
+        static char sl_options_label[] = "OPTIONS\n";
+
+        x = 0x96;
+        y = 0x11C + SL_MODESEL_DY;
+        DL = frontPrintText(DL, &x, &y, "3.\n", ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
+        textstring = sl_options_label;
+
+        textMeasure(&x2, &y2, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0);
+
+        x = 0xAA;
+        y = 0x11C + SL_MODESEL_DY;
+        if (mission_difficulty_highlighted == 2)
+        {
+            DL = microcode_constructor_related_to_menus(DL, 0x94, 0x11A + SL_MODESEL_DY, y2 + 0xAF, 0x12A + SL_MODESEL_DY, 0x32);
+        }
+        DL = frontPrintText(DL, &x, &y, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
+    }
+
+    {
+        /* The fourth row, QUIT GAME: the next pitch down, drawn exactly as
+         * the three above (see SL_MODESEL_ROW_QUIT). */
+        static char sl_quit_label[] = "QUIT GAME\n";
+
+        x = 0x96;
+        y = 0x13C + SL_MODESEL_DY;
+        DL = frontPrintText(DL, &x, &y, "4.\n", ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
+        textstring = sl_quit_label;
+
+        textMeasure(&x2, &y2, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0);
+
+        x = 0xAA;
+        y = 0x13C + SL_MODESEL_DY;
+        if (mission_difficulty_highlighted == SL_MODESEL_ROW_QUIT)
+        {
+            DL = microcode_constructor_related_to_menus(DL, 0x94, 0x13A + SL_MODESEL_DY, y2 + 0xAF, 0x14A + SL_MODESEL_DY, 0x32);
+        }
+        DL = frontPrintText(DL, &x, &y, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
+    }
+#else
     x = 0xAA;
     y = 0xFC;
     if (mission_difficulty_highlighted == 1)
@@ -3316,6 +3476,7 @@ Gfx* constructor_menu06_modesel(Gfx* DL)
         }
         DL = frontPrintText(DL, &x, &y, textstring, ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
     }
+#endif
 
     DL = frontAddPreviousTabText(DL);
     DL = frontDrawCursor(DL);
@@ -7980,8 +8141,18 @@ void interface_menu15_cheat(void)
 
     if (tab_prev_selected)
     {
+#ifndef __sgi
+        /* #41: the cheat menu is entered from the Options screen's Cheats
+         * row, so PREVIOUS returns there, cursor on that row. The menu
+         * itself - its rows, its toggles, its mouse - is untouched. */
+        {
+            extern void sl_front_options_return_from_cheats(void);
+            sl_front_options_return_from_cheats();
+        }
+#else
         frontChangeMenu(MENU_MODE_SELECT, 0);
         setCursorPOSforMode(gamemode);
+#endif
         return;
     }
 
@@ -8970,6 +9141,11 @@ void menu_init(void)
             case MENU_NO_CONTROLLERS:         update_menu16_nocontrollers();        break;
             case MENU_DISPLAY_CAST:           update_menu18_displaycast();          break;
             case MENU_SPECTRUM_EMU:           update_menu19_spectrum();             break;
+#ifndef __sgi
+            case MENU_SL_OPTIONS:
+            case MENU_SL_SETTINGS:
+            case MENU_SL_BINDINGS:            break;   /* #41/#42/#46: nothing to update */
+#endif
         }
 
         if (menu_update > MENU_INVALID)
@@ -9010,6 +9186,11 @@ void menu_init(void)
             case MENU_NO_CONTROLLERS:         init_menu16_nocontroller();           break;
             case MENU_DISPLAY_CAST:           init_menu18_displaycast();            break;
             case MENU_SPECTRUM_EMU:           init_menu19_spectrum();               break;
+#ifndef __sgi
+            case MENU_SL_OPTIONS:             { extern void sl_init_menu_options(void);  sl_init_menu_options(); }  break;
+            case MENU_SL_SETTINGS:            { extern void sl_init_menu_settings(void); sl_init_menu_settings(); } break;
+            case MENU_SL_BINDINGS:            { extern void sl_init_menu_bindings(void); sl_init_menu_bindings(); } break;
+#endif
         }
     }
 
@@ -9039,6 +9220,11 @@ void menu_init(void)
         case MENU_NO_CONTROLLERS:         interface_menu16_nocontrollers();         break;
         case MENU_DISPLAY_CAST:           interface_menu18_displaycast();           break;
         case MENU_SPECTRUM_EMU:           interface_menu19_spectrum();              break;
+#ifndef __sgi
+        case MENU_SL_OPTIONS:             { extern void sl_interface_menu_options(void);  sl_interface_menu_options(); }  break;
+        case MENU_SL_SETTINGS:            { extern void sl_interface_menu_settings(void); sl_interface_menu_settings(); } break;
+        case MENU_SL_BINDINGS:            { extern void sl_interface_menu_bindings(void); sl_interface_menu_bindings(); } break;
+#endif
         case MENU_RUN_STAGE:
             if (interface_menu0B_runstage())
             {
@@ -9142,6 +9328,17 @@ Gfx * menu_jump_constructor_handler(Gfx *DL)
             break;
         case MENU_SPECTRUM_EMU:
             DL = constructor_menu19_spectrum(DL);
+#ifndef __sgi
+            break;
+        case MENU_SL_OPTIONS:
+            { extern Gfx *sl_constructor_menu_options(Gfx *DL);  DL = sl_constructor_menu_options(DL); }
+            break;
+        case MENU_SL_SETTINGS:
+            { extern Gfx *sl_constructor_menu_settings(Gfx *DL); DL = sl_constructor_menu_settings(DL); }
+            break;
+        case MENU_SL_BINDINGS:
+            { extern Gfx *sl_constructor_menu_bindings(Gfx *DL); DL = sl_constructor_menu_bindings(DL); }
+#endif
     }
 
     return DL;

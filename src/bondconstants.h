@@ -1941,6 +1941,17 @@ typedef enum MENU
     MENU_SWITCH_SCREENS,
     MENU_DISPLAY_CAST,
     MENU_SPECTRUM_EMU,
+#ifndef __sgi
+    /* NATIVE ONLY (#41): the front end's Options screens, appended AFTER every
+     * original id so nothing the cartridge build sees moves. MENU_MAX is used
+     * nowhere (tree-wide grep 2026-09-17). src/native/sl_front_options.c. */
+    MENU_SL_OPTIONS,       /* Options: Settings / Cheats / Back */
+    MENU_SL_SETTINGS,      /* Settings: a tab strip (CONTROL | GAMEPLAY | ...)
+                            * over one content area - #41's four control
+                            * defaults, #42's Sprint */
+    MENU_SL_BINDINGS,      /* #46: the BINDINGS editor, from the CONTROL tab -
+                            * src/native/sl_front_bindings.c */
+#endif
     MENU_MAX
 } MENU;
 

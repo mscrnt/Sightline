@@ -33,7 +33,13 @@
     select. Overridable with SL_DIFFICULTY.
 
 .PARAMETER Size
-    Window size, WxH. Overridable with SL_WINDOW_SIZE.
+    The INITIAL window size, WxH. Overridable with SL_WINDOW_SIZE. The
+    ASPECT RATIO setting (OPTIONS -> SETTINGS -> DISPLAY: 4:3 / 16:9 / 32:9,
+    persisted in config.ini) then sets the window's WIDTH from its height -
+    960x720 stays 960x720 at 4:3, becomes 1280x720 at 16:9 and 2560x720 at
+    32:9, live when the setting changes and at launch from the saved
+    setting. So this names the height (and the 4:3 width); the aspect wins
+    on the width. Never a stretch, never a strip inside the old window.
 
 .PARAMETER Quiet
     Skip the controls summary.
@@ -251,8 +257,13 @@ if (-not $Quiet) {
     Write-Host "  move          W A S D  /  left stick"
     Write-Host "  look          mouse    /  right stick"
     Write-Host "  fire          left mouse, R1 or R2   aim  right mouse, Q, L1 or L2"
-    Write-Host "  use / reload  E or Space, pad A or B"
-    Write-Host "  next weapon   R, pad X"
+    Write-Host "  interact      E                      reload  R"
+    Write-Host "  crouch        Left Ctrl (hold)"
+    Write-Host "  weapons       1 / wheel up = previous, 2 / wheel down = next"
+    Write-Host "  scope zoom    wheel while aiming with the sniper or the camera"
+    Write-Host "  classic B     Space (use-or-reload, as the cartridge's B)"
+    Write-Host "  gamepad       unchanged: A/B use-or-reload, X next weapon,"
+    Write-Host "                aim + C-down crouch, per the selected control style"
     Write-Host "  watch / pause Tab or Esc, pad Start"
     Write-Host "  d-pad         arrow keys"
     Write-Host "  menus         move the MOUSE to point, left click to select. W A S D"
@@ -294,9 +305,15 @@ if (-not $Quiet) {
     Write-Host ""
     Write-Host "  .\tools\windows\play.ps1 -Level dam -Difficulty 2"
     Write-Host "  `$env:SL_MOUSE_SENS=10    faster look (default 6)"
-    Write-Host "  `$env:SL_MOUSE_INVERT=1   invert pitch"
+    Write-Host "  INVERT MOUSE Y           the front end's OPTIONS > SETTINGS > CONTROL row, or"
+    Write-Host "                           the watch's SIGHTLINE page; saved to"
+    Write-Host "                           %LOCALAPPDATA%\sightline\config.ini (the controller's"
+    Write-Host "                           Look Up/Down option in Bond's watch is the gamepad's)."
+    Write-Host "                           `$env:SL_MOUSE_INVERT is a developer seed for runs"
+    Write-Host "                           WITHOUT a config (replay, headless); a player launch"
+    Write-Host "                           reports it on stderr and ignores it"
     Write-Host "  `$env:SL_MOUSE=0          never capture the pointer"
-    Write-Host "  `$env:SL_LOOK_INVERT=1    invert pitch on every device"
+    Write-Host "  `$env:SL_LOOK_INVERT=1    invert GAMEPAD stick pitch (developer override; not the mouse)"
     Write-Host "  `$env:SL_FPS=30           pace to something other than 60"
     Write-Host ""
 }

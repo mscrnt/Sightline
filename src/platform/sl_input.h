@@ -18,11 +18,11 @@
  *
  * The header is deliberately SDL-free so the shim need not see SDL headers.
  *
- * The synthesised pad is shaped for the control style the GAME reports
- * (src/native/sl_game_query.c), not for a style chosen here, so changing 1.1
- * Honey / 1.2 Solitaire / 1.3 Kissy / 1.4 Goodnight in the in-game options
- * re-maps the devices with no restart. See sl_input.c for what each style
- * does with the pad and which of the eight are reachable.
+ * Since 2026-09-20 (#63) no mapping here depends on the game's control style:
+ * the game side is pinned to 1.1 Honey (src/native/sl_settings_apply.c), the
+ * keyboard, the mouse and the pad's two sticks all reach the game through
+ * the native movement channels, and which thumb does what is the STICK
+ * LAYOUT and BUTTON LAYOUT settings (sl_settings.h, sl_bindings.h).
  */
 #ifndef SL_INPUT_H
 #define SL_INPUT_H
@@ -40,28 +40,22 @@ void sl_input_live_poll(void);
 int sl_input_live_get(unsigned short *button, signed char *stick_x,
                       signed char *stick_y);
 
-/* The SECOND virtual pad, and the reason it exists.
+/* The SECOND virtual pad, and the reason it still exists.
  *
- * The N64 pad has one analog stick and a digital C cluster, so under every 1.x
- * control style the game can accept analog input for movement or for looking,
- * never both: 1.1/1.3 put looking on C (bondview2.c:5209-5248 never sets
- * canNaturalPitch), 1.2/1.4 put walking on C (:5150). That is the hardware,
- * not a defect, and no amount of platform-side mapping removes it.
+ * It was added so the 2.x control styles - the only ones in which the game
+ * reads both analog look axes, from a SECOND controller (bondview2.c:4858,
+ * :4956-4957) - could be driven by one player's two sticks. Since #63
+ * (2026-09-20) the pad's sticks reach the game through the native movement
+ * channels instead, the control style is pinned to 1.1 Honey, and this pad
+ * is ALWAYS neutral; it is still presented so the game keeps counting two
+ * controllers exactly as it did (menus and player-count checks unchanged).
  *
- * Rare already solved it - with the 2.x styles, in game code, reading a SECOND
- * controller (bondview2.c:4858). Those set canNaturalTurn AND canNaturalPitch
- * together (:4956-4957), which is the only place in the game where both analog
- * look axes are live at once. So modern twin-stick is reached by giving the
- * game the second pad it asks for, not by moving gameplay into the host.
- *
- * LIVE INPUT ONLY. A recorded stream is four bytes per retrace - one pad - and
- * this milestone does not widen that format. With SL_INPUT loaded, or with no
- * window, the shim presents exactly one controller as it always did, so trace
+ * LIVE INPUT ONLY. A recorded stream is four bytes per retrace - one pad -
+ * and the format is not widened. With SL_INPUT loaded, or with no window,
+ * the shim presents exactly one controller as it always did, so trace
  * replay and headless health are bit-identical to before.
  *
- * Returns 0 when live input is not available, leaving the outputs untouched.
- * The pad reads neutral unless the game reports a 2.x style, so selecting 1.1
- * behaves exactly as it did. */
+ * Returns 0 when live input is not available, leaving the outputs untouched. */
 int sl_input_live_get2(unsigned short *button, signed char *stick_x,
                        signed char *stick_y);
 
@@ -74,6 +68,104 @@ int sl_input_live_get2(unsigned short *button, signed char *stick_x,
  * focused one returns NULL in precisely the case where the grab has to be
  * re-asserted. Typed void* so this header stays SDL-free. */
 void sl_input_live_set_window(void *sdl_window);
+
+/* INVERT MOUSE Y - the native setting, and the one state that decides whether
+ * mouse pitch is inverted (#39). 1 = physical mouse up looks DOWN. Applied
+ * exactly once, at the physical delta in read_mouse, so the linear mouse-look
+ * channel and the fallback channel both see it and neither sees it twice.
+ * MOUSE ONLY: the game's own Look Up/Down option keeps governing the gamepad
+ * stick and never reaches the mouse; this never reaches the stick.
+ *
+ * Precedence, lowest first: built-in default, SL_MOUSE_INVERT if present at
+ * the first poll (the developer override, honoured only while the settings
+ * store is INACTIVE - replay, headless, the harness), the persisted config
+ * (the SEED, applied at startup by the shim from src/platform/sl_settings.c;
+ * with the store active the env is reported and ignored), then an explicit
+ * SET from the menus, which wins for the run and is the ONE path that
+ * persists - the setter hands the value to the settings store. */
+int  sl_mouse_invert_y_get(void);
+void sl_mouse_invert_y_set(int on);
+void sl_mouse_invert_y_seed(int on);
+
+/* MOUSE SENSITIVITY (scoped = 0) and SCOPED SENSITIVITY (scoped = 1), #50:
+ * percents in the settings store (SL_MOUSE_SENS_MIN..MAX, default 100 = the
+ * accepted feel), applied at the gameplay mouse-look seam only - the scoped
+ * one on top of the first while the game's adjustable-scope predicate holds.
+ * get returns the store's value (the default if it were somehow out of
+ * range); step moves it one SL_MOUSE_SENS_STEP down (dir < 0) or up, clamped,
+ * and persists through the store. Both editors call these and nothing else. */
+int  sl_mouse_sens_get(int scoped);
+void sl_mouse_sens_step(int scoped, int dir);
+/* The SLIDER view of the same value (#50, the bar rows): the fill fraction
+ * (value - MIN) / (MAX - MIN) in 0..1, and the set from a fraction - the
+ * fraction's grid point (nearest SL_MOUSE_SENS_STEP multiple, MIN and MAX
+ * inclusive), clamped, through the same store. Neither bypasses the step
+ * grid, the bounds or the default: 0.5 lands on 150, a full bar on 300. */
+float sl_mouse_sens_fraction(int scoped);
+void  sl_mouse_sens_set_fraction(int scoped, float t);
+/* Is the LEFT mouse button held, as a device fact (down over a focused
+ * window and not yet released)? The front end's slider bars follow the
+ * pointer while it is (sl_front_options.c), the way the 007-mode bars follow
+ * the cursor while A is held. */
+int  sl_input_pointer_lmb_held(void);
+
+/* ---- CONTROLLER TUNING (#51) ---------------------------------------------
+ *
+ * The three controller rows both editors show - the settings store's
+ * pad_look_sensitivity / pad_look_deadzone / pad_move_deadzone (sl_settings.h
+ * for what each means and its bounds) through the #50 idiom: get (the value,
+ * the default when the store is out of range), step (one grid step, clamped),
+ * and the slider bar's fraction / set-from-a-fraction on the same grid. Read
+ * by sl_input.c at the pad seam every poll, so a step is felt on the next
+ * poll and the two menus cannot disagree. */
+#define SL_PAD_TUNE_LOOK_SENS     0
+#define SL_PAD_TUNE_LOOK_DEADZONE 1
+#define SL_PAD_TUNE_MOVE_DEADZONE 2
+#define SL_PAD_TUNE_COUNT         3
+int   sl_pad_tune_get(int which);
+void  sl_pad_tune_step(int which, int dir);
+float sl_pad_tune_fraction(int which);
+void  sl_pad_tune_set_fraction(int which, float t);
+
+/* ---- CONTROLLER FAMILY (#63) --------------------------------------------
+ *
+ * (The CONTROLLER PROFILE calls that sat here - ORIGINAL / MODERN - left on
+ * 2026-09-20 with the profile: the pad is always the modern controller. The
+ * STICK LAYOUT is read straight from the settings store every poll; the
+ * editors set it there.)
+ *
+ * The FAMILY of the physical pad that drives the game, decided by SDL's own
+ * controller-type classification (SDL_GameControllerGetType, from its mapping
+ * database - never a product-name match): NONE (no pad), XBOX (Xbox 360 /
+ * One / Series and compatibles), PLAYSTATION (PS3 / PS4 / DualSense), or
+ * GENERIC (mapped by SDL but of another family - Switch Pro, a generic
+ * XInput-less pad). Modern input never depends on it; only the labels the
+ * editors print and the model the watch draws do. Re-read whenever SDL
+ * reports a device change. */
+#define SL_PAD_FAMILY_NONE        0
+#define SL_PAD_FAMILY_XBOX        1
+#define SL_PAD_FAMILY_PLAYSTATION 2
+#define SL_PAD_FAMILY_GENERIC     3
+int  sl_input_pad_family(void);
+/* The family's display name for the editors: "NONE", "XBOX", "PLAYSTATION",
+ * "GENERIC". */
+const char *sl_input_pad_family_name(int family);
+
+/* The PHYSICAL state of the driving pad this poll, for the watch's controller
+ * visualisation: every part addressed by its canonical id
+ * (SL_PART_* in src/sl_asset_override.h). Sticks are -1..1 with SDL's own
+ * sense (x + = right, y + = down), triggers 0..1, buttons 0 / 1, all straight
+ * off the device with only the reader's deadzone applied (since #51 the
+ * player's LOOK / MOVE DEADZONE by the axis's role, so a stick inside its
+ * deadzone draws neutral) and never the look sensitivity - this is what the
+ * player's hands are doing, not what the game receives. Returns 0 (outputs
+ * zeroed) when no pad drives the game. */
+typedef struct {
+    float left_x, left_y, right_x, right_y;
+    float left_trigger, right_trigger;
+    unsigned int held;      /* bit (1u << SL_PART_id) per held button part */
+} sl_pad_visual;
+int  sl_input_pad_visual(sl_pad_visual *out);
 
 /* Window focus gained (1) or lost (0). The grab follows it, so that alt-tab
  * out of the game is not a trap. Losing focus also DISARMS click-to-capture:
@@ -126,10 +218,22 @@ void sl_input_live_release(int button);
  *
  * Returns 0 - leaving the outputs untouched - unless live input is running, a
  * cursor-driven front-end menu is up, the window has focus and mouse focus,
- * and the pointer is NOT captured. So this is silent during play, during the
- * watch, under a recorded stream and headless. */
+ * and the pointer is NOT captured - OR the solo watch is open (#40), where
+ * the same record is filled either from the absolute position (uncaptured)
+ * or by integrating the relative deltas (captured, the gameplay grab kept).
+ * So this is silent during play, under a recorded stream and headless. */
 int sl_input_pointer_get(int *x, int *y, int *win_w, int *win_h,
                          unsigned *motion_serial);
+
+/* Is the pointer CAPTURED (relative mode, host cursor hidden) right now? The
+ * watch draws the game's own crosshair as the pointer exactly then, and
+ * leaves the host cursor to be the pointer otherwise (#40). */
+int sl_input_pointer_captured(void);
+
+/* Is an SL_POINTER_PROBE sample the pointer right now (a developer witness;
+ * never in a player session)? The watch draws its crosshair for a probed
+ * pointer as for a captured one, so a bounded run can photograph it. */
+int sl_input_pointer_probed(void);
 
 /* Is the MOUSE the thing currently pointing at the menu, as opposed to the
  * keyboard or the pad? NARROWER than "keyboard/mouse is the producer": it is

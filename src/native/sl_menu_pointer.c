@@ -55,12 +55,18 @@
  */
 #ifndef __sgi
 
+#include <stdio.h>
 #include <ultra64.h>
 #include <bondgame.h>
 #include <boss.h>
 #include "bondview.h"
 #include "front.h"
 #include "player.h"
+
+/* One diagnostic (#41): the front-end menu transitions, on SL_INPUT_DEBUG
+ * only, so a witness log shows which screen a click landed on. The N64
+ * include tree's <stdlib.h> has no getenv; declared as sl_cheat.c does. */
+extern char *getenv(const char *);
 
 /* The front end's own accessor for current_menu (front.c:8592). Declared here
  * because front.h does not declare it and this file has no business editing a
@@ -89,6 +95,19 @@ extern int sl_input_pointer_get(int *x, int *y, int *win_w, int *win_h,
 
 /* The renderer's presented rectangle (src/gfx/sl_gfx.h), same reasoning. */
 extern int sl_gfx_present_rect(int win_h, int *x, int *y, int *w, int *h);
+/* ... and its CONTENT rectangle (#45: the selected aspect fitted in the
+ * window, the safe rect centred inside it), which the DRAWN cursor may
+ * cross - see sl_menu_cursor_tag. */
+extern int sl_gfx_content_rect(int win_h, int *x, int *y, int *w, int *h);
+/* The pure mapping (src/platform/sl_display.h): a window pixel -> the
+ * front end's logical units over the safe rect, EXTENDED into the bands and
+ * confined to the content rect; 2 inside the safe rect, 1 in a band, 0
+ * outside the content rect, -1 degenerate. */
+extern int sl_display_pointer_logical(const int safe[4], const int content[4],
+                                      int px, int py, float scr_w, float scr_h,
+                                      float *lx, float *ly);
+/* The game's own rounding, the one frontDrawCursor applies (math_floor.h). */
+extern f32 floorFloat(f32 arg0);
 
 /* Is the MOUSE the thing currently pointing? Used for ONE decision - see
  * "SCREEN ENTRY" in sl_menu_pointer_apply. */
@@ -101,6 +120,18 @@ static int          s_have_motion;
 /* The menu this file last saw, so a CHANGE can be noticed. -2 because
  * MENU_INVALID is -1 and is a menu the front end really reports. */
 static s32          s_last_menu = -2;
+
+/* Has the game's cursor been PLACED from the pointer on this screen? Set by
+ * the assignment in sl_menu_pointer_apply, dropped when the pointer goes
+ * away or a new screen comes up. The drawn cursor follows the pointer
+ * INSIDE the image only while this is set: the first sample after a screen
+ * comes up is a baseline, not a move (see sl_menu_pointer_apply), so for
+ * that sample the hit position is still Rare's placement - and the cursor
+ * must be drawn there, not where the pointer is, or the two would disagree
+ * for a frame (measured 2026-09-20 on the 4:3 identity probe before this
+ * flag existed: drawn (220,165), hit (126,210)). In a band there is nothing
+ * to disagree with, and the cursor is drawn at the pointer regardless. */
+static int          s_placed;
 
 /**
  * Which front-end screens the pointer drives, and therefore which ones a left
@@ -177,6 +208,14 @@ static s32          s_last_menu = -2;
  *                        demo merely made the page reachable on a clean
  *                        save. Fixed where the set is written down, exactly
  *                        as MENU_MISSION_FAILED / _COMPLETE were.
+ *   MENU_SL_OPTIONS      the native Options screen (#41) - Settings /
+ *   MENU_SL_SETTINGS     Cheats / Back - and its Settings page, a tab strip
+ *                        (CONTROL | GAMEPLAY, #42) over one content area.
+ *                        Built the same way as mode select and the cheat
+ *                        menu (a tab is a hit band like a row; row bands on
+ *                        cursor_v_pos, value columns on cursor_h_pos, the
+ *                        PREVIOUS tab, frontUpdateControlStickPosition,
+ *                        frontDrawCursor): src/native/sl_front_options.c.
  *
  * Everything else in the front end - the logos, the legal screen, the gun
  * barrel, multiplayer setup, 007 options, the cast - is left exactly as it
@@ -206,6 +245,9 @@ s32 sl_game_pointer_menu_active(void)
     case MENU_MISSION_FAILED:
     case MENU_MISSION_COMPLETE:
     case MENU_CHEAT:
+    case MENU_SL_OPTIONS:
+    case MENU_SL_SETTINGS:
+    case MENU_SL_BINDINGS:          /* #46: the BINDINGS editor, same shape */
         return 1;
     default:
         return 0;
@@ -341,10 +383,165 @@ s32 sl_game_click_advance_active(void)
  * button presses and stick deflection, and neither is synthesised by moving a
  * pointer, so the attract sequence keeps Rare's timing.
  */
-void sl_menu_pointer_apply(void)
+/**
+ * WINDOW PIXELS -> the presented image, as fractions. Returns 1 with u,v in
+ * [0,1] and the platform's motion serial when there is a pointer this frame
+ * and it is over the game image; 0 otherwise (no pointer - a screen that is
+ * not sampled, no focus, the pointer captured for play - or the pointer
+ * outside the presented rectangle, which is not over anything).
+ *
+ * The rectangle is the renderer's own (sl_gfx_present_rect), not a second
+ * copy of its scaling: it is the GL viewport the 2D ortho is stretched across,
+ * so it already accounts for the window size and would account for a
+ * letterbox if one is ever added. Shared by the front end's cursor below and
+ * the watch's hit-testing (sl_watch_pointer.c), so the two can never map the
+ * same pixel to two different places.
+ */
+int sl_menu_pointer_uv(f32 *u, f32 *v, unsigned int *motion)
 {
     int px, py, ww, wh;
     int rx, ry, rw, rh;
+    f32 fu, fv;
+
+    if (!sl_input_pointer_get(&px, &py, &ww, &wh, motion))
+        return 0;
+    if (!sl_gfx_present_rect(wh, &rx, &ry, &rw, &rh))
+        return 0;
+    if (rw <= 0 || rh <= 0)
+        return 0;
+
+    fu = (f32) (px - rx) / (f32) rw;
+    fv = (f32) (py - ry) / (f32) rh;
+    if (fu < 0.0f || fu > 1.0f || fv < 0.0f || fv > 1.0f)
+        return 0;
+
+    *u = fu;
+    *v = fv;
+    return 1;
+}
+
+/**
+ * IS THE POINTER OVER THE MENU - the safe rect, the 4:3 image every front-end
+ * hit test lives in? Asked by the platform's click path (sl_input_live_click,
+ * and the probe's click) so that a click in the band beside the image, where
+ * the cursor is DRAWN but nothing can be hit, confirms nothing.
+ *
+ * The owner's finding (2026-09-20, the widescreen screenshots): at 16:9 the
+ * pointer in a band left the game's cursor where it last was - at the safe
+ * edge, on whatever item it had crossed - and a click there activated that
+ * item (measured before this change: probe (40,360) + click on a 1280x720
+ * MODE SELECT -> `menu 6 -> 26`, the row the frozen cursor still sat on).
+ * The cursor's position is deliberately NOT clamped to the edge (see
+ * sl_menu_pointer_apply); this closes the click.
+ *
+ * Same test as sl_menu_pointer_uv - a fraction outside [0,1] on either axis
+ * is "not over" - so the hover, the hit and the click can never disagree.
+ * Answers 1 when there is no pointer at all (the pad, the keyboard: their
+ * confirm is not a click and must not be gated by where a mouse rests).
+ */
+s32 sl_game_pointer_over_menu(void)
+{
+    f32 u, v;
+    unsigned int motion;
+
+    if (!sl_input_pointer_get(NULL, NULL, NULL, NULL, &motion))
+        return 1;
+    return sl_menu_pointer_uv(&u, &v, &motion) ? 1 : 0;
+}
+
+/**
+ * THE DRAWN CURSOR'S PLACEMENT (the widescreen cursor repair, owner-observed
+ * 2026-09-20: "at >4:3 aspects the red front-end cursor cannot reach the
+ * visible left/right edges").
+ *
+ * Three things that were one variable are now named apart:
+ *
+ *   the physical pointer   window pixels, the platform's (sl_input_pointer_get)
+ *   the hit position       cursor_h_pos / cursor_v_pos, Rare's, written by
+ *                          sl_menu_pointer_apply ONLY while the pointer is
+ *                          over the safe rect and clamped by the game's own
+ *                          20-unit inset (front.c:1319-1341) - the item under
+ *                          it is what every screen hit-tests, unchanged
+ *   the visible cursor     this: the same texrect frontDrawCursor draws,
+ *                          placed where the pointer IS, across the whole
+ *                          CONTENT rect (#45) - the bands included
+ *
+ * Called from frontDrawCursor's native arm just before the cursor's texrect,
+ * with the half-extents it is about to draw. When the MOUSE owns the cursor
+ * (sl_input_pointer_owns: it moved last; the keyboard or the pad taking the
+ * cursor drops the claim and Rare's placement is drawn again) this emits the
+ * renderer's placement tag (src/gfx/sl_gfx_dl.c, `C0 'SLC'`): the rect's
+ * top-left in 1/4 logical pixels, signed, computed by the SAME arithmetic
+ * the game applies to cursor_h_pos - floorFloat(pos + 0.5) for the centre
+ * (front.c:1367), (centre - half) * 4 truncated for the corner
+ * (bondwalk2.c:34) - so wherever the pointer is inside [20, w-20] x
+ * [20, h-20] the tag names the corner the untagged draw would have had and
+ * the pixels are identical (the 4:3 identity, measured). Inside the game's
+ * 20-unit inset the drawn cursor continues to the edge while the hit position
+ * is the clamped one; in a band the cursor is drawn there and the hit
+ * position is frozen where the pointer left the safe rect, with the click
+ * closed by sl_game_pointer_over_menu. Beyond the content rect (a pillarbox
+ * bar) the cursor rests on the content edge.
+ *
+ * Nothing is drawn here and nothing is stored: the tag rides the display
+ * list the cursor is in, one no-op, consumed by the renderer with the very
+ * next texrect. The matching build never sees it (the arm is native-only).
+ */
+Gfx *sl_menu_cursor_tag(Gfx *DL, f32 halfw, f32 halfh)
+{
+    int px, py, ww, wh;
+    int safe[4], content[4];
+    unsigned int motion;
+    float lx, ly;
+    f32 xc, yc;
+    s32 xl4, yl4;
+    int where;
+
+    if (!sl_input_pointer_owns())
+        return DL;
+    if (!sl_input_pointer_get(&px, &py, &ww, &wh, &motion))
+        return DL;
+    if (!sl_gfx_present_rect(wh, &safe[0], &safe[1], &safe[2], &safe[3]))
+        return DL;
+    if (!sl_gfx_content_rect(wh, &content[0], &content[1], &content[2], &content[3]))
+        return DL;
+    where = sl_display_pointer_logical(safe, content, px, py,
+                                       getPlayer_c_screenwidth(), getPlayer_c_screenheight(),
+                                       &lx, &ly);
+    if (where < 0)
+        return DL;
+    /* Inside the image only once the hit position IS the pointer's. */
+    if (where == 2 && !s_placed)
+        return DL;
+
+    /* The centre as frontDrawCursor rounds it, from the position
+     * sl_menu_pointer_apply would have written (left + u * width). */
+    xc = floorFloat((getPlayer_c_screenleft() + lx) + 0.5f);
+    yc = floorFloat((getPlayer_c_screentop() + ly) + 0.5f);
+    /* The corner as draw_textured_rectangle computes it. */
+    xl4 = (s32) ((xc - halfw) * 4.0f);
+    yl4 = (s32) ((yc - halfh) * 4.0f);
+
+    if (getenv("SL_INPUT_DEBUG") != NULL)
+    {
+        static s32 last_x4 = 0x7FFFFFFF, last_y4 = 0x7FFFFFFF, last_where = -2;
+        if (xl4 != last_x4 || yl4 != last_y4 || where != last_where)
+        {
+            last_x4 = xl4; last_y4 = yl4; last_where = where;
+            fprintf(stderr, "sightline front: cursor drawn at (%.0f,%.0f) %s hit=(%.1f,%.1f)\n",
+                    xc, yc, where == 2 ? "safe" : where == 1 ? "BAND" : "edge",
+                    cursor_h_pos, cursor_v_pos);
+        }
+    }
+
+    DL->words.w0 = (0xC0u << 24) | 0x00534C43u;
+    DL->words.w1 = (((u32) xl4 & 0xFFFFu) << 16) | ((u32) yl4 & 0xFFFFu);
+    DL++;
+    return DL;
+}
+
+void sl_menu_pointer_apply(void)
+{
     unsigned int motion;
     f32 u, v;
     f32 left, top, width, height;
@@ -356,14 +553,19 @@ void sl_menu_pointer_apply(void)
      * stepping out to a non-pointer menu and back would not read as an entry. */
     menu_now = (s32) get_currentmenu();
     entered = (menu_now != s_last_menu);
+    if (entered && getenv("SL_INPUT_DEBUG") != NULL)
+        fprintf(stderr, "sightline front: menu %d -> %d\n", (int) s_last_menu, (int) menu_now);
     s_last_menu = menu_now;
+    if (entered)
+        s_placed = 0;          /* Rare re-places the cursor on entry (below) */
 
-    if (!sl_input_pointer_get(&px, &py, &ww, &wh, &motion))
+    if (!sl_input_pointer_get(NULL, NULL, NULL, NULL, &motion))
     {
         /* No pointer this frame - a menu that is not in the set, no focus, or
          * the pointer captured for play. Drop the history so that the next
          * sample is a fresh baseline rather than a phantom jump. */
         s_have_motion = 0;
+        s_placed = 0;
         return;
     }
 
@@ -388,22 +590,10 @@ void sl_menu_pointer_apply(void)
     if (!moved && !(entered && sl_input_pointer_owns()))
         return;
 
-    /* WINDOW PIXELS -> the presented image. The renderer's own rectangle, not
-     * a second copy of its scaling: it is the GL viewport the 2D ortho is
-     * stretched across, so it already accounts for the window size and would
-     * account for a letterbox if one is ever added. */
-    if (!sl_gfx_present_rect(wh, &rx, &ry, &rw, &rh))
-        return;
-    if (rw <= 0 || rh <= 0)
-        return;
-
-    u = (f32) (px - rx) / (f32) rw;
-    v = (f32) (py - ry) / (f32) rh;
-
     /* Outside the presented image is not over a menu item. Leave the cursor
      * where it was rather than clamping it to an edge, which would drag the
      * highlight along a border as the pointer left the window. */
-    if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
+    if (!sl_menu_pointer_uv(&u, &v, &motion))
         return;
 
     /* -> the GAME's logical menu space. Read from the game, every frame: the
@@ -425,7 +615,11 @@ void sl_menu_pointer_apply(void)
      * is no second copy of those numbers anywhere. */
     cursor_h_pos = left + u * width;
     cursor_v_pos = top  + v * height;
+    s_placed = 1;              /* the hit position is the pointer's: draw there */
 
+    if (getenv("SL_INPUT_DEBUG") != NULL)
+        fprintf(stderr, "sightline front: pointer (%.3f,%.3f) -> cursor (%.1f,%.1f) menu %d%s\n",
+                u, v, cursor_h_pos, cursor_v_pos, (int) menu_now, entered ? " (entry)" : "");
 }
 
 #endif /* !__sgi */

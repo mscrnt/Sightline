@@ -51,6 +51,7 @@ pointing at it. Nothing ROM-derived ships in this repository.
 | `SL_PYTHON` | interpreter for the generation steps (default `.venv\Scripts\python.exe`) |
 | `SL_LEVEL`, `SL_DIFFICULTY`, `SL_WINDOW_SIZE` | `play.ps1` defaults |
 | `SL_SAVE` | save file (default `%LOCALAPPDATA%\sightline\eeprom.bin`) |
+| `SL_CONFIG` | developer-only: the native settings file (default `%LOCALAPPDATA%\sightline\config.ini`; the -Demo core uses `...\sightline\demo\config.ini`) - lets a test run against a scratch config. Besides its scalars the file carries the player's gameplay bindings as `bind.<action>.<device>.<slot>=<token>` lines (only the slots that differ from the compiled defaults; `key:UP`, `mouse:X1`, `wheel:DOWN`, `pad:RT`, `none`), written by the BINDINGS editors - OPTIONS -> SETTINGS -> CONTROL -> BINDINGS, and the watch's SIGHTLINE -> BINDINGS - and never by hand while the game runs |
 | `SL_TRACE_DEFS` | extra `-D` flags; changing it invalidates all objects |
 | `SL_SDL_CFLAGS`, `SL_SDL_LIBS` | override what pkgconf reports |
 

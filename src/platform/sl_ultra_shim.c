@@ -415,12 +415,22 @@ int sl_audio_ctl_mode(void)
 static u32 sl_frame;
 #include "../gfx/sl_gfx.h"
 #include "sl_input.h"
+#include "sl_settings.h"
 
 /* Defined with the style sidecar below; called from the frame pump above it. */
 static void sl_cont_count_report(void);
 
 static u32 sl_frame_limit = 1000;
 static int sl_frame_limit_set;          /* SL_FRAMES named explicitly */
+
+/* THE QUIT REQUEST (owner-observed 2026-09-20: the dossier's main menu had
+ * no QUIT GAME, so at a large resolution or fullscreen there was no normal
+ * way to close). The flag itself lives with the window's other lifecycle
+ * state (src/platform/sl_window.c, where the self-test can reach it); the
+ * front end's QUIT GAME row files it and THIS pump honours it at the next
+ * frame boundary, taking the very path SDL_QUIT takes. Nothing exits from
+ * menu code. */
+extern int sl_quit_requested(void);
 
 /* ---- real-time pacing ---------------------------------------------------
  * The pump is as fast as the host will go, which is right for replay and
@@ -922,7 +932,6 @@ static void sl_phase_frame_end(void)
     ph_t_frame_end = now;
 }
 
-void sl_style_apply_once(void);   /* defined below; called from sl_pump */
 static void sl_pump(sl_OSMesgQueue *q)
 {
 
@@ -1057,8 +1066,15 @@ static void sl_pump(sl_OSMesgQueue *q)
          * backend, which is the default - trace replay must not sprout a
          * window. */
         sl_gfx_end_frame();
-        if (!sl_gfx_poll()) {
-            fprintf(stderr, "sightline native: window closed at frame %u\n", sl_frame);
+        /* The window closing (SDL_QUIT: the X, Alt+F4) and the front end's
+         * QUIT GAME row (sl_quit_request, below) leave by the SAME path: the
+         * backend torn down - the pointer grab dropped, the GL context and
+         * the window destroyed, SDL_Quit restoring any exclusive mode - then
+         * exit(0) with its atexit work (the save flush, the reports). */
+        if (!sl_gfx_poll() || sl_quit_requested()) {
+            fprintf(stderr, sl_quit_requested()
+                            ? "sightline native: quit requested at frame %u\n"
+                            : "sightline native: window closed at frame %u\n", sl_frame);
             if (sl_trace_f) fclose(sl_trace_f);
             sl_gfx_shutdown();
             exit(0);
@@ -1071,7 +1087,6 @@ static void sl_pump(sl_OSMesgQueue *q)
          * retrace-driven path above, so it is deliberately discarded here. */
         if (sl_vis_active())
             (void) sl_phase_pace_frame();
-        sl_style_apply_once();
         sl_cont_count_report();
         sl_vis_record_frame();
         sl_tick_rate_report();
@@ -1175,6 +1190,16 @@ static void sl_rom_load(void)
     if (fread(sl_rom, 1, sl_rom_size, f) != (size_t) sl_rom_size) exit(3);
     fclose(f);
     SL_LOG("ROM loaded: %s (%ld bytes)\n", path, sl_rom_size);
+}
+
+/* The whole image, read-only, for a native consumer that derives from the
+ * ROM rather than DMAs from it (sl_ucode.c). Loads on first use exactly as
+ * the PI paths do, so the SL_ROM contract is unchanged. */
+const unsigned char *sl_rom_bytes(long *size)
+{
+    if (!sl_rom) sl_rom_load();
+    *size = sl_rom_size;
+    return sl_rom;
 }
 
 static long sl_rom_off(u32 devAddr) { return (long)(devAddr & 0x0FFFFFFFu); }
@@ -1946,7 +1971,8 @@ static int sl_eeprom_loaded;
 static char sl_eeprom_path[512];
 static int  sl_eeprom_writable;
 
-/* The player's control style, remembered across runs.
+/* The player's control style, remembered across runs - and since #41 the
+ * Look Up/Down, Aim Control and Invert Mouse Y defaults with it.
  *
  * DIRECT BOOT never restores it, and that is measured rather than assumed: a
  * 1200-frame run that boots straight into a level performs ZERO osEepromRead
@@ -1958,85 +1984,59 @@ static int  sl_eeprom_writable;
  * the options menu is gone the moment the process ends.
  *
  * Writing the game's own save format from here would mean reimplementing
- * Rare's checksums and block layout to persist one integer. Instead the style
- * is read back out of the game at exit and pushed in through the game's own
- * setter next launch, once a player exists. Rule 5 holds: nothing about the
+ * Rare's checksums and block layout to persist one integer. The first answer
+ * was a one-integer ".style" sidecar beside the save, read here and pushed in
+ * through the game's own setter once a player existed (sl_style_load /
+ * sl_style_save / sl_style_apply_once, 2026-09-01 .. 2026-09-17). #41
+ * replaced that with the native settings store (src/platform/sl_settings.c,
+ * %LOCALAPPDATA%\sightline\config.ini): the same integer plus the three
+ * other control defaults, applied at every stage start by
+ * src/native/sl_settings_apply.c through the SAME setters the per-folder
+ * save load uses (init_watch_at_start_of_stage -> fileLoadSettingsForFolder,
+ * then the native default on top). Rule 5 holds as before: nothing about the
  * game's behaviour changes, the player's own choice is simply still there.
- */
-extern int sl_game_control_style(int player_num);
-extern int sl_game_set_control_style(int player_num, int style);
-
-static char sl_style_path[560];
-static int  sl_style_pending = -1;   /* loaded value waiting to be applied */
-static int  sl_style_applied;
-
-static void sl_style_load(const char *save_path)
+ *
+ * NATIVE DEFAULT: 1.2 SOLITAIRE, not 1.1 Honey. Owner decision, 2026-09-01,
+ * carried into the store's table. This does not change Rare's default -
+ * player.c:502 still forces Honey in initBONDdataforPlayer and is untouched;
+ * it is the value the save-less native boot fills in. Why Solitaire is the
+ * better cold start, and it is structural rather than taste: Honey never
+ * assigns canNaturalPitch - it stays 0 from the reset at bondview2.c:4785 and
+ * :5899 gates analog pitch on it - so a PAD under Honey has no free analog
+ * pitch axis at all outside aim mode. Solitaire sets canNaturalPitch =
+ * !insightaimmode (:5197) and keeps pitch analog.
+ *
+ * THE SIDECAR IS NOT READ ANY MORE (2026-09-20, #63): the control style left
+ * the store with the N64 control styles themselves (the game side is pinned
+ * to 1.1 Honey by sl_settings_apply.c; the native layer owns every mapping),
+ * so there is nothing to import "<save>.style" into. The one-time import
+ * #41 kept for it (sl_settings_import_legacy_style) is gone; a sidecar
+ * beside a save is simply ignored. The Solitaire note above is history.
+ *
+ * Reached only from sl_eeprom_init_rw, i.e. only when SL_EEPROM_RW names a
+ * writable save (or the demo's own save). Trace replay and native-health
+ * never take that path, so neither sees a config: the store stays inactive
+ * and the apply glue is a no-op, which is what keeps them bit-identical. */
+static void sl_settings_start(const char *save_path)
 {
-    FILE *f;
-    int v = -1;
-    size_t n = strlen(save_path);
-
-    if (n + 8 >= sizeof sl_style_path)
-        return;
-    memcpy(sl_style_path, save_path, n);
-    memcpy(sl_style_path + n, ".style", 7);
-
-    /* NATIVE DEFAULT: 1.2 SOLITAIRE, not 1.1 Honey. Owner decision, 2026-09-01.
-     *
-     * This does not change Rare's default. player.c:502 still forces
-     * CONTROLLER_CONFIG_HONEY in initBONDdataforPlayer and is untouched; what
-     * this fills in is the value DIRECT BOOT never restores, because
-     * SL_BOOT_LEVEL jumps past fileLoadSettingsForFolder (file2.c:1283) and so
-     * no saved style is ever loaded. On a cartridge the player's choice would
-     * be there; here there was nothing, so the game fell back to its cold-start
-     * value every launch.
-     *
-     * Why Solitaire is the better cold start, and it is structural rather than
-     * taste: Honey never assigns canNaturalPitch - it stays 0 from the reset at
-     * bondview2.c:4785 and :5899 gates analog pitch on it - so a PAD under
-     * Honey has no free analog pitch axis at all outside aim mode. Solitaire
-     * sets canNaturalPitch = !insightaimmode (:5197) and keeps pitch analog.
-     *
-     * An existing sidecar still wins: it is read below and overwrites this.
-     * The style is still applied ONCE (sl_style_apply_once), so changing it in
-     * the Options menu afterwards is the player's and is not fought - and it is
-     * written back out at exit, which is what makes this a cold-start default
-     * rather than a policy.
-     *
-     * Reached only from sl_eeprom_init_rw, i.e. only when SL_EEPROM_RW names a
-     * writable save. Trace replay and native-health never take that path, so
-     * neither sees this value. */
-    sl_style_pending = 1;              /* CONTROLLER_CONFIG_SOLITARE */
-
-    f = fopen(sl_style_path, "r");
-    if (f == NULL)
-        return;
-    if (fscanf(f, "%d", &v) == 1 && v >= 0 && v < 8)
-        sl_style_pending = v;
-    fclose(f);
+    (void) save_path;
+    sl_settings_init();
+    /* Invert Mouse Y: config -> the one native state, as a SEED (not an
+     * explicit set), so a later UI change wins over it for the run and
+     * persists. The store is active from here on, so the developer override
+     * SL_MOUSE_INVERT read at the first poll is ignored in this session
+     * (read_env, sl_input.c): the config is the one authority. */
+    sl_mouse_invert_y_seed(sl_settings_get(SL_SET_MOUSE_INVERT_Y));
+    /* The binding registry (#46): defaults plus the store's bind. lines,
+     * loaded here - before the first poll - so gameplay input begins on the
+     * persisted bindings. A reload, not an init, so a default-only table an
+     * earlier evaluation may have built cannot shadow the config. */
+    {
+        extern void sl_bindings_reload(void);
+        sl_bindings_reload();
+    }
 }
 
-static void sl_style_save(void)
-{
-    FILE *f;
-    int v;
-
-    if (sl_style_path[0] == '\0')
-        return;
-    v = sl_game_control_style(0);
-    if (v < 0)                       /* no player: nothing worth recording */
-        return;
-    f = fopen(sl_style_path, "w");
-    if (f == NULL)
-        return;
-    fprintf(f, "%d\n", v);
-    fclose(f);
-}
-
-/* Applied from the frame pump rather than at configure time: the player does
- * not exist until the level has loaded, and forcing it earlier would be
- * overwritten by initBONDdataforPlayer anyway. Applied ONCE, so a change made
- * in the options menu afterwards is the player's and is not fought. */
 /*
  * Report what the GAME concluded about controller count, once per change.
  *
@@ -2063,22 +2063,9 @@ static void sl_cont_count_report(void)
             n >= 2 ? " - 2.x control styles are selectable" : "");
 }
 
-void sl_style_apply_once(void)
-{
-    if (sl_style_applied || sl_style_pending < 0)
-        return;
-    if (sl_game_set_control_style(0, sl_style_pending) == 0) {
-        fprintf(stderr, "sightline native: control style %d restored\n",
-                sl_style_pending);
-        sl_style_applied = 1;
-    }
-}
-
 static void sl_eeprom_flush(void)
 {
     FILE *f;
-
-    sl_style_save();
 
     if (!sl_eeprom_writable || sl_eeprom_path[0] == '\0')
         return;
@@ -2231,7 +2218,7 @@ void sl_eeprom_init_rw(const char *path)
         fprintf(stderr, "sightline native: new save %s\n", path);
     }
     sl_eeprom_loaded = 1;
-    sl_style_load(path);
+    sl_settings_start(path);
     /* atexit rather than a call at each exit site: the pump leaves through
      * exit(0) from two places and the window-close path from a third. */
     atexit(sl_eeprom_flush);

@@ -34,6 +34,40 @@ this, and no file in this repository changes.
 | --- | --- |
 | `boot.nintendo_logo` | the model on the Nintendo boot screen |
 | `boot.rareware_logo` | the model on the Rareware boot screen |
+| `boot.goldeneye_logo` | the GOLDENEYE logo model on the logo screen |
+| `boot.legal_page` | the artwork layer of the Legal screen |
+| `controllers.xbox` | the Xbox-family controller on the watch's Control Options page under CONTROLLER PROFILE MODERN (#63) |
+| `controllers.dualsense` | the PlayStation-family controller, the same page |
+
+## Parts (version 2 + `F_PARTS`, #63)
+
+A model whose nodes carry `extras.sl_part` - mapped onto the canonical
+physical parts (`PARTS` in `tools/asset/gltf_import.py`, `SL_PART_*` in
+`src/sl_asset_override.h`) through `--part LABEL=CANONICAL` or the package's
+`metadata.json` `"parts"` - is compiled with a **part table**: header +72 /
++76 hold its offset and count (the first two words of what was zero padding),
+each entry is `id, pivot xyz, flags, 3 reserved` (32 bytes), and every
+primitive's fourth word names its part (or `SL_PART_NONE`). A part's
+vertices are stored relative to its pivot (the node's origin), so the runtime
+draws it under the model's modelview translated to the pivot and the part's
+pose (`sl_asset_override_pose_set`: a move, a rotation about the pivot, a
+tint). No version bump: without the flag the words are the zeros they always
+were, so partless files are byte-identical to before and an older reader
+draws a parts model whole. The loader refuses a part id outside the table, a
+canonical part named twice, a non-finite pivot and a primitive naming a
+missing part. Parts are physical controls only - never actions.
+
+## Third-party textures (`sl_third_party`, #63)
+
+Pixels from someone else's CC-BY-4.0 model are committed under
+`extras.sl_third_party` `{title, author, author_url, source_url, license,
+attribution, changes}` on the glTF image, NOT under `sl_authored` (whose CC0
+grant cannot cover them); a file claiming both is refused, as is any licence
+outside the allowed set (`THIRD_PARTY_LICENSES`). The ordering rule is the
+authored marker's: content-addressed game-texture detection runs first, so
+the marker cannot launder ROM pixels. The credit line is printed at import
+and is what a release must reproduce; the inventory row lives in
+`LICENSES/README.md` and the packages' `ATTRIBUTION.md`.
 
 ## Where the files live
 
@@ -351,6 +385,19 @@ colour texture; the renderer will not approximate what it cannot do.
 > here than in a PBR viewer, which synthesises normals and lights them. The fix
 > is one place (`emit_primitive` in `tools/asset/gltf_import.py`) and is not
 > yet made.
+
+**Normals are checked against the winding** (2026-09-20, #63). A `NORMAL`
+that does not describe the geometry it sits on is worse than none: the lit
+draw takes the ambient term alone and the model is a silhouette. The importer
+measures the agreement between every triangle's counter-clockwise winding
+normal and its stored normal (`normals` line in the report). A model at or
+above 0.5 is trusted as it is — the four boot logos sit at 0.877..1.000 and
+their files are unchanged. Below that, a signed axis permutation that brings
+the agreement to 0.8 or better is applied (the shape of a package builder that
+re-based positions and forgot normals: the two controller packages, at -0.237
+and +0.253 as shipped, re-base to 0.990 and 0.976); failing that, the normals
+are rebuilt from the winding. Either correction is printed whether or not the
+run is verbose.
 
 ### Coordinate contract
 

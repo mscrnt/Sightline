@@ -9682,7 +9682,11 @@ bool check_if_room_for_preset_loaded(ChrRecord *self, s32 padnum)
 
     if (padstan)
     {
+#ifndef __sgi
+        return sl_roomIsOnScreen43(getTileRoom(padstan));   /* #45: the 4:3 view (AI_IFRoomWithPadIsOnScreen) */
+#else
         return getROOMID_isRendered(getTileRoom(padstan));
+#endif
     }
 
     return FALSE;
@@ -10575,6 +10579,27 @@ s32 chrIsPosOffScreen(coord3d *arg0, StandTile *tile)
 
     offscreen = TRUE;
 
+#ifndef __sgi
+    /* #45: the spawn rule reads the 4:3 view - the room must meet the 4:3
+     * rectangle and the aperture is clamped to it before the box test, so
+     * a wider monitor never moves where a character may be placed (bg.c,
+     * the block on sl_view43). camIsPosInScreen's planes are the game's
+     * own 4:3 frustum already. */
+    if (sl_roomIsOnScreen43(getTileRoom(tile)) && fogPositionIsVisibleThroughFog(arg0, 0.0f))
+    {
+        if (bgGet2dBboxByRoomId(getTileRoom(tile), &box))
+        {
+            if (sl_clampBoxToView43(&box))
+            {
+                offscreen = camIsPosInScreenBox(arg0, 200.0f, &box) == 0;
+            }
+        }
+        else
+        {
+            offscreen = camIsPosInScreen(arg0, 200.0f) == 0;
+        }
+    }
+#else
     if (getROOMID_isRendered(getTileRoom(tile)) && fogPositionIsVisibleThroughFog(arg0, 0.0f))
     {
         if (bgGet2dBboxByRoomId(getTileRoom(tile), &box))
@@ -10586,6 +10611,7 @@ s32 chrIsPosOffScreen(coord3d *arg0, StandTile *tile)
             offscreen = camIsPosInScreen(arg0, 200.0f) == 0;
         }
     }
+#endif
 
     return offscreen;
 }

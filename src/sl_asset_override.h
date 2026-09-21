@@ -22,7 +22,7 @@
  * compact, versioned, bounds-checked binary and nothing else.
  *
  * NATIVE ONLY. Nothing in this file is part of the cartridge build: src/native
- * is outside the Makefile's src/*.c and src/game/*.c globs, and the two game
+ * is outside the Makefile's src/ and src/game/ globs, and the two game
  * call sites guard their hooks with #ifndef __sgi. Custom models must not
  * become a ROM feature.
  */
@@ -38,7 +38,52 @@
 #define SL_ASSET_BOOT_RAREWARE_LOGO  1
 #define SL_ASSET_BOOT_GOLDENEYE_LOGO 2
 #define SL_ASSET_BOOT_LEGAL_PAGE     3
-#define SL_ASSET_ID_COUNT            4
+/* The watch's device-matched controller models (#63): drawn on the watch's
+ * controller page in place of the N64 pad under the MODERN profile, one per
+ * controller family. Each carries a PART TABLE (below) so the runtime moves
+ * its sticks, buttons and triggers individually. */
+#define SL_ASSET_CONTROLLER_XBOX      4
+#define SL_ASSET_CONTROLLER_DUALSENSE 5
+#define SL_ASSET_ID_COUNT            6
+
+/* ---- canonical physical controller parts --------------------------------
+ *
+ * The runtime addresses a controller model's parts by these ids and by
+ * nothing else - never by node order or by a brand's own button names. The
+ * importer maps a package's labels onto them (btn_a and btn_cross are both
+ * FACE_SOUTH), so the draw code asks for "the south face button" of whatever
+ * pad it has. PHYSICAL CONTROLS ONLY: nothing here says what a part does -
+ * "A = interact" is the binding registry's, never the model's. Kept in step
+ * with PARTS in tools/asset/gltf_import.py by hand; the test suite asserts
+ * the two agree. */
+#define SL_PART_NONE           0xFFFFFFFFu  /* a primitive outside every part */
+#define SL_PART_BODY            1u
+#define SL_PART_LEFT_STICK      2u
+#define SL_PART_RIGHT_STICK     3u
+#define SL_PART_DPAD            4u
+#define SL_PART_FACE_SOUTH      5u
+#define SL_PART_FACE_EAST       6u
+#define SL_PART_FACE_WEST       7u
+#define SL_PART_FACE_NORTH      8u
+#define SL_PART_LEFT_SHOULDER   9u
+#define SL_PART_RIGHT_SHOULDER 10u
+#define SL_PART_LEFT_TRIGGER   11u
+#define SL_PART_RIGHT_TRIGGER  12u
+#define SL_PART_MENU           13u
+#define SL_PART_BACK           14u
+#define SL_PART_GUIDE          15u
+#define SL_PART_MUTE           16u
+#define SL_PART_TOUCHPAD       17u
+#define SL_PART_DPAD_UP        18u
+#define SL_PART_DPAD_DOWN      19u
+#define SL_PART_DPAD_LEFT      20u
+#define SL_PART_DPAD_RIGHT     21u
+#define SL_PART_ID_COUNT       22u
+#define SL_AMDL_MAX_PARTS      32u
+/* part flags */
+#define SL_AMDL_P_AUTHORED    0x0001u  /* geometry authored for Sightline
+                                        * inside a third-party model
+                                        * (extras.sl_authored_part) */
 
 /* ---- the bridge display-list command ------------------------------------
  *
@@ -54,18 +99,29 @@
  * command.
  *
  *   w0 = 0x02 'S' 'L' <id>          0x02534Cxx
- *   w1 = 0xC5A5 0000 | <fade 0..255>
+ *   w1 = 0xC5A5 <part> <fade 0..255>
  *
  * fade is the SCREEN's own fade level, not the asset's: the boot sequences
  * fade their logos in through a light/primitive colour, and that is
  * choreography rather than asset data. It is passed through so a custom model
  * fades on exactly the original schedule.
- */
+ *
+ * <part> (bits 8..15, 2026-09-20, #63 / #64 - the watch page's button icons)
+ * selects ONE PART of a parts model: 0 draws the whole model exactly as
+ * before (every command emitted until now carries 0 there), and a value p
+ * draws only the primitives of the part whose canonical id is p - 1, about
+ * ITS OWN PIVOT under the modelview in force - the pivot translation the
+ * whole-model draw applies is left out, so the caller's matrix places the
+ * part's pivot wherever it likes, at whatever scale. The part's pose (its
+ * press, tilt and tint) still applies, so a standalone icon of a button moves
+ * with the button on the pad. sl_asset_override_emit_part writes it. */
 #define SL_AOV_DL_OP        0x02u
 #define SL_AOV_DL_W0_BASE   0x02534C00u
 #define SL_AOV_DL_W0_MASK   0xFFFFFF00u
 #define SL_AOV_DL_W1_BASE   0xC5A50000u
 #define SL_AOV_DL_W1_MASK   0xFFFF0000u
+#define SL_AOV_DL_W1_PART_SHIFT 8u
+#define SL_AOV_DL_W1_PART_MASK  0x0000FF00u
 
 /* ---- on-disk format ------------------------------------------------------
  *
@@ -129,6 +185,21 @@
 #define SL_AMDL_F_NORMALS   0x0001u
 #define SL_AMDL_F_UV        0x0002u
 #define SL_AMDL_F_COLOR     0x0004u
+/* F_PARTS (2026-09-19, #63): the file carries a PART TABLE at header +72
+ * (offset) / +76 (count) - the first two words of what was zero padding - and
+ * every primitive's fourth word is an index into it, or SL_PART_NONE. Each
+ * table entry is 32 bytes: canonical id (SL_PART_*), pivot x y z (f32), flags
+ * (SL_AMDL_P_*), three reserved words. A part's vertices are stored RELATIVE
+ * to its pivot, so the draw path translates by the pivot, applies the part's
+ * pose, and draws.
+ *
+ * NO VERSION BUMP, for the same reason the texgen bits took none: without the
+ * flag the two header words and the prim word are the zeros they always were,
+ * so a partless file is byte-identical to one written before parts existed,
+ * and an older reader draws a parts model whole in its rest pose - a static
+ * controller, never a corrupt one. The version field is for changes an old
+ * reader could get WRONG. */
+#define SL_AMDL_F_PARTS     0x0008u
 
 /* material flags */
 #define SL_AMDL_M_DOUBLESIDED 0x0001u
@@ -188,6 +259,32 @@ struct sl_amdl_prim {
     unsigned int first;      /* index of the first element in the index array */
     unsigned int count;      /* number of index elements (multiple of 3) */
     unsigned int material;   /* < nmat */
+    unsigned int part;       /* < npart, or SL_PART_NONE (always NONE when the
+                              * file has no part table) */
+};
+
+struct sl_amdl_part {
+    unsigned int id;         /* SL_PART_*, never NONE, unique in the model */
+    float        pivot[3];   /* the part's origin in the model's frame */
+    unsigned int flags;      /* SL_AMDL_P_* */
+    /* MEASURED AT LOAD, not stored on disk: the bounds of the part's own
+     * vertices RELATIVE TO ITS PIVOT (the frame its primitives are stored
+     * in), so a caller drawing the part alone can size it - the watch
+     * page's icons fit each part to one icon height (#63 / #64). A part
+     * with no primitives reads all zeros. */
+    float        lo[3], hi[3];
+};
+
+/* A part's POSE for the next draw: a translation and a rotation about the
+ * part's pivot (radians, applied X then Y then Z about the model's own axes,
+ * which for a controller in the GjoypadZ frame are +x right, +y toward the
+ * watch camera, -z the top edge), and a tint multiplied into the part's
+ * colour (1,1,1 = untouched). Set by the watch each frame before it emits the
+ * bridge command; cleared to rest by sl_asset_override_pose_reset. */
+struct sl_amdl_pose {
+    float move[3];
+    float rot[3];
+    float tint[3];
 };
 
 struct sl_amdl_mat {
@@ -225,6 +322,12 @@ struct sl_amdl_tex {
 struct sl_amdl {
     unsigned int nvert, nidx, nprim, nmat, ntex;
     unsigned int flags;
+    /* EXPOSURE (#63): a bounded lift on the whole draw, 1.0 (the default,
+     * plain modulate) .. 4.0, applied by the renderer as GL_RGB_SCALE on the
+     * texture stage. A near-black texture cannot be brightened by lighting
+     * alone (modulate never exceeds the texel); this is the one knob, set
+     * per draw by sl_asset_override_exposure_set, never stored on disk. */
+    float        exposure;
     const float         *pos;    /* 3 * nvert                          */
     const float         *nrm;    /* 3 * nvert, or NULL                 */
     const float         *uv;     /* 2 * nvert, or NULL                 */
@@ -233,6 +336,9 @@ struct sl_amdl {
     struct sl_amdl_prim *prim;
     struct sl_amdl_mat  *mat;
     struct sl_amdl_tex  *tex;
+    unsigned int         npart;  /* 0 for a model without a part table */
+    struct sl_amdl_part *part;   /* npart entries, or NULL             */
+    struct sl_amdl_pose *pose;   /* npart entries, rest pose until set */
     unsigned char       *blob;
     unsigned long        blob_len;
 };
@@ -255,6 +361,32 @@ const struct sl_amdl *sl_asset_override_get_model(int id);
 /* Append the bridge command. gdl is a Gfx*, and a Gfx* one command further on
  * is returned. fade is 0..255, the screen's own fade level. */
 void *sl_asset_override_emit(void *gdl, int id, int fade);
+
+/* Append the bridge command for ONE PART (SL_PART_*) of a parts model, drawn
+ * about its own pivot under the modelview the caller has loaded - see the
+ * <part> field above. A part the model does not have draws nothing; a model
+ * without a part table draws nothing. */
+void *sl_asset_override_emit_part(void *gdl, int id, unsigned int part_id, int fade);
+
+/* ---- parts ----------------------------------------------------------------
+ *
+ * Does the loaded model for this id carry a part with this canonical id?
+ * Returns its index, or -1 (also for an id that is not loaded, or a model
+ * without a part table). */
+int sl_asset_override_part_index(int id, unsigned int part_id);
+
+/* Set one part's pose for the next draw. A part the model does not have is
+ * ignored (returns 0), so the caller can pose "the right stick" without
+ * knowing which pad it is looking at. */
+int sl_asset_override_pose_set(int id, unsigned int part_id,
+                               const struct sl_amdl_pose *pose);
+
+/* Every part of this id back to its rest pose (no move, no rotation, no
+ * tint). Called before a frame's poses are set. */
+void sl_asset_override_pose_reset(int id);
+
+/* The draw's exposure (see struct sl_amdl), clamped to 1.0 .. 4.0. */
+void sl_asset_override_exposure_set(int id, float exposure);
 
 /* The resolved override directory, for diagnostics. Never NULL. */
 const char *sl_asset_override_dir(void);

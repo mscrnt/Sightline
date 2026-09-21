@@ -12,6 +12,8 @@
 #ifndef __sgi
 #include "sl_gfx.h"
 #include "../platform/sl_input.h"
+#include "../platform/sl_display.h"     /* #45: the aspect selection drives the window's width */
+#include "../platform/sl_window.h"      /* #52: WINDOW MODE / RESOLUTION / VSYNC - the request seam */
 #include <SDL2/SDL.h>
 #include <GL/gl.h>
 #include <stdio.h>
@@ -73,8 +75,30 @@ typedef void   (APIENTRY *sl_pfn_BlitFramebuffer)(GLint, GLint, GLint, GLint,
 
 static GLuint sl_fbo, sl_fbo_color, sl_fbo_depth;
 static int    sl_fbo_w, sl_fbo_h;
+static int    s_window_pinned;            /* SL_WINDOW_POS given: no re-centring (#45) */
 static sl_pfn_BindFramebuffer sl_BindFramebuffer;
 static sl_pfn_BlitFramebuffer sl_BlitFramebuffer;
+
+/* ---- #52: the PC display modes' backend state ---------------------------
+ *
+ * s_launch_w / _h   the launcher's initial window (SL_WINDOW_SIZE, else the
+ *                   compiled 640x480) - what a windowed client falls back to
+ *                   when no height was chosen or the chosen one is not
+ *                   offered: the accepted launch, bit for bit.
+ * s_windowed_w / _h the windowed client size to RETURN to from a fullscreen
+ *                   mode (the last one the window had while windowed; the
+ *                   launcher's at first), so leaving BORDERLESS / FULLSCREEN
+ *                   restores the window the player left, never the desktop.
+ * s_app_*           what the last apply established, so the per-frame check
+ *                   costs one comparison and a frame never mixes two states.
+ * s_display         the SDL display the window is on, whose mode list and
+ *                   desktop size sl_window.c holds; re-read at every apply. */
+static int s_launch_w, s_launch_h;
+static int s_windowed_w, s_windowed_h;
+static int s_app_mode = -1, s_app_aspect = -1;
+static int s_display = -1;
+
+static void sdl_apply_display(int at_init);
 
 static void sl_fbo16_create(int w, int h)
 {
@@ -179,8 +203,68 @@ static int sdl_init(int w, int h, const char *title)
      * the redraw path stays off when none came. */
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-    win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                           w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+    s_launch_w = w; s_launch_h = h;
+    s_windowed_w = w; s_windowed_h = h;
+    {
+        /* SL_WINDOW_POS=x,y (developer): the initial window position, and
+         * the window is neither activated when shown nor re-centred by the
+         * aspect resize - a capture run can park itself off-screen and take
+         * nothing from a desktop in use (the qol10 evidence runs). Absent
+         * (every player launch): centred, as before. */
+        int px = SDL_WINDOWPOS_CENTERED, py = SDL_WINDOWPOS_CENTERED;
+        Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
+        const char *wp = getenv("SL_WINDOW_POS");
+        int mode = sl_window_mode();
+        int sw = 0, sh = 0;
+        if (wp != NULL && sscanf(wp, "%d,%d", &px, &py) == 2) {
+            s_window_pinned = 1;
+            SDL_SetHint(SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "1");
+        } else {
+            px = SDL_WINDOWPOS_CENTERED; py = SDL_WINDOWPOS_CENTERED;
+        }
+        /* #52: THE WINDOW IS CREATED IN ITS PERSISTED STATE, not flashed
+         * through the launcher's. A chosen windowed height (config.ini
+         * window_height, one the display offers) is the creation size,
+         * at the aspect's width - SL_WINDOW_SIZE then names nothing but
+         * the fallback, said out loud so a stale launcher size never
+         * silently fights the setting. A fullscreen mode creates the
+         * window HIDDEN, sdl_apply_display below takes it to the mode
+         * through the one transition path every later change uses, and
+         * only then is it shown. With nothing chosen (the default, every
+         * config before #52) the flags and the size are exactly the
+         * pre-#52 ones: the oracle. The display consulted before a window
+         * exists is display 0, where SDL_WINDOWPOS_CENTERED lands; the
+         * apply re-reads the display the window actually landed on. */
+        if (sl_settings_active() && mode == SL_WINDOW_WINDOWED && sl_window_stored_windowed(&sw, &sh)) {
+            struct sl_window_list modes, wl;
+            int nm = SDL_GetNumDisplayModes(0), i, n = 0;
+            int mw[256], mh[256];
+            SDL_DisplayMode dm;
+            int tw, th, used;
+            for (i = 0; i < nm && n < 256; i++) {
+                SDL_DisplayMode m;
+                if (SDL_GetDisplayMode(0, i, &m) == 0) { mw[n] = m.w; mh[n] = m.h; n++; }
+            }
+            if (SDL_GetDesktopDisplayMode(0, &dm) != 0) { dm.w = 0; dm.h = 0; }
+            sl_window_list_modes(mw, mh, n, &modes);
+            sl_window_list_windowed(&modes, dm.w, dm.h, sl_aspect_active() ? sl_aspect_ratio() : SL_ASPECT_4_3, &wl);
+            used = sl_window_pick_windowed(&wl, sh, h, sl_aspect_active() ? sl_aspect_ratio() : SL_ASPECT_4_3, &tw, &th);
+            if (used) {
+                const char *ws = getenv("SL_WINDOW_SIZE");
+                fprintf(stderr, "sightline gfx: config.ini window_height=%d chosen -> the window is created %dx%d"
+                                " (the aspect's width); %s%s stands aside as the fallback only\n",
+                        sh, tw, th, ws != NULL ? "SL_WINDOW_SIZE=" : "the compiled ", ws != NULL ? ws : "640x480");
+                w = tw; h = th;
+            } else {
+                fprintf(stderr, "sightline gfx: config.ini window_height=%d is not a height display 0 offers"
+                                " (desktop %dx%d) -> the launcher's %dx%d (not rewritten)\n",
+                        sh, dm.w, dm.h, w, h);
+            }
+        } else if (sl_settings_active() && mode != SL_WINDOW_WINDOWED) {
+            flags = SDL_WINDOW_OPENGL;      /* hidden until the mode is established */
+        }
+        win = SDL_CreateWindow(title, px, py, w, h, flags);
+    }
     if (win == NULL) {
         fprintf(stderr, "sightline gfx: CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
@@ -193,7 +277,9 @@ static int sdl_init(int w, int h, const char *title)
         SDL_Quit();
         return 0;
     }
-    SDL_GL_SetSwapInterval(0);          /* replay sets the pace, not vsync */
+    SDL_GL_SetSwapInterval(0);          /* replay sets the pace, not vsync (the #52 VSYNC
+                                         * setting is applied below, read back, and
+                                         * defaults to exactly this) */
     /* The input layer needs the window itself: holding the pointer takes
      * SDL_SetWindowMouseGrab as well as relative mode (see set_grab in
      * src/platform/sl_input.c), and SDL_GetKeyboardFocus returns NULL in
@@ -201,6 +287,13 @@ static int sdl_init(int w, int h, const char *title)
     sl_input_live_set_window(win);
     fprintf(stderr, "sightline gfx: SDL window %dx%d, GL \"%s\"\n",
             w, h, (const char *) glGetString(GL_VERSION));
+    s_windowed_w = w; s_windowed_h = h;
+    /* #52: the persisted mode and vsync, through the one transition path;
+     * a window created hidden for a fullscreen mode is shown once it is
+     * there (or once the fallback to windowed is). */
+    sdl_apply_display(1);
+    if (!(SDL_GetWindowFlags(win) & SDL_WINDOW_SHOWN))
+        SDL_ShowWindow(win);
     {   /* B-125: what the window actually came with. Said once, because the
          * redraw path's stencil pass is gated on it and a silent zero would
          * be the B-123 class of failure (a request the driver ignored). */
@@ -235,10 +328,379 @@ void *sl_gl_proc(const char *name)
     return SDL_GL_GetProcAddress(name);
 }
 
+/* #45 / #52. THE WINDOW'S STATE: MODE, SIZE, VSYNC - and the aspect's width.
+ *
+ * Owner contract (#45, 2026-09-18): the selected aspect is the SHAPE of the
+ * presentation at the CURRENT VERTICAL SIZE - widescreen means a WIDER
+ * window at the same height, never a strip inside the old one. So in
+ * windowed mode the window's client height is kept and its width becomes
+ * height x aspect: 960x720 -> 1280x720 at 16:9 -> 2560x720 at 32:9, live when
+ * the setting changes (SDL_SetWindowSize, the same context; the window is
+ * re-centred on its display so a wide window does not run off the right
+ * edge) and at the first frame from the persisted setting.
+ *
+ * Precedence: SL_WINDOW_SIZE (play.ps1 -Size) names the INITIAL window - its
+ * height is kept, its width stands only while it agrees with the aspect; the
+ * aspect wins on the width. At 4:3 with the accepted 960x720 nothing moves,
+ * which is what keeps the 4:3 negative control byte-identical. Since #52 a
+ * chosen RESOLUTION (config.ini window_height) names the height instead and
+ * the launcher's is the fallback, logged when it is stood aside.
+ *
+ * #52 (2026-09-20): WINDOW MODE, RESOLUTION and VSYNC land here too - this
+ * is THE ONE PLACE SDL's window is asked to change, once per frame at the
+ * frame reset, and the one place its state is read back. The editors file a
+ * request (sl_window.c); this takes it, remembers the working state, asks
+ * SDL, reads back, and COMMITS to config.ini only what SDL confirmed -
+ * otherwise it restores the working state (and, should that fail too, the
+ * safest windowed state) and the file is untouched. Nothing else is told:
+ * the renderer reads the window from GL at its next frame reset
+ * (sl_gfx_dl.c g_window_vp), the #45 fit derives the content and safe rects
+ * from that, the input layer re-reads the size every poll for its
+ * confinement rect and the pointer layers read the safe rect back - the
+ * pipeline that already existed carries a mode change to every consumer,
+ * once, on the next frame. No level reload, no context recreation.
+ *
+ *   WINDOWED    SDL_SetWindowFullscreen(0), then the client size: the chosen
+ *               height (or the one to return to) at the aspect's width.
+ *   BORDERLESS  SDL_WINDOW_FULLSCREEN_DESKTOP: the desktop at its own mode,
+ *               no mode switch; the fit rule paints the bars.
+ *   FULLSCREEN  a real display mode: the chosen pair when the display
+ *               offers it, else the desktop's, at the DESKTOP'S refresh rate
+ *               (SDL_GetClosestDisplayMode with refresh 0 takes the
+ *               display's highest - measured 240 Hz on the owner's panel -
+ *               which is not what a 60 Hz sim wants driving its swap) -
+ *               SDL_SetWindowDisplayMode, then
+ *               SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN).
+ *   VSYNC       SDL_GL_SetSwapInterval(0 / 1) on the live context, read back
+ *               with SDL_GL_GetSwapInterval; a refusal restores the previous
+ *               interval and writes nothing. The pacer (sl_ultra_shim.c
+ *               sl_pace_frame) keeps setting the VI cadence either way: with
+ *               the interval at 1 the swap merely waits for the vblank
+ *               inside the frame the pacer already budgets.
+ *
+ * NOT resized by the aspect: a fullscreen, fullscreen-desktop, maximised or
+ * minimised window (the framebuffer cannot be resized - the fit rule in
+ * src/platform/sl_display.c applies: a framebuffer wider than the shape is
+ * pillarboxed, one narrower keeps the FULL width and letterboxes top and
+ * bottom), and the B-124 diagnostic offscreen arm (SL_Z_QUANT=1, whose
+ * renderbuffers are sized once at init). A window the player has not been
+ * given a way to resize by hand (no SDL_WINDOW_RESIZABLE, as before) stays
+ * at the size the settings gave it. */
+
+/* SDL's flags -> the mode. FULLSCREEN_DESKTOP carries the FULLSCREEN bit,
+ * so it is tested first. */
+static int sdl_read_mode(void)
+{
+    Uint32 f = SDL_GetWindowFlags(win);
+    if ((f & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) return SL_WINDOW_BORDERLESS;
+    if (f & SDL_WINDOW_FULLSCREEN) return SL_WINDOW_FULLSCREEN;
+    return SL_WINDOW_WINDOWED;
+}
+
+/* The display the window is on: its mode list (deduped and bounded by
+ * sl_window.c) and its desktop size, published for the editors' lists and
+ * the fallbacks. Re-read at every apply, republished when the display
+ * changed (a window dragged to another monitor - the pinned dev window
+ * cannot be, but the player's can). Said once per display. */
+static void sdl_publish_display(void)
+{
+    struct sl_window_list modes;
+    int mw[256], mh[256];
+    SDL_DisplayMode dm;
+    int d = SDL_GetWindowDisplayIndex(win), nm, i, n = 0;
+    if (d < 0) d = 0;
+    if (d == s_display) return;
+    s_display = d;
+    nm = SDL_GetNumDisplayModes(d);
+    for (i = 0; i < nm && n < 256; i++) {
+        SDL_DisplayMode m;
+        if (SDL_GetDisplayMode(d, i, &m) == 0) { mw[n] = m.w; mh[n] = m.h; n++; }
+    }
+    if (SDL_GetDesktopDisplayMode(d, &dm) != 0) { dm.w = 0; dm.h = 0; dm.refresh_rate = 0; }
+    sl_window_list_modes(mw, mh, n, &modes);
+    sl_window_publish_lists(&modes, dm.w, dm.h);
+    fprintf(stderr, "sightline gfx: display %d \"%s\": desktop %dx%d@%d, %d modes -> %d sizes (%dx%d .. %dx%d)\n",
+            d, SDL_GetDisplayName(d) ? SDL_GetDisplayName(d) : "?", dm.w, dm.h, dm.refresh_rate, nm, modes.n,
+            modes.n > 0 ? modes.w[0] : 0, modes.n > 0 ? modes.h[0] : 0,
+            modes.n > 0 ? modes.w[modes.n - 1] : 0, modes.n > 0 ? modes.h[modes.n - 1] : 0);
+}
+
+/* What SDL says the window IS, published for the editors and said on
+ * stderr: the mode from the flags, the client and drawable sizes, the
+ * exclusive mode in force, the display, the swap interval read back. */
+static void sdl_publish_state(const char *why)
+{
+    int mode = sdl_read_mode();
+    int w = 0, h = 0, dw = 0, dh = 0, mw = 0, mh = 0, mr = 0, vs;
+    SDL_DisplayMode m;
+    int dk_w = 0, dk_h = 0;
+    Uint32 flags = SDL_GetWindowFlags(win);
+    SDL_GetWindowSize(win, &w, &h);
+    SDL_GL_GetDrawableSize(win, &dw, &dh);
+    if (SDL_GetWindowDisplayMode(win, &m) == 0) { mw = m.w; mh = m.h; mr = m.refresh_rate; }
+    vs = SDL_GL_GetSwapInterval();
+    sl_window_desktop(&dk_w, &dk_h);
+    sl_window_publish_state(mode, mode == SL_WINDOW_FULLSCREEN ? mw : w, mode == SL_WINDOW_FULLSCREEN ? mh : h, vs);
+    if (why != NULL) {
+        /* the exclusive mode is a fact only in FULLSCREEN; elsewhere SDL
+         * reports the mode it WOULD use, which is noise */
+        if (mode == SL_WINDOW_FULLSCREEN)
+            fprintf(stderr, "sightline gfx: display state (%s): mode=%s flags=0x%x client=%dx%d drawable=%dx%d"
+                            " fsmode=%dx%d@%d display=%d desktop=%dx%d swap=%d\n",
+                    why, sl_window_mode_name(mode), (unsigned) flags, w, h, dw, dh, mw, mh, mr, s_display, dk_w, dk_h, vs);
+        else
+            fprintf(stderr, "sightline gfx: display state (%s): mode=%s flags=0x%x client=%dx%d drawable=%dx%d"
+                            " fsmode=- display=%d desktop=%dx%d swap=%d\n",
+                    why, sl_window_mode_name(mode), (unsigned) flags, w, h, dw, dh, s_display, dk_w, dk_h, vs);
+    }
+}
+
+/* The GL drawable SDL reports against the size the transition asked for.
+ * Not redundant with SDL_GetWindowSize: the two are different questions -
+ * SDL's own bookkeeping against the client rectangle the OS actually holds
+ * (GetClientRect) - and they were MEASURED to disagree (2026-09-20): the
+ * parked, never-activated evidence window taken to an exclusive 2560x1440
+ * on the 5120x1440 panel had the mode switched and SDL saying 2560x1440
+ * while the HWND kept its 5120x1440 client and the drawable with it (an
+ * activated player window resizes as asked: measured the same day). A
+ * transition whose drawable is not the size asked for is not established,
+ * and is restored rather than committed. */
+static int sdl_drawable_is(int w, int h)
+{
+    int dw = 0, dh = 0;
+    SDL_GL_GetDrawableSize(win, &dw, &dh);
+    if (dw != w || dh != h)
+        fprintf(stderr, "sightline gfx: drawable %dx%d is not the %dx%d asked for\n", dw, dh, w, h);
+    return dw == w && dh == h;
+}
+
+/* One transition to `want` (mode, and the size when one applies). Returns
+ * 1 when SDL's read-back matches the target, 0 otherwise - in which case
+ * the caller restores. `size_chosen` says the pair came from a request (a
+ * fallback taken here is reported, never committed); *out_w / *out_h are
+ * the size the mode was asked for (the client, or the exclusive mode). */
+static int sdl_transition(int want, int want_w, int want_h, int size_chosen, int aspect,
+                          int *out_w, int *out_h, int *fell_back)
+{
+    int cur = sdl_read_mode();
+    int tw = 0, th = 0, ok = 0;
+    int d = SDL_GetWindowDisplayIndex(win);
+    if (d < 0) d = 0;
+    *fell_back = 0;
+
+    if (want == SL_WINDOW_WINDOWED) {
+        const struct sl_window_list *wl = sl_window_list_windowed_now();
+        int sw = 0, sh = 0, used;
+        if (!size_chosen) sl_window_stored_windowed(&sw, &sh);
+        else { sw = want_w; sh = want_h; }
+        used = sl_window_pick_windowed(wl, sh, s_windowed_h, aspect, &tw, &th);
+        if (sh > 0 && !used) {
+            *fell_back = 1;
+            fprintf(stderr, "sightline gfx: windowed height %d is not one display %d offers -> %dx%d (the window to return to; not rewritten)\n",
+                    sh, d, tw, th);
+        }
+        if (cur != SL_WINDOW_WINDOWED) {
+            if (SDL_SetWindowFullscreen(win, 0) != 0)
+                fprintf(stderr, "sightline gfx: SDL_SetWindowFullscreen(0) failed: %s\n", SDL_GetError());
+        }
+        {
+            int w = 0, h = 0;
+            SDL_GetWindowSize(win, &w, &h);
+            if (w != tw || h != th) {
+                SDL_SetWindowSize(win, tw, th);
+                if (!s_window_pinned)
+                    SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED_DISPLAY(d), SDL_WINDOWPOS_CENTERED_DISPLAY(d));
+            } else if (cur != SL_WINDOW_WINDOWED && !s_window_pinned) {
+                SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED_DISPLAY(d), SDL_WINDOWPOS_CENTERED_DISPLAY(d));
+            }
+            SDL_GetWindowSize(win, &w, &h);
+            ok = sdl_read_mode() == SL_WINDOW_WINDOWED && w == tw && h == th && sdl_drawable_is(tw, th);
+        }
+    } else if (want == SL_WINDOW_BORDERLESS) {
+        SDL_Rect b;
+        int dnow;
+        if (cur != SL_WINDOW_BORDERLESS) {
+            if (SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0)
+                fprintf(stderr, "sightline gfx: SDL_SetWindowFullscreen(DESKTOP) failed: %s\n", SDL_GetError());
+        }
+        dnow = SDL_GetWindowDisplayIndex(win);
+        if (dnow < 0) dnow = d;
+        if (SDL_GetDisplayBounds(dnow, &b) != 0) { b.w = 0; b.h = 0; }
+        SDL_GetWindowSize(win, &tw, &th);
+        ok = sdl_read_mode() == SL_WINDOW_BORDERLESS && tw > 0 && th > 0 && tw == b.w && th == b.h && sdl_drawable_is(tw, th);
+    } else {
+        const struct sl_window_list *ml = sl_window_list_fullscreen();
+        SDL_DisplayMode dm, want_m, got_m;
+        int sw = 0, sh = 0, used, dk_w = 0, dk_h = 0;
+        if (!size_chosen) sl_window_stored_fullscreen(&sw, &sh);
+        else { sw = want_w; sh = want_h; }
+        sl_window_desktop(&dk_w, &dk_h);
+        if (SDL_GetDesktopDisplayMode(d, &dm) != 0) { dm.w = dk_w; dm.h = dk_h; dm.refresh_rate = 0; dm.format = 0; }
+        used = sl_window_pick_fullscreen(ml, sw, sh, dm.w, dm.h, &tw, &th);
+        if (sw > 0 && sh > 0 && !used) {
+            *fell_back = 1;
+            fprintf(stderr, "sightline gfx: fullscreen %dx%d is not a mode display %d offers -> the desktop's %dx%d (not rewritten)\n",
+                    sw, sh, d, tw, th);
+        }
+        want_m.format = dm.format; want_m.w = tw; want_m.h = th; want_m.refresh_rate = dm.refresh_rate; want_m.driverdata = NULL;
+        if (SDL_GetClosestDisplayMode(d, &want_m, &got_m) == NULL || got_m.w != tw || got_m.h != th) {
+            fprintf(stderr, "sightline gfx: no display mode %dx%d on display %d (%s)\n", tw, th, d, SDL_GetError());
+            ok = 0;
+        } else {
+            /* A MODE CHANGE WHILE ALREADY FULLSCREEN GOES THROUGH WINDOWED.
+             * Measured 2026-09-20 (SDL 2.32.10, windows driver, an
+             * activated on-screen window as much as the parked one):
+             * SDL_SetWindowDisplayMode on a window that is already
+             * exclusive switches the panel's mode and updates SDL's own
+             * size, but the HWND keeps its old client rectangle - 5120x1440
+             * under a 2560x1440 mode, the drawable with it (the read-back
+             * below caught it and restored). Leaving exclusive fullscreen
+             * first and re-entering it at the new mode - the path that
+             * establishes the mode at init - sizes the window as asked. */
+            if (cur == SL_WINDOW_FULLSCREEN) {
+                SDL_DisplayMode have;
+                if (SDL_GetWindowDisplayMode(win, &have) == 0 && (have.w != tw || have.h != th)) {
+                    if (SDL_SetWindowFullscreen(win, 0) != 0)
+                        fprintf(stderr, "sightline gfx: SDL_SetWindowFullscreen(0) before the mode change failed: %s\n", SDL_GetError());
+                    cur = SL_WINDOW_WINDOWED;
+                }
+            }
+            if (SDL_SetWindowDisplayMode(win, &got_m) != 0)
+                fprintf(stderr, "sightline gfx: SDL_SetWindowDisplayMode(%dx%d@%d) failed: %s\n", got_m.w, got_m.h, got_m.refresh_rate, SDL_GetError());
+            if (cur != SL_WINDOW_FULLSCREEN) {
+                if (SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN) != 0)
+                    fprintf(stderr, "sightline gfx: SDL_SetWindowFullscreen(FULLSCREEN) failed: %s\n", SDL_GetError());
+            }
+            {
+                SDL_DisplayMode m; int w = 0, h = 0;
+                SDL_GetWindowSize(win, &w, &h);
+                ok = sdl_read_mode() == SL_WINDOW_FULLSCREEN && SDL_GetWindowDisplayMode(win, &m) == 0
+                     && m.w == tw && m.h == th && w == tw && h == th && sdl_drawable_is(tw, th);
+            }
+        }
+    }
+    *out_w = tw; *out_h = th;
+    return ok;
+}
+
+static void sdl_apply_display(int at_init)
+{
+    int aspect = sl_aspect_active() ? sl_aspect_ratio() : SL_ASPECT_4_3;
+    int rmode = 0, rw = 0, rh = 0, rvs = 0, req;
+    int want_mode, want_w = 0, want_h = 0, size_chosen, vsync_chosen, want_vs;
+    int old_mode, old_w = 0, old_h = 0, old_vs;
+    int got_w = 0, got_h = 0, fell = 0, ok = 1, vs_ok = 1, vs_now;
+    const char *why = NULL;
+
+    if (win == NULL) return;
+    req = sl_window_request_take(&rmode, &rw, &rh, &rvs);
+    if (!at_init && req == 0 && aspect == s_app_aspect && s_app_mode >= 0)
+        return;                                   /* nothing changed */
+    sdl_publish_display();
+
+    old_mode = sdl_read_mode();
+    old_vs   = SDL_GL_GetSwapInterval();
+    SDL_GetWindowSize(win, &old_w, &old_h);
+    if (old_mode == SL_WINDOW_WINDOWED && old_w > 0 && old_h > 0) { s_windowed_w = old_w; s_windowed_h = old_h; }
+
+    want_mode    = (req & SL_WINDOW_REQ_MODE)  ? rmode : (at_init ? sl_window_mode() : old_mode);
+    size_chosen  = (req & SL_WINDOW_REQ_SIZE)  != 0;
+    vsync_chosen = (req & SL_WINDOW_REQ_VSYNC) != 0;
+    want_vs      = vsync_chosen ? rvs : (at_init ? sl_vsync() : old_vs);
+    if (size_chosen) { want_w = rw; want_h = rh; }
+    if (want_mode == SL_WINDOW_BORDERLESS) size_chosen = 0;   /* the desktop owns it */
+
+    /* The B-124 arm's renderbuffers are sized once: no resizing under it. */
+    if (sl_BindFramebuffer != NULL && sl_fbo != 0 && (want_mode != old_mode || size_chosen || aspect != s_app_aspect)) {
+        fprintf(stderr, "sightline gfx: display change refused under the SL_Z_QUANT offscreen arm (renderbuffers sized once); the fit rule applies\n");
+        want_mode = old_mode; size_chosen = 0;
+    }
+    /* A maximised or minimised window is not resized by the aspect (#45). */
+    if (want_mode == SL_WINDOW_WINDOWED && old_mode == SL_WINDOW_WINDOWED && !size_chosen && req == 0
+        && (SDL_GetWindowFlags(win) & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_MINIMIZED))) {
+        fprintf(stderr, "sightline gfx: aspect %s selected; the window is fixed (flags 0x%x), the fit rule applies\n",
+                sl_aspect_name(aspect), (unsigned) SDL_GetWindowFlags(win));
+        s_app_aspect = aspect; s_app_mode = old_mode;
+        return;
+    }
+
+    /* ---- the mode and the size: transition, verify, else restore ------- */
+    if (want_mode != old_mode || size_chosen || at_init || aspect != s_app_aspect) {
+        int before_w = old_w, before_h = old_h;
+        ok = sdl_transition(want_mode, want_w, want_h, size_chosen, aspect, &got_w, &got_h, &fell);
+        if (ok) {
+            int now_w = 0, now_h = 0;
+            SDL_GetWindowSize(win, &now_w, &now_h);
+            if (want_mode == SL_WINDOW_WINDOWED && want_mode == old_mode && !size_chosen && req == 0 && (now_w != before_w || now_h != before_h))
+                fprintf(stderr, "sightline gfx: aspect %s -> window %dx%d -> %dx%d (height kept, width = height x %s)\n",
+                        sl_aspect_name(aspect), before_w, before_h, now_w, now_h, sl_aspect_name(aspect));
+            else if (want_mode == SL_WINDOW_WINDOWED && want_mode == old_mode && !size_chosen && req == 0)
+                fprintf(stderr, "sightline gfx: aspect %s -> window %dx%d already fits\n", sl_aspect_name(aspect), now_w, now_h);
+            else if (want_mode != SL_WINDOW_WINDOWED && want_mode == old_mode && !size_chosen && req == 0)
+                fprintf(stderr, "sightline gfx: aspect %s selected; the window is %s (flags 0x%x), the fit rule applies\n",
+                        sl_aspect_name(aspect), sl_window_mode_name(want_mode), (unsigned) SDL_GetWindowFlags(win));
+            why = at_init ? "init" : "applied";
+        } else {
+            int rw2 = 0, rh2 = 0, f2 = 0, restored;
+            fprintf(stderr, "sightline gfx: %s %dx%d NOT established (SDL reports mode=%s) - restoring %s %dx%d\n",
+                    sl_window_mode_name(want_mode), got_w, got_h, sl_window_mode_name(sdl_read_mode()),
+                    sl_window_mode_name(old_mode), old_mode == SL_WINDOW_WINDOWED ? s_windowed_w : old_w,
+                    old_mode == SL_WINDOW_WINDOWED ? s_windowed_h : old_h);
+            restored = sdl_transition(old_mode, old_mode == SL_WINDOW_WINDOWED ? s_windowed_w : old_w,
+                                      old_mode == SL_WINDOW_WINDOWED ? s_windowed_h : old_h,
+                                      old_mode != SL_WINDOW_BORDERLESS, aspect, &rw2, &rh2, &f2);
+            if (!restored) {
+                fprintf(stderr, "sightline gfx: restore failed too - falling back to WINDOWED %dx%d (the launcher's)\n",
+                        sl_display_window_width(s_launch_h, aspect), s_launch_h);
+                SDL_SetWindowFullscreen(win, 0);
+                SDL_SetWindowSize(win, sl_display_window_width(s_launch_h, aspect), s_launch_h);
+                if (!s_window_pinned)
+                    SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+            }
+            why = "restored";
+        }
+    }
+
+    /* ---- vsync: the live context's swap interval, read back ------------ */
+    if (vsync_chosen || at_init) {
+        if (SDL_GL_SetSwapInterval(want_vs) != 0)
+            fprintf(stderr, "sightline gfx: SDL_GL_SetSwapInterval(%d) refused: %s\n", want_vs, SDL_GetError());
+        vs_now = SDL_GL_GetSwapInterval();
+        vs_ok = vs_now == want_vs;
+        if (!vs_ok) {
+            fprintf(stderr, "sightline gfx: vsync %d asked, swap interval read back %d - keeping %d (nothing written)\n",
+                    want_vs, vs_now, old_vs);
+            SDL_GL_SetSwapInterval(old_vs);
+        } else if (vsync_chosen || want_vs != 0) {
+            fprintf(stderr, "sightline gfx: vsync %s (swap interval %d read back)\n", want_vs ? "ON" : "OFF", vs_now);
+        }
+        if (why == NULL) why = at_init ? "init" : "applied";
+    }
+
+    /* ---- commit what SDL confirmed, on a request only ------------------ */
+    if (req != 0) {
+        int now_mode = sdl_read_mode();
+        int now_w = 0, now_h = 0;
+        SDL_DisplayMode m;
+        SDL_GetWindowSize(win, &now_w, &now_h);
+        if (now_mode == SL_WINDOW_FULLSCREEN && SDL_GetWindowDisplayMode(win, &m) == 0) { now_w = m.w; now_h = m.h; }
+        sl_window_commit(ok ? now_mode : -1, ok && size_chosen && !fell, now_w, now_h,
+                         vsync_chosen && vs_ok, SDL_GL_GetSwapInterval());
+        if (!ok)
+            fprintf(stderr, "sightline gfx: the request was not committed (config.ini unchanged)\n");
+    }
+
+    s_app_mode   = sdl_read_mode();
+    s_app_aspect = aspect;
+    if (s_app_mode == SL_WINDOW_WINDOWED) SDL_GetWindowSize(win, &s_windowed_w, &s_windowed_h);
+    sdl_publish_state(why);
+}
+
 static void sdl_begin(void)
 {
     /* N64 framebuffer is 320x240; the viewport is set to the window for now. */
     int w, h;
+    sdl_apply_display(0);                /* #45 / #52: the selection sets the window */
     SDL_GetWindowSize(win, &w, &h);
     /* B-124 arm only: the whole frame - scene, HUD, readbacks - happens
      * inside the 16-bit-depth FBO; sdl_end blits the colour to the window.
@@ -736,6 +1198,14 @@ static int sdl_poll(void)
                 sl_input_live_focus(0);
             else if (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
                 sl_input_live_focus(1);
+            /* #52: the size SDL reports after any change - a witness only.
+             * Nothing acts on it: the authoritative size is read from the
+             * window at the next frame reset (sdl_begin -> glViewport ->
+             * sl_gfx_dl.c g_window_vp), which is the one path a mode or
+             * resolution change, or a resize the OS makes, all reach. */
+            else if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+                fprintf(stderr, "sightline gfx: window size changed -> %dx%d (flags 0x%x)\n",
+                        (int) e.window.data1, (int) e.window.data2, (unsigned) SDL_GetWindowFlags(win));
         }
     }
     /* Drain first, then sample: SDL_GetKeyboardState and the relative-mouse
