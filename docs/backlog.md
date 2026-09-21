@@ -38909,3 +38909,141 @@ CI-runner repair; the demo core never run and never packaged; no re-baseline
 of anything. The package, the smoke from an unrelated directory, the
 integration into master, the canonical and public v0.2.0 tags and the GitHub
 Release are performed after this commit and read back into #49.
+
+## 2026-09-21 - CI / TOOLCHAIN STABILIZATION (post-v0.2.0, pre-v0.3.0): the
+## `sightline-ci` runner label now resolves to the project's own toolchain
+## image, a preflight step proves it on every job, harness-tests is green
+## on the remote runner with the job log as evidence, and act_runner is
+## pinned to the version it was already running. Branch sightline/ci-runner
+## from master 664cc1b3; not merged - the owner decides after readback.
+
+### The first wrong stage, and the second
+
+Every `runs-on: sightline-ci` job had been running in
+catthehacker/ubuntu:act-22.04 since the runner registered on 2026-08-18
+(its `.runner` file carried `sightline-ci:docker://catthehacker/...`), so
+harness-tests passed its 98 Python tests and then died compiling
+tools/trace/slinput on `m64p_types.h` (runs 987/990/992/994 on master).
+The image `ci/image/Dockerfile` builds, `sightline-ci:24.04`
+(25bf274ea4e3, 2026-08-18), was on the same Docker Desktop daemon the
+runner's socket reaches and matched the Dockerfile layer for layer - a
+`docker build` from the unchanged Dockerfile reproduced the three rootfs
+layer digests from cache. Verified inside it before touching the runner:
+SL_CI=1, python3 3.12.3, git 2.43.0, make 4.3, gcc 13.3.0, MIPS binutils
+2.42, capstone 4.0.2, `/usr/include/mupen64plus/m64p_types.h` present;
+98 tests OK (skipped=1, numpy) and slinput.so built.
+
+The mapping change exposed the second wrong stage, invisible under the
+stock image because that image ships node: act runs JavaScript actions
+(actions/checkout@v4) with the job container's own `node`, and the
+toolchain image had none - runs 996/997/998 reached
+`Start image=sightline-ci:24.04` and failed at checkout with
+`exec: "node": executable file not found`. Ubuntu's nodejs 18.19.1 was
+added in its own RUN layer (commit 18bd13db): the toolchain layer's digest
+is unchanged, dpkg shows 450 packages before and 459 after with none
+changed or removed, so the emulator and compiler the trace fingerprint
+depends on did not move. The rebuilt image is 1b44df78f708, tagged
+`sightline-ci:24.04` and `sightline-ci:24.04-18bd13db`; the previous one
+stays reachable as `sightline-ci:24.04-5f6cc397`.
+
+### Runner mapping without re-registration (act_runner v0.6.1, measured)
+
+Read from the running version's source at tag v0.6.1, not assumed:
+`GITEA_RUNNER_LABELS` is registration-time only (the image entrypoint
+passes it to `act_runner register` when /data/.runner is absent, never
+again); the daemon takes `runner.labels` from its config file, rewrites
+/data/.runner when they differ, and declares the label names to Gitea on
+every start. So the mapping now lives in `runner.labels` in an inline
+compose `configs:` block (measured with compose v2.35.1: `file:` becomes a
+bind mount of the host path - the WSL2 reboot failure mode the named
+volume exists to avoid - while `content:` is copied in and is not a
+mount). Applied with `docker compose -p runner up -d` over the existing
+`runner_runner-data` volume: the container was recreated, the daemon
+logged `labels updated to: [sightline-ci:docker://sightline-ci:24.04]`
+and `declare successfully`, and Gitea's API shows the same runner id 1
+`sightline-wsl`, online, label `sightline-ci`. No token, no
+re-registration, no volume touched. Gitea's API exposes only the label
+name; the `docker://` half is runner-side, which is what the preflight
+is for.
+
+`gitea/act_runner:0.6.1` and `:latest` resolved to the same index digest
+(sha256:b5c35d6b...) that day, so the compose pin to 0.6.1 changed nothing
+about the running runner; it only stops a future pull from moving it.
+
+### Preflight
+
+`ci/image/preflight.sh`, first step after checkout in harness-tests,
+check-layering, trace-gate and publish-public (before the credential
+exists there): fails with "sightline-ci job is not running in the
+Sightline CI toolchain image" unless SL_CI=1, m64p_types.h, gcc and
+mips-linux-gnu-ld are present. No apt list in any workflow. Measured:
+PASS in the image; FAIL on SL_CI in the stock image; FAIL on the header
+when SL_CI is forged there.
+
+### Remote evidence (branch sightline/ci-runner at 18bd13db)
+
+harness-tests run 1000 / job 1000 on runner sightline-wsl: `Start
+image=sightline-ci:24.04`, `preflight PASS`, `Ran 98 tests ... OK
+(skipped=1)`, slinput.so compiled, `Job succeeded`. check-layering run
+999: same image, preflight PASS, 282 violations = baseline, success.
+trace-gate dispatched by hand (run 1001): same image, preflight PASS,
+then the ledger check itself fails - see below.
+
+### Workflow inventory
+
+- check-layering: push/PR/dispatch, sightline-ci, no ROM/emulator/display/
+  secret. ORDINARY; green.
+- harness-tests: push/PR/dispatch, sightline-ci, no ROM/emulator/display/
+  secret (needs libmupen64plus-dev headers only). ORDINARY; green.
+- trace-gate: push filtered to tools/trace/{traces,inputs}/**,
+  gate-results.json, its own file; PR; dispatch. sightline-ci, no ROM.
+  CONDITIONAL; red for a reason unrelated to the runner (below).
+- publish-public: push to master + dispatch, sightline-ci, secret
+  PUBLIC_PUBLISH_SSH_KEY, SSH to the staging repo. CONDITIONAL (master
+  only); last master run 995 green; the exporter's gates pass in dry-run
+  on this branch's tree (3044 files).
+- trace-determinism: push filtered to tools/trace/**; sightline-host
+  (host-mode runner, ROM at a host path). ROM-DEPENDENT; that runner is
+  offline, so runs 973 (v0.1.0 tag) and 991 (v0.2.0 tag) sit queued.
+
+### Parked, not fixed here
+
+- CORRECTNESS DEBT: trace-gate fails on seven ungated recordings
+  (facility-pane-debug, facility-pane, facility-pane-close,
+  facility-props, facility-tank-visibility, facility-gas,
+  facility-props2). Pre-existing: run 992 on the v0.2.0 tag failed the
+  same way under the old image. The ledger was last updated 2026-08-24
+  (schema v13); gating needs the ROM and `make trace-gate` locally.
+- TOOLING DEBT: the sightline-host runner is offline; trace-determinism
+  runs queue forever, including on tag pushes. Bringing it back, or
+  giving the workflow a timeout, is a separate decision.
+- TOOLING DEBT: `docker compose up` warns that runner_runner-data "was
+  not created by Docker Compose" (it predates the compose labels). It is
+  reused correctly; `external: true` would silence it but changes the
+  compose file's meaning for a fresh host.
+- The compose container labels now name the scratch clone's compose path;
+  the next `docker compose up -d` from the canonical checkout's
+  ci/runner/ rewrites them and changes nothing else.
+
+### Not done, on purpose
+
+No product code; no v0.3.0 work; #67 and #64 untouched; no tag, release
+or asset touched; no merge to master; no re-registration; no volume
+deleted; no act_runner upgrade; no ROM in any image, job or artifact.
+
+### Integration, and the third wrong stage (2026-09-21, later the same day)
+
+sightline/ci-runner fast-forwarded onto master (664cc1b3 -> 8732f065, no
+merge commit). On that push check-layering (run 1004) and harness-tests
+(run 1005) were green in `sightline-ci:24.04` with the preflight line, 98
+tests OK (skipped=1) and slinput.so built; trace-gate (run 1007) failed on
+the same seven ungated Facility recordings as before, unchanged.
+publish-public (run 1006) reached the preflight and the exporter's gates
+(passed, 3045 files) and then failed cloning the staging repository:
+`ssh: not found`. The dry-run on the branch never reaches ssh, and the
+stock image this workflow had always run in ships an SSH client; the
+toolchain image did not. `openssh-client` is added to the same runner-only
+RUN layer as nodejs: rootfs layers 1-2 (base and toolchain) are unchanged,
+dpkg 459 -> 463 with four additions (openssh-client, libfido2-1, libcbor0.10,
+adduser) and nothing changed or removed; the image is rebuilt under
+`sightline-ci:24.04`, the previous one stays as `sightline-ci:24.04-18bd13db`.

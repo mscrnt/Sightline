@@ -30,6 +30,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
 
+# Node and an SSH client for the runner, not for the toolchain. act runs
+# JavaScript actions (actions/checkout@v4 is one) with the job container's
+# own `node`; without it every job dies at checkout with "node: executable
+# file not found". publish-public pushes to the staging repository over
+# ssh:// with GIT_SSH_COMMAND, and git needs a real `ssh` for that; without
+# it the first master publication under this image failed with "ssh: not
+# found" (run 1006). A separate layer so the toolchain layer above keeps its
+# digest - the emulator and compiler versions the trace fingerprint depends
+# on do not move when these are added. Ubuntu's packages, no third-party
+# repository.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nodejs \
+        openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
 # act checks out into the workspace; nothing is baked in.
 WORKDIR /workspace
 

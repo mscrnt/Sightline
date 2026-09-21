@@ -483,6 +483,11 @@ reproduction: produce and verify traces in the canonical container via
 The image contains no ROM and no assets; the base ROM is bind-mounted read-only
 from the machine that owns it.
 
+The same image is what the CI runner's `sightline-ci` label resolves to, and
+`ci/image/preflight.sh` fails any job that lands anywhere else. Rebuilding it,
+verifying it, and changing the runner mapping are written up in
+`ci/image/README.md`.
+
 ## 9. Layering check
 
 ```bash
