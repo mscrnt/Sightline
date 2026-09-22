@@ -4252,6 +4252,9 @@ s32 objTick(struct PropRecord *prop)
 	bool applyFogCull;
 	struct ALSoundState *sfx_state;
 	s32 projectileAlive;
+#ifndef __sgi
+	s32 sl_lift = 0;   /* #43: this prop is drawn under ENHANCED without being on screen */
+#endif
 
     /**
      * 0 - the move was blocked by geometry
@@ -5946,15 +5949,47 @@ s32 objTick(struct PropRecord *prop)
 	else
 	{
 		var_v1_5 = ((!(obj->runtime_bitflags & RUNTIMEBITFLAG_00000800)) && (!(obj->flags2 & PROPFLAG2_00080000))) ? (posIsOnScreen(prop, &obj->runtime_pos, getinstsize(model), applyFogCull)) : (0);
+#ifndef __sgi
+		/* #43 WORLD DETAIL ENHANCED - the render-only LIFT (src/native/
+		 * sl_world_detail.c has the derivation). posIsOnScreen's third gate,
+		 * sub_GAME_7F054C58, is the near-fog visibility-range formula on the
+		 * tick side; a prop it rejects gets no flag, no matrices and no place
+		 * in the render. Under ENHANCED such a prop, when it passes the same
+		 * test without that one term, takes the on-screen arm below for its
+		 * RENDER data only: sl_lift is consulted at the three points where
+		 * that arm writes or reads simulation state (the shade lerp, the
+		 * flag, the children), each of which stays exactly the off-screen
+		 * arm's. var_v1_5 itself is unchanged when the store is ORIGINAL or
+		 * inactive, so the __sgi arm's decision is the one taken. */
+		if (var_v1_5 == 0 && applyFogCull
+		    && (!(obj->runtime_bitflags & RUNTIMEBITFLAG_00000800)) && (!(obj->flags2 & PROPFLAG2_00080000)))
+		{
+			extern int sl_world_detail_lift_query(PropRecord *prop, coord3d *pos, f32 size);
+			if (sl_world_detail_lift_query(prop, &obj->runtime_pos, getinstsize(model)))
+			{
+				sl_lift = 1;
+				var_v1_5 = 1;
+			}
+		}
+#endif
 	}
 
 	if (var_v1_5 != 0)
 	{
+#ifndef __sgi
+		if (isSimOwner && !sl_lift)
+#else
 		if (isSimOwner)
+#endif
 		{
 			update_color_shading(&obj->shadecol, &obj->nextcol);
 		}
 
+#ifndef __sgi
+		if (sl_lift)
+			prop->flags &= ~PROPFLAG_ONSCREEN;   /* what the off-screen arm would have done */
+		else
+#endif
 		prop->flags |= PROPFLAG_ONSCREEN;
 		mtxs = dynAllocate(model->obj->numMatrices << 6);
 		model->render_pos = (RenderPosView *) mtxs;
@@ -6337,6 +6372,11 @@ s32 objTick(struct PropRecord *prop)
 			while (current != NULL)
 			{
 				sp684 = current->prev;
+#ifndef __sgi
+				if (sl_lift)
+					sub_GAME_7F04424C(current);   /* the off-screen child tick, as ORIGINAL */
+				else
+#endif
 				sub_GAME_7F0442DC(current);
 				current = sp684;
 			}
@@ -7236,7 +7276,14 @@ Gfx *process_monitor_animation_microcode(Model *model, ModelNode *node, MonitorR
 
 void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
 {
+#ifndef __sgi
+    /* #43: a lifted prop (src/native/sl_world_detail.c) has this frame's
+     * render data without the flag; the flag test is the __sgi arm's. */
+    extern int sl_world_detail_lifted(PropRecord *prop);
+    if ((prop->flags & PROPFLAG_ONSCREEN) || sl_world_detail_lifted(prop))
+#else
     if (prop->flags & PROPFLAG_ONSCREEN)
+#endif
     {
         ObjectRecord *obj;
         Model *model;
@@ -13755,6 +13802,92 @@ f32 chrobjFogVisRangeRelated(PropRecord *prop, f32 size)
      * time_other_players_on_screen and the prop-visible bookkeeping are
      * unchanged. The __sgi arm above is verbatim (preprocess proof in
      * docs/backlog.md, 2026-09-15). */
+    /* #43 WORLD DETAIL (2026-09-21). THIS is the first load-bearing
+     * restriction the world-detail recon found on the current build, and
+     * the one seam that owns it: the cartridge's near-fog VISIBILITY-RANGE
+     * rejection. The test above removes a prop (and, through chr.c:2907, a
+     * guard) once the size-scaled term reaches MaxVisRange - i.e. at
+     *
+     *     zDepth >= MaxObfusc + size * (MaxVisRange / c_lodscalez - MaxObfusc) / 100
+     *
+     * which on Dam (3333 / 4444 / 600) is 1322 units for the alarm panel
+     * (size 20.8) and 2100 for the gate monitor (33.8), on a level whose
+     * far-fog cull (fogGetPropDistColor) does not fire until 67411 and
+     * whose terrain is crisp at both distances. MEASURED at the witness
+     * pose (Dam 15605 / 60 / 3755 theta 156.7, room 123): the alarm at
+     * 1500.8 and the monitor at 2230.4 are CULLED-visrange with the fog at
+     * 0% while the gate's crates (size 94) at 2047-2376 draw; the cartridge
+     * at the same pose (romtele.py, parallel_n64) draws neither - the
+     * formula is Rare's (B-090: disassembly and the owner's log agree at
+     * 9 of 9 points). A draw-budget rule of the N64, not a fidelity one.
+     *
+     * THE ENHANCED POLICY, expressed here and nowhere else: the rejection is
+     * not applied at the render seam - a prop stays eligible until the
+     * far-fog cull removes it (the visual limit, retained exactly) or the
+     * room / portal set no longer reaches it (retained exactly: this
+     * function is only reached for a prop in a rendered room that the
+     * tick's own on-screen test admitted). No constant is moved and no
+     * threshold is scaled: the fog is where the eye stops seeing, and
+     * everything nearer is drawn. ORIGINAL is the block below untouched -
+     * the B-133 rule with its kill switch - and the __sgi arm is verbatim.
+     *
+     * SIMULATION BOUNDARY, derived rather than assumed: this function has
+     * exactly two callers (grep -rn chrobjFogVisRangeRelated src/: chr.c
+     * :2907 chrRenderProp, propobj.c :7619 chrobjRenderProp), both render
+     * functions, and its value feeds objAlpha / chrfadealpha - the render
+     * path, the DL's env colour and the draw-pass flags. The gameplay side
+     * reads the SAME table row through its own functions - posIsOnScreen ->
+     * sub_GAME_7F054C58 (PROPFLAG_ONSCREEN, the AI's if-I'm-on-screen) and
+     * fogPositionIsVisibleThroughFog - which this policy does not touch, so
+     * a guard's awareness, a script's on-screen test and the prop
+     * bookkeeping are the cartridge's under both profiles. The store is
+     * inactive under trace replay and headless, where the predicate answers
+     * ORIGINAL. */
+    {
+        extern int sl_world_detail_enhanced(void);
+        extern float sl_env_f32(const char *name, float dflt);
+        extern int fprintf(void *, const char *, ...);
+        extern void *stderr;
+        extern s32 sl_dbg_frame;
+        static int census = -1;
+        static int lastframe = -1;
+        static int n_eval, n_reject, n_lifted, n_mode;
+        int enhanced = sl_world_detail_enhanced();
+
+        /* THE CENSUS, under the same SL_TABLE_DBG the neighbouring probes
+         * use: per frame, how many evaluations reached this seam, how many
+         * the cartridge's rule rejects, and how many ENHANCED lifted - the
+         * number that must read 0 under ORIGINAL and equal `reject` under
+         * ENHANCED, which is what makes an A/B at one pose a measurement. */
+        if (census < 0) census = (sl_env_f32("SL_TABLE_DBG", 0.0f) != 0.0f);
+        if (census)
+        {
+            if (sl_dbg_frame != lastframe)
+            {
+                if (lastframe >= 0)
+                {
+                    /* tick-lift: the props this tick drew without the
+                     * on-screen flag (src/native/sl_world_detail.c), and
+                     * whether its list overflowed. */
+                    extern int sl_world_detail_lift_count(int *overflow);
+                    int ovf = 0, tl = sl_world_detail_lift_count(&ovf);
+                    fprintf(stderr, "sl_visrange: f%d mode=%s eval=%d reject=%d lifted=%d tick-lift=%d overflow=%d\n",
+                            (int) lastframe, n_mode ? "ENHANCED" : "ORIGINAL",
+                            n_eval, n_reject, n_lifted, tl, ovf);
+                }
+                lastframe = sl_dbg_frame;
+                n_eval = n_reject = n_lifted = 0;
+            }
+            n_mode = enhanced;
+            n_eval++;
+            if (ret <= 0.0f) { n_reject++; if (enhanced) n_lifted++; }
+        }
+
+        if (enhanced)
+        {
+            ret = 1.0f;
+        }
+    }
     if (ret > 0.0f)
     {
         extern char *getenv(const char *);
@@ -13890,6 +14023,55 @@ bool posIsOnScreen(PropRecord *prop, coord3d *pos, f32 arg2, bool arg3)
         roomnum = *rooms;
         result = FALSE;
     }
+
+#ifndef __sgi
+    /* #43 ON-SCREEN PROBE, native only, inert unless SL_ONSCR_DBG names it.
+     * READ-ONLY: re-evaluates the same pure tests this function just made
+     * and prints the decision path per prop, so "which gate withheld this
+     * prop from the render" is a line rather than an argument. Bounded per
+     * frame; the SL_PROP_FROM / SL_PROP_TO record window applies. */
+    {
+        extern int fprintf(void *, const char *, ...);
+        extern void *stderr;
+        extern float sl_env_f32(const char *name, float dflt);
+        extern s32 sl_dbg_frame;
+        extern unsigned sl_record_index(void);
+        static int on = -1;
+        static int lastframe = -1, budget;
+        if (on < 0) on = (sl_env_f32("SL_ONSCR_DBG", 0.0f) != 0.0f);
+        if (on) {
+            unsigned r = sl_record_index();
+            if (r >= (unsigned) sl_env_f32("SL_PROP_FROM", 0.0f)
+             && r <= (unsigned) sl_env_f32("SL_PROP_TO", 1e9f)) {
+                if (sl_dbg_frame != lastframe) { lastframe = sl_dbg_frame; budget = 0; }
+                if (budget++ < 400) {
+                    s32 k, chosen = -1, fogv = -1, visr = -1, box = -1, inbox = -1, inscr = -1;
+                    bbox2d bb;
+                    bb.min.x = bb.min.y = bb.max.x = bb.max.y = 0.0f;
+                    for (k = 0; k < 8 && room_ids[k] >= 0; k++)
+                        if (getROOMID_isRendered(room_ids[k]) != 0) { chosen = room_ids[k]; break; }
+                    if (chosen >= 0) {
+                        fogv = fogPositionIsVisibleThroughFog(pos, arg2) ? 1 : 0;
+                        visr = (!arg3 || sub_GAME_7F054C58(pos, arg2)) ? 1 : 0;
+                        box = getPropCombinedRoomsBBox2D(prop, &bb) != 0 ? 1 : 0;
+                        if (box) inbox = camIsPosInScreenBox(pos, arg2, &bb) ? 1 : 0;
+                        else inscr = camIsPosInScreen(pos, arg2) ? 1 : 0;
+                    }
+                    fprintf(stderr, "sl_onscreen: f%d read=%u id=%p type=%d obj=%d rooms=%d,%d,%d chosen=%d"
+                                    " size=%.1f fogvis=%d visrange=%d box=%d[%.1f,%.1f-%.1f,%.1f] inbox=%d inscreen=%d"
+                                    " pos=%.1f,%.1f,%.1f -> %d\n",
+                            (int) sl_dbg_frame, r, (void *) prop, (int) prop->type,
+                            prop->obj ? (int) (u8) prop->obj->type : -1,
+                            (int) room_ids[0], room_ids[0] >= 0 ? (int) room_ids[1] : -1,
+                            (room_ids[0] >= 0 && room_ids[1] >= 0) ? (int) room_ids[2] : -1,
+                            (int) chosen, (double) arg2, fogv, visr, box,
+                            (double) bb.min.x, (double) bb.min.y, (double) bb.max.x, (double) bb.max.y,
+                            inbox, inscr, (double) pos->x, (double) pos->y, (double) pos->z, (int) result);
+                }
+            }
+        }
+    }
+#endif
 
     return result;
 }

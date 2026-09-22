@@ -141,6 +141,13 @@ extern void        sl_window_size_text(int w, int h, char *buf, int n);
 extern int         sl_window_state(int *mode, int *w, int *h, int *vsync);
 extern void        sl_window_request_vsync(int on);
 extern int         sl_window_request_pending(void);
+/* #43 (2026-09-21): the GRAPHICS child's WORLD DETAIL, through the same
+ * accessor pair the front end's DISPLAY tab uses (sl_settings_apply.c: the
+ * profile id, its name from the store, the step to the other profile). The
+ * render seams read the store themselves; no copy here. */
+extern int         sl_world_detail(void);
+extern const char *sl_world_detail_name(int detail);
+extern void        sl_world_detail_step(int dir);
 #endif
 
 #define WATCH_BACKGROUND_VERTEX_COUNT 30
@@ -1081,13 +1088,14 @@ extern void *stderr;
 
 /* THE VIEWS (options.h): a heading and a row list each. The SIGHTLINE page
  * itself is view 0; a SUBMENU row opens the child it names; every child ends
- * in BACK. GRAPHICS is DIMMED (visible, unselectable - the CHEATS-row
- * convention) because nothing ships there yet (#43 / #47 / #48 parked). */
+ * in BACK. GRAPHICS was DIMMED (visible, unselectable - the CHEATS-row
+ * convention) while nothing shipped there; #43's WORLD DETAIL row opened it
+ * on 2026-09-21 (#47 / #48 add their rows to the same child when they come). */
 struct sl_watch_row  { const char *label; u8 kind; u8 arg; };
 struct sl_watch_view { const char *heading; struct sl_watch_row rows[SL_WVIEW_ROWS_MAX]; u8 count; };
 
 static const struct sl_watch_view sl_watch_views[SL_WVIEW_COUNT] = {
-    { "sightline\n", { { "graphics\n", SL_WROW_DIMMED, 0 },
+    { "sightline\n", { { "graphics\n", SL_WROW_SUBMENU, SL_WVIEW_GRAPHICS },
                        { "gameplay\n", SL_WROW_SUBMENU, SL_WVIEW_GAMEPLAY },
                        { "display\n",  SL_WROW_SUBMENU, SL_WVIEW_DISPLAY },
                        { "controls\n", SL_WROW_SUBMENU, SL_WVIEW_CONTROLS } }, 4 },
@@ -1122,6 +1130,11 @@ static const struct sl_watch_view sl_watch_views[SL_WVIEW_COUNT] = {
                           { "look deadzone\n",    SL_WROW_VALUE_PDZ, 0 },
                           { "move deadzone\n",    SL_WROW_VALUE_MDZ, 0 },
                           { "back\n",             SL_WROW_BACK, 0 } }, 4 },
+    /* #43 (2026-09-21): the render-visibility profile, the front end's
+     * DISPLAY tab's WORLD DETAIL row - here under GRAPHICS, the child the
+     * owner's structure reserved for it. */
+    { "graphics\n",  { { "world detail\n",   SL_WROW_VALUE_WDETAIL, 0 },   /* #43: original / enhanced */
+                       { "back\n",           SL_WROW_BACK, 0 } }, 2 },
 };
 
 static s32 sl_wview;              /* the view in force (SL_WVIEW_*) */
@@ -4303,6 +4316,16 @@ static void sl_sightline_value_step(s32 kind, s32 dir)
         /* #52: the next size of the current mode's list. */
         sl_window_size_step(dir > 0 ? 1 : -1);
     }
+    else if (kind == SL_WROW_VALUE_WDETAIL)
+    {
+        /* #43: the other profile (two values: a step either way is the
+         * other one); the render seams read the store on the next frame
+         * drawn, so the world behind the watch changes when it closes. */
+        sl_world_detail_step(dir > 0 ? 1 : -1);
+        if (getenv("SL_INPUT_DEBUG") != NULL)
+            fprintf(stderr, "sightline watch: world detail step dir=%d -> %d(%s)\n",
+                    (int) dir, sl_world_detail(), sl_world_detail_name(sl_world_detail()));
+    }
     else if (SL_WROW_IS_NAMED(kind))
     {
         /* #63: BUTTON LAYOUT steps through the presets (a step off CUSTOM
@@ -4368,6 +4391,7 @@ void sl_sightline_click(s32 row, s32 value)
     case SL_WROW_VALUE_MDZ:
     case SL_WROW_VALUE_WMODE:
     case SL_WROW_VALUE_RES:
+    case SL_WROW_VALUE_WDETAIL:
         if (value < 0) { watch_play_beep_sound(); break; }
         sl_sightline_value_step(kind, value == 0 ? -1 : +1);
         break;
@@ -4529,6 +4553,8 @@ const char *sl_sightline_row_value_name(s32 row)
     s32 kind = sl_sightline_row_kind(row);
     if (kind == SL_WROW_VALUE_WMODE)           /* #52 */
         return sl_window_mode_name(sl_window_mode_shown());
+    if (kind == SL_WROW_VALUE_WDETAIL)         /* #43: ORIGINAL / ENHANCED */
+        return sl_world_detail_name(sl_world_detail());
     if (kind == SL_WROW_VALUE_RES || kind == SL_WROW_INFO_RES)
     {
         int w = 0, h = 0;
@@ -4717,6 +4743,7 @@ Gfx *sl_draw_watch_sightline_page(Gfx *gdl, Mtx *param_2)
             case SL_WROW_VALUE_SLAYOUT:
             case SL_WROW_VALUE_WMODE:
             case SL_WROW_VALUE_RES:
+            case SL_WROW_VALUE_WDETAIL:
                 gdl = sl_draw_sightline_named(gdl, i, y, label);
                 break;
             case SL_WROW_INFO_PAD:

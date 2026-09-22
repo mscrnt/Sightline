@@ -62,6 +62,122 @@ Copy this block. Newest entries at the top of the log.
 
 ## Log
 
+### D-019 — WORLD DETAIL ENHANCED (#43): the near-fog visibility-range rejection of props and characters is not applied at the render seam, and a prop the TICK's copy of the same test rejected is drawn without its on-screen flag (the render-only lift), so a prop stays eligible until the far-fog cull or the room / portal set removes it; default ORIGINAL = the accepted rendering byte for byte (native-only setting, the D-009 class; render only, the simulation's own copy of the same test is untouched)
+
+- **Date:**        2026-09-21 (the lift added the same day, on the owner's Dam yard marks)
+- **Phase:**       1 (v0.3.0 Visual Fidelity, the first World Detail sprint)
+- **Commit:**      (this branch, sightline/world-detail) - Gitea #43: src/platform/sl_settings.{c,h} + src/native/sl_settings_apply.c (the row and the accessor pair), src/game/propobj.c chrobjFogVisRangeRelated (the render seam), src/native/sl_world_detail.c + the objTick / sub_GAME_7F04AC20 / chrprop.c islands (the lift), src/native/sl_front_options.c (the DISPLAY tab row), src/game/options.{c,h} (the watch's GRAPHICS child)
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seam is one function; it has a live effect only on the seventeen levels whose fog row carries a near-fog triple - Facility's row is NULL there and the gate is dead, B-051)
+- **First tick:**  n/a - no hashed state moves (measured: the Dam pad replay's per-tick state trace is byte-identical under both profiles, below)
+- **Fields:**      none. Pixels only: under ENHANCED a prop or guard the cartridge's rule would have dropped at its size-scaled distance is drawn, in the same material, until the far-fog cull (fogGetPropDistColor) drops it
+- **Toggle:**      `world_detail` in the native settings store (`%LOCALAPPDATA%\sightline\config.ini`), **0 = ORIGINAL (default): the accepted Sightline rendering exactly as it stood before this entry, N64 visibility tuning kept**; 1 = ENHANCED. Read by the game through `sl_world_detail_enhanced()` (sl_settings_apply.c) at the one seam; an inactive store (trace replay, headless) answers ORIGINAL. Two views: OPTIONS -> SETTINGS -> DISPLAY `WORLD DETAIL  ORIGINAL ENHANCED`, and the watch's SIGHTLINE -> GRAPHICS `world detail  original / enhanced`.
+
+**What changed**
+
+`chrobjFogVisRangeRelated` (propobj.c) is the cartridge's size-scaled
+visibility-range test: with the level's near-fog triple (NearFog,
+MaxVisRange, MaxObfuscationRange) and the FOV factor c_lodscalez it returns
+0 - "not drawn" - once
+
+    zDepth >= MaxObfusc + size * (MaxVisRange / c_lodscalez - MaxObfusc) / 100
+
+The two callers are render functions (chrobjRenderProp :7619, chrRenderProp
+chr.c:2907), and a 0 makes each return without emitting a display list.
+Under ENHANCED the native arm returns 1.0 instead, so the prop or guard is
+drawn; the far-fog cull that precedes it in both callers, the room / portal
+visibility that decides which props reach the render at all, and the
+tick's own on-screen test (PROPFLAG_ONSCREEN) are exactly as before. No
+constant moves and no threshold is scaled: the fog is where the eye stops
+seeing, and everything nearer is drawn. Under ORIGINAL the function is the
+B-133 / D-004 rule unchanged (fully visible until the cull; SL_PROP_FADE=1
+still restores the cartridge's fade band there).
+
+THE LIFT (the owner's Dam yard marks, 2026-09-21: "the boxes still stream
+in late"). The same formula runs a second time on the TICK side -
+posIsOnScreen (propobj.c objTick :5948) -> sub_GAME_7F054C58 - and a prop it
+rejects never gets PROPFLAG_ONSCREEN, no render matrices and no place in
+g_OnScreenPropList, so the render seam never sees it. Under ENHANCED such a
+prop, when posIsOnScreen admits it with that one term removed (the same
+call with applyFogCull = FALSE: rendered room, fog-visible, inside its
+rooms' portal window) and its on-screen matrix path is the generic one
+(not a door, CCTV, autogun, vehicle, aircraft or tank), takes the on-screen
+arm for its RENDER data only - the matrices, prop->zDepth, the model's
+relations - while the flag is cleared as the off-screen arm would have, the
+sim owner's shade lerp is skipped and its children take the off-screen
+child tick. It joins this frame's lift list (src/native/sl_world_detail.c),
+which chrpropsRenderPass walks after the room's on-screen props of the same
+pass; sub_GAME_7F04AC20 accepts a lifted prop in place of the flag test.
+ORIGINAL: the list is empty and every island is the __sgi arm's decision.
+
+**Why**
+
+The owner's #43 contract: an optional profile in which "props not popping
+at close range" and "obvious geometry and prop pop-in reduced", with
+sensible culling retained. The world-detail recon (docs/backlog.md,
+2026-09-21) walked the pipeline from the room set to the pixels and found
+this the FIRST load-bearing restriction on the current build that is (a)
+demonstrably an N64 draw-budget rule rather than the visual limit, (b)
+render-only by construction, and (c) live and witnessed. The witness: Dam
+(near-fog 3333 / 4444 / 600, far-fog cull at 67411), pose 15605 / 60 / 3755
+theta 156.7 room 123 - the gate's alarm panel (size 20.8) at 1500.8 units
+and its monitor (33.8) at 2230.4 are CULLED-visrange with the fog at 0%
+while the gate's crates (size 94) at 2047-2376 draw; the cartridge at the
+same pose (romtele.py, parallel_n64) draws neither, so the rule is Rare's
+(B-090 had already matched the disassembly and the owner's log at 9 of 9
+points). The derived cutoffs across the levels (a 30-unit pickup: Archives
+1175, Depot 1110, Aztec / Egypt 1520, Dam 1642, Streets 2350; a 72-unit
+crate: Depot 1544, Statue 2210, Dam 3101; a 200-unit guard on Dam: 7547,
+where the fog is still only 69%) put the rule well inside clear air on most
+of the campaign.
+
+**Why it is safe**
+
+The boundary was derived, not assumed: a tree-wide grep finds exactly the
+two render callers, and the gameplay side reads the same table row through
+its own functions - posIsOnScreen -> sub_GAME_7F054C58 and
+fogPositionIsVisibleThroughFog (the AI's if-I'm-on-screen, the scripts'
+tests, the prop bookkeeping) - which this entry does not touch. THE LIFT'S
+BOUNDARY: PROPFLAG_ONSCREEN is hashed by the trace (sl_state_reader.c),
+read by the AI (chrai.c :1832, aicommands.def :3283) and is the membership
+of g_OnScreenPropList - the list a shot (chraiDefaultWeaponFireHandler), a
+punch, INTERACT (propFindForInteract) and auto-aim walk - so the lift never
+sets it and never joins that list; what it writes (render matrices in the
+frame allocator, prop->zDepth, the model's rwdata relations) is hashed
+nowhere and read by the simulation only behind that flag. THE CONSEQUENCE
+THE OWNER MUST WEIGH: a lifted prop is visible but, until it comes inside
+the cartridge's own range, it is exactly what it is under ORIGINAL - not
+shootable, not interactable, not a target; a bullet passes through it to
+whatever the cartridge would have hit. Lifting the flag instead would
+change the simulation (project rules 1 and 5). Measured: the dam-pad input
+stream replayed WINDOWED with the settings store active and SL_TRACE_OUT,
+3000 pumped frames, under ORIGINAL and under ENHANCED, before and after the
+lift - all four per-tick state traces are byte-identical (613402 bytes,
+sha256 A1FD1FB8...) while the census read reject=178 lifted=0 tick-lift=0
+against reject=16664 lifted=16664 tick-lift=8224 (the lifted props reach
+the render seam twice a frame, opaque and alpha pass); the unbounded pair
+before the lift (21815 / 21773 ticks) is identical over its whole common
+prefix of 8,844,646 bytes.
+ORIGINAL identity: the pre-feature exe (master 8af7aa29) and this exe, at
+four teleport poses (Facility catwalk, the Dam witness, the Bunker 2 crate
+hall, the owner's Dam mark 1), key absent and key 0, SL_VI_CATCHUP=0 -
+byte-identical frames (sha256 7CC42D4F..., 4357AB44..., C5D30773...,
+FB0AFCAF...) and identical DL census. Positive controls: ENHANCED at the
+Dam witness pose lifts 4 evaluations (the two props plus two guards), frame
+121 tris 1786 -> 1828, and the frame differs in exactly 78 pixels - the
+alarm panel; at the owner's mark 1 (Dam 15227 / 60.3 / 13970.6 theta 212.4,
+room 110) the tick lifts 16 props (9 crates, 4 multi-monitors, 1 armour, 2
+glass), tris 3504 -> 4404, 1601 pixels differ - the mid-yard container
+stacks - and the cartridge at that pose (romtele.py) withholds the same
+stacks ORIGINAL withholds. test.ps1 facility
+300 PASS; settingstest 168/168; displaytest 67 + 171; inputtest 22
+B-096-class failures unchanged; check-layering 282 = baseline; the __sgi
+arms of propobj.c / options.c / options.h are token-identical to the base
+(preprocess proof, non-vacuous). `make trace-verify` NOT run (no MIPS
+toolchain on this host).
+
+---
+
 ### D-018 — the modern pad's DEFAULT bumpers MIRROR the triggers (owner, 2026-09-21): RB / R1 is a second FIRE and LB / L1 a second AIM in every live preset, the weapon cycle and the zoom are the d-pad's alone, and the BUMPER preset is retired; the scope-aware source mechanism is unchanged (native-only setting, the D-009 class - but the DEFAULT itself moves, deliberately)
 
 - **Date:**        2026-09-21

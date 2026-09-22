@@ -17,6 +17,7 @@
  *                                  VSYNC  OFF ON                      (#52)
  *                                  ASPECT RATIO  4:3  16:9  21:9  32:9   (#45)
  *                                  FIELD OF VIEW  -  <h16>  +      [bar] (#45, #50)
+ *                                  WORLD DETAIL  ORIGINAL ENHANCED       (#43)
  *                        PAD       BUTTON LAYOUT  <preset>              (#63)
  *                                  STICK LAYOUT   <layout>              (#63)
  *                                  LOOK SENSITIVITY -  <pct>%  + [bar] (#51)
@@ -32,10 +33,11 @@
  *     MENU_SL_BINDINGS the bindings editor (src/native/sl_front_bindings.c),
  *                      BACK returns here with the cursor on BINDINGS
  *     (the DISPLAY tab first carried a #43 Phase A presentation row for one
- *      round, retired unshipped on 2026-09-18 - owner decision; #43 is parked
- *      for a dedicated graphics phase. It returned for #45 with the aspect
- *      row only: no PRESENTATION, no world-detail / texture / lighting rows,
- *      those are #43 / #47 / #48 when they come.)
+ *      round, retired unshipped on 2026-09-18 - owner decision. It returned
+ *      for #45 with the aspect row, and on 2026-09-21 the re-scoped #43
+ *      landed its WORLD DETAIL row - the render-visibility profile, NOT a
+ *      presentation / filtering switch; texture / lighting rows are #47 /
+ *      #48 when they come.)
  *     MENU_CHEAT       Rare's cheat menu, entered from CHEATS, unchanged
  *
  * BUILT THE WAY RARE BUILT THE SCREENS AROUND THEM, and that is the whole
@@ -267,6 +269,10 @@ extern void  sl_sprint_enabled_set(int on);
  * makes. */
 extern int   sl_action_mode(int which);
 extern void  sl_action_mode_set(int which, int toggle);
+/* WORLD DETAIL (sl_settings_apply.c, #43): SL_WORLD_DETAIL_ORIGINAL /
+ * _ENHANCED. The same pair the watch's GRAPHICS child calls. */
+extern int   sl_world_detail(void);
+extern void  sl_world_detail_set(int detail);
 /* The N64 include tree's <stdlib.h> has no getenv (sl_cheat.c's rule). */
 extern char *getenv(const char *);
 
@@ -530,7 +536,8 @@ enum { SR_NONE = 0, SR_LOOK, SR_AIM, SR_MINV, SR_SPRINT, SR_BINDINGS, SR_ASPECT,
        SR_CMODE,        /* #56: CROUCH MODE - the same */
        SR_WMODE,        /* #52: WINDOW MODE - one value cell, advancing (WINDOWED / BORDERLESS / FULLSCREEN) */
        SR_RES,          /* #52: RESOLUTION - `-` <WxH> `+` through the display's list; informational in BORDERLESS */
-       SR_VSYNC };      /* #52: VSYNC - OFF / ON, a two-value row */
+       SR_VSYNC,        /* #52: VSYNC - OFF / ON, a two-value row */
+       SR_WDETAIL };    /* #43: WORLD DETAIL - ORIGINAL / ENHANCED, a two-value row (sl_world_detail) */
 
 /* THE TAB LIST. Adding a tab = one entry: its label and its content rows in
  * slot order (BACK takes the slot after the last row, SET_ROW_BACK_MIN at
@@ -547,8 +554,11 @@ static const struct sl_settings_tab s_tabs[] = {
     { "GAMEPLAY\n", { SR_SPRINT, SR_SMODE, SR_CMODE, SR_NONE, SR_NONE, SR_NONE, SR_NONE } },     /* #42, #56 */
     /* #52 (2026-09-20): the three output rows BEFORE the two content rows
      * (the window first, then what is drawn in it) - five rows, so BACK
-     * stays in its accepted slot (SET_ROW_BACK_MIN). */
-    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_ASPECT, SR_FOV, SR_NONE, SR_NONE } },       /* #52, #45 */
+     * stayed in its accepted slot (SET_ROW_BACK_MIN). #43 (2026-09-21): the
+     * WORLD DETAIL row after FIELD OF VIEW - what stays eligible inside the
+     * frustum the two rows above it shape - six rows, so BACK takes slot 6
+     * (y 0x110, as the PAD tab's BACK already sits at slot 7). */
+    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_ASPECT, SR_FOV, SR_WDETAIL, SR_NONE } },    /* #52, #45, #43 */
     /* #63: the pad's own tab (a fourth tab: CONTROL was full when it landed,
      * and the accepted rows do not move; three glyphs, so the strip's fourth
      * slot at x 0x145 clears the PREVIOUS tab at 390): the two layouts, the
@@ -967,6 +977,14 @@ static void set_activate(s32 row, s32 col)
                 sl_window_request_vsync(col < 0 ? !vs : col);
             }
             break;
+        case SR_WDETAIL:
+            /* #43: a value cell sets ORIGINAL (0) / ENHANCED (1), the label
+             * flips - the SPRINT rule; the render seams read the store on
+             * the next frame drawn. */
+            sl_world_detail_set(col < 0 ? (sl_world_detail() == SL_WORLD_DETAIL_ENHANCED
+                                           ? SL_WORLD_DETAIL_ORIGINAL : SL_WORLD_DETAIL_ENHANCED)
+                                        : col);
+            break;
         case SR_BINDINGS:
             s_set_go = MENU_SL_BINDINGS;         /* #46: the editor screen */
             s_set_open_tab = s_set_tab;          /* #63: BACK returns here */
@@ -1021,7 +1039,7 @@ static void set_activate(s32 row, s32 col)
         int wm = 0, ww = 0, wh = 0, wv = 0, sw = 0, sh = 0;
         sl_window_state(&wm, &ww, &wh, &wv);
         sl_window_size_shown(&sw, &sh);
-        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d\n",
+        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d wdetail=%d(%s)\n",
                 (int) s_set_tab, (int) row, (int) col,
                 sl_settings_get(SL_SET_LOOK_UPDOWN),
                 sl_settings_get(SL_SET_AIM_CONTROL), sl_mouse_invert_y_get(),
@@ -1035,7 +1053,8 @@ static void set_activate(s32 row, s32 col)
                 sl_pad_tune_get(SL_PAD_TUNE_MOVE_DEADZONE),
                 sl_action_mode(1), sl_action_mode(0),
                 wm, sl_window_mode_name(sl_window_mode_shown()), sw, sh, sl_window_size_editable() ? "editable" : "info",
-                wv, sl_window_request_pending());
+                wv, sl_window_request_pending(),
+                sl_world_detail(), sl_world_detail_name(sl_world_detail()));
     }
 }
 
@@ -1341,6 +1360,9 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
     static char l_wmode[] = "WINDOW MODE\n";    /* #52 */
     static char l_res[]   = "RESOLUTION\n";
     static char l_vsync[] = "VSYNC\n";
+    static char l_wdetail[]  = "WORLD DETAIL\n"; /* #43 */
+    static char v_original[] = "ORIGINAL\n";
+    static char v_enhanced[] = "ENHANCED\n";
     static char v_minus[] = "-\n";
     static char v_plus[]  = "+\n";
     static char v_res[16];
@@ -1503,6 +1525,11 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
             DL = set_two_value_row(DL, i, l_vsync, v_off, v_on, vs ? 1 : 0);
             break;
         }
+        case SR_WDETAIL:
+            /* #43: ORIGINAL / ENHANCED, the store's profile. */
+            DL = set_two_value_row(DL, i, l_wdetail, v_original, v_enhanced,
+                                   sl_world_detail() == SL_WORLD_DETAIL_ENHANCED ? 1 : 0);
+            break;
         case SR_PAD:
         {
             /* #63: informational - the family SDL classified the driving

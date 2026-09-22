@@ -38,6 +38,7 @@
  *     fullscreen_width=0
  *     fullscreen_height=0
  *     vsync=0
+ *     world_detail=0
  *
  * Unknown keys are ignored and preserved nowhere (the file is rewritten from
  * the table), a malformed or out-of-range value falls back to that setting's
@@ -212,8 +213,30 @@ enum sl_setting {
     SL_SET_FULLSCREEN_WIDTH,
     SL_SET_FULLSCREEN_HEIGHT,
     SL_SET_VSYNC,
+    /* WORLD DETAIL (#43, 2026-09-21): the render-visibility profile.
+     * SL_WORLD_DETAIL_ORIGINAL (0, the default = the accepted Sightline
+     * rendering exactly as it stood before #43: the N64's visibility and
+     * detail tuning preserved) or SL_WORLD_DETAIL_ENHANCED (1: a
+     * render-only policy at the seams that own a visibility decision - the
+     * first one being the near-fog visibility-range rejection of props and
+     * characters in chrobjFogVisRangeRelated, src/game/propobj.c, which
+     * ENHANCED does not apply so a prop stays eligible until the far-fog
+     * cull or the room / portal set removes it). Read by the game through
+     * sl_world_detail (sl_settings_apply.c) only; nothing in the simulation
+     * reads it - the AI's own copies of the same distance tests
+     * (posIsOnScreen / sub_GAME_7F054C58) are untouched, and an INACTIVE
+     * store (replay, headless) answers ORIGINAL. Missing / malformed /
+     * out-of-range -> ORIGINAL. */
+    SL_SET_WORLD_DETAIL,
     SL_SET_COUNT
 };
+
+/* The #43 world-detail profiles' persisted ids (append-only), and their
+ * display names, "ORIGINAL" / "ENHANCED"; "?" out of range. */
+#define SL_WORLD_DETAIL_ORIGINAL  0
+#define SL_WORLD_DETAIL_ENHANCED  1
+#define SL_WORLD_DETAIL_COUNT     2
+const char *sl_world_detail_name(int detail);
 
 /* The #52 window modes' persisted ids (append-only) and the size bound the
  * store accepts for the four size rows (a larger value is malformed and

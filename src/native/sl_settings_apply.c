@@ -179,4 +179,46 @@ void sl_action_mode_set(int which, int toggle)
                     toggle ? SL_ACTION_MODE_TOGGLE : SL_ACTION_MODE_HOLD);
 }
 
+/**
+ * WORLD DETAIL (#43, 2026-09-21): the render-visibility profile,
+ * SL_WORLD_DETAIL_ORIGINAL (0) or SL_WORLD_DETAIL_ENHANCED (1). The same
+ * shape as the Sprint pair: ONE getter, read at the render seams that own a
+ * visibility decision (the first: chrobjFogVisRangeRelated, propobj.c,
+ * declared locally there inside its own #ifndef __sgi), not cached, so a
+ * change applies on the next frame drawn with no restart; ONE setter, called
+ * by both editors (the front end's DISPLAY tab, sl_front_options.c, and the
+ * watch's SIGHTLINE -> GRAPHICS child, options.c), neither holding a copy.
+ * An INACTIVE store (trace replay, headless) answers the table default,
+ * ORIGINAL, so the seams do exactly what they did before #43. Nothing in the
+ * simulation reads this: the AI's own distance tests keep their values.
+ */
+int sl_world_detail(void)
+{
+    return sl_settings_get(SL_SET_WORLD_DETAIL) == SL_WORLD_DETAIL_ENHANCED
+           ? SL_WORLD_DETAIL_ENHANCED : SL_WORLD_DETAIL_ORIGINAL;
+}
+
+/* The seams' predicate: 1 under ENHANCED, 0 under ORIGINAL and whenever the
+ * store is inactive. A src/game seam declares this one line and compares
+ * with zero, so it never needs sl_settings.h (the layering rule). */
+int sl_world_detail_enhanced(void)
+{
+    return sl_world_detail() == SL_WORLD_DETAIL_ENHANCED;
+}
+
+void sl_world_detail_set(int detail)
+{
+    sl_settings_set(SL_SET_WORLD_DETAIL,
+                    detail == SL_WORLD_DETAIL_ENHANCED ? SL_WORLD_DETAIL_ENHANCED : SL_WORLD_DETAIL_ORIGINAL);
+}
+
+/* The editors' step (the watch's named row, LEFT / RIGHT): the other
+ * profile - two values, so a step in either direction is the other one. */
+void sl_world_detail_step(int dir)
+{
+    (void) dir;
+    sl_world_detail_set(sl_world_detail() == SL_WORLD_DETAIL_ENHANCED
+                        ? SL_WORLD_DETAIL_ORIGINAL : SL_WORLD_DETAIL_ENHANCED);
+}
+
 #endif /* !__sgi */

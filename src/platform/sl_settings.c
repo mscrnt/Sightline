@@ -17,10 +17,12 @@
  * reads "key=value" lines, a writer that emits the table. Adding a setting is
  * one enum member and one table row: #42's sprint toggle landed that way
  * (sprint_enabled, the fifth row; no version bump - an older file simply
- * lacks the key and reads as 0). A #43 presentation row landed the same way
- * and was RETIRED unshipped on 2026-09-18 (owner decision: no filtering-only
- * ORIGINAL / MODERN toggle; #43 is parked for a dedicated graphics phase) -
- * a file still carrying that key reads it as an unknown key, ignored.
+ * lacks the key and reads as 0). A #43 presentation row (presentation_mode)
+ * landed the same way and was RETIRED unshipped on 2026-09-18 (owner
+ * decision: no filtering-only ORIGINAL / MODERN toggle) - a file still
+ * carrying that key reads it as an unknown key, ignored. The #43 row that
+ * DID ship is world_detail (2026-09-21, the WORLD DETAIL ORIGINAL / ENHANCED
+ * render-visibility profile; sl_settings.h).
  *
  * WRITE POLICY. The file is rewritten when, and only when, a set() actually
  * changes a value (or the one-time .style import lands). The write goes to
@@ -87,7 +89,12 @@ static const struct sl_setting_row s_rows[SL_SET_COUNT] = {
     { "window_height",     0, 0, SL_WINDOW_SIZE_MAX },
     { "fullscreen_width",  0, 0, SL_WINDOW_SIZE_MAX },  /* the exclusive mode; 0 / 0 or an unoffered pair = the desktop mode */
     { "fullscreen_height", 0, 0, SL_WINDOW_SIZE_MAX },
-    { "vsync",             0, 0, 1 }                    /* the GL swap interval, 0 = the accepted pacing */
+    { "vsync",             0, 0, 1 },                   /* the GL swap interval, 0 = the accepted pacing */
+    /* #43 (2026-09-21): WORLD DETAIL - 0 ORIGINAL (the accepted rendering,
+     * the N64 visibility tuning kept), 1 ENHANCED (the render-only policy at
+     * the visibility seams; sl_settings.h). No version bump: an older file
+     * lacks the key and reads ORIGINAL. */
+    { "world_detail",      SL_WORLD_DETAIL_ORIGINAL, 0, SL_WORLD_DETAIL_COUNT - 1 }
     /* RETIRED 2026-09-20 (#63): control_style, pad_button_mode and
      * controller_profile. A file still carrying them reads them as unknown
      * keys - ignored, and dropped on the next write-on-change. */
@@ -99,6 +106,12 @@ const char *sl_stick_layout_name(int layout)
         "DEFAULT", "SOUTHPAW", "LEGACY", "LEGACY SOUTHPAW"
     };
     return (layout >= 0 && layout < SL_STICK_LAYOUT_COUNT) ? names[layout] : "?";
+}
+
+const char *sl_world_detail_name(int detail)
+{
+    static const char *const names[SL_WORLD_DETAIL_COUNT] = { "ORIGINAL", "ENHANCED" };
+    return (detail >= 0 && detail < SL_WORLD_DETAIL_COUNT) ? names[detail] : "?";
 }
 
 static int  s_value[SL_SET_COUNT];
@@ -1237,6 +1250,62 @@ int main(void)
        && file_has(path, "fullscreen_width=0\n") && file_has(path, "fullscreen_height=0\n") && file_has(path, "vsync=1\n")
        && file_has(path, "crouch_mode=1\n") && file_has(path, "fov_vertical=5872\n") && file_has(path, "bind.aim.kbm.2=none\n"),
        "the next write-on-change (vsync) adds the six display lines and keeps every other line");
+
+    /* 16. WORLD DETAIL (#43, 2026-09-21): default ORIGINAL on a missing file,
+     *     ENHANCED written on change beside the rest, out-of-range refused,
+     *     reload, malformed / out-of-range lines read ORIGINAL, the names,
+     *     and a pre-#43 owner-shaped file reads ORIGINAL without a rewrite. */
+    remove(path);
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == SL_WORLD_DETAIL_ORIGINAL, "world_detail default ORIGINAL (0) on a missing file");
+    ck(SL_WORLD_DETAIL_ORIGINAL == 0 && SL_WORLD_DETAIL_ENHANCED == 1 && SL_WORLD_DETAIL_COUNT == 2, "ORIGINAL 0, ENHANCED 1");
+    ck(strcmp(sl_world_detail_name(SL_WORLD_DETAIL_ORIGINAL), "ORIGINAL") == 0
+       && strcmp(sl_world_detail_name(SL_WORLD_DETAIL_ENHANCED), "ENHANCED") == 0
+       && strcmp(sl_world_detail_name(2), "?") == 0 && strcmp(sl_world_detail_name(-1), "?") == 0,
+       "world_detail names: ORIGINAL / ENHANCED, ? out of range");
+    sl_settings_set(SL_SET_WORLD_DETAIL, SL_WORLD_DETAIL_ENHANCED);
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 1 && file_has(path, "world_detail=1\n") && file_has(path, "vsync=0\n")
+       && file_has(path, "sprint_enabled=0\n"),
+       "world_detail=1 (ENHANCED) written on change, the #52 and #42 rows beside it");
+    sl_settings_set(SL_SET_WORLD_DETAIL, 2);
+    sl_settings_set(SL_SET_WORLD_DETAIL, -1);
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 1, "world_detail 2 / -1 refused (stays ENHANCED)");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 1, "reload: world_detail=1 read back");
+    sl_settings_set(SL_SET_WORLD_DETAIL, SL_WORLD_DETAIL_ORIGINAL);
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 0 && file_has(path, "world_detail=0\n"), "world_detail=0 written back");
+    write_text(path, "version=1\nworld_detail=enhanced\nsprint_enabled=1\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 0 && sl_settings_get(SL_SET_SPRINT_ENABLED) == 1,
+       "malformed world_detail=enhanced -> ORIGINAL, sprint_enabled=1 read beside it");
+    write_text(path, "version=1\nworld_detail=7\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 0, "world_detail=7 out of range -> ORIGINAL");
+    write_text(path, "version=1\nworld_detail=-3\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 0, "world_detail=-3 out of range -> ORIGINAL");
+    /* A pre-#43 owner-shaped file (the #52 keys, no world_detail) reads
+     * ORIGINAL and is not rewritten by the load; the next write-on-change
+     * adds the line and keeps every other line. */
+    write_text(path,
+        "version=1\nlook_updown=0\naim_control=0\nmouse_invert_y=1\nsprint_enabled=1\naspect_ratio=1\n"
+        "fov_vertical=5872\nmouse_sensitivity=100\nscoped_mouse_sensitivity=100\npad_button_layout=0\npad_stick_layout=0\n"
+        "pad_look_sensitivity=100\npad_look_deadzone=15\npad_move_deadzone=15\ncrouch_mode=1\nsprint_mode=0\n"
+        "window_mode=0\nwindow_width=0\nwindow_height=0\nfullscreen_width=0\nfullscreen_height=0\nvsync=1\nbind.aim.kbm.2=none\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 0 && sl_settings_get(SL_SET_VSYNC) == 1 && sl_settings_get(SL_SET_ASPECT_RATIO) == 1
+       && sl_settings_get(SL_SET_CROUCH_MODE) == 1 && sl_settings_ext_count() == 1 && !file_has(path, "world_detail="),
+       "a pre-#43 file: ORIGINAL, everything else read, the file not rewritten");
+    sl_settings_set(SL_SET_WORLD_DETAIL, SL_WORLD_DETAIL_ENHANCED);
+    ck(file_has(path, "world_detail=1\n") && file_has(path, "vsync=1\n") && file_has(path, "aspect_ratio=1\n")
+       && file_has(path, "crouch_mode=1\n") && file_has(path, "mouse_invert_y=1\n") && file_has(path, "bind.aim.kbm.2=none\n"),
+       "the next write-on-change (world_detail) adds the line and keeps every other line");
 
     remove(path);
     printf("sl_settings selftest: %d checks, %d failed\n", g_checks, g_fail);

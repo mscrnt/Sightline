@@ -126,7 +126,8 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
  * (a flag on the page, not a ring page; the six-segment bar keeps
  * representing the ring; BACK or Escape returns one level):
  *
- *     sightline            graphics (dimmed - #43 / #47 / #48 are parked)
+ *     sightline            graphics  -> world detail      original (#43; #47 / #48 later)
+ *                                       / back
  *                          gameplay  -> sprint  off on
  *                                       / sprint mode  hold toggle  (#56)
  *                                       / crouch mode  hold toggle  (#56) / back
@@ -196,6 +197,11 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                                  * desktop's size drawn dimmed */
 #define SL_WROW_TOGGLE_VSYNC 21 /* VSYNC (#52): off / on at the toggles' columns, the applied
                                  * swap interval; a cell files a request */
+#define SL_WROW_VALUE_WDETAIL 22 /* WORLD DETAIL (#43, 2026-09-21): a NAMED value row - original /
+                                  * enhanced right-aligned at SL_SIGHTLINE_X_BARVALUE (eight
+                                  * glyphs, too wide for the toggles' columns); the latched
+                                  * LEFT / RIGHT and a click on the name step to the other
+                                  * profile, through sl_world_detail_step (sl_settings_apply.c) */
 /* The #56 mode rows: toggle rows with hold / toggle for their two cells. */
 #define SL_WROW_IS_MODE(k) ((k) == SL_WROW_TOGGLE_SMODE || (k) == SL_WROW_TOGGLE_CMODE)
 /* A value row of any kind: the same LEFT / RIGHT latch (a step down / up). */
@@ -203,13 +209,15 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                              || (k) == SL_WROW_VALUE_MSENS || (k) == SL_WROW_VALUE_SSENS \
                              || (k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
                              || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
+                             || (k) == SL_WROW_VALUE_WDETAIL \
                              || SL_WROW_IS_PAD_TUNE(k))
 /* The #51 controller tuning rows, and each one's id for sl_pad_tune_*. */
 #define SL_WROW_IS_PAD_TUNE(k) ((k) == SL_WROW_VALUE_PSENS || (k) == SL_WROW_VALUE_PDZ || (k) == SL_WROW_VALUE_MDZ)
 #define SL_WROW_PAD_TUNE_ID(k) ((k) == SL_WROW_VALUE_PSENS ? 0 : (k) == SL_WROW_VALUE_PDZ ? 1 : 2)
 /* A NAMED value row: label + name, no cells (the pointer hits the name). */
 #define SL_WROW_IS_NAMED(k) ((k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
-                             || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES)
+                             || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
+                             || (k) == SL_WROW_VALUE_WDETAIL)
 /* A row the cursor never rests on. */
 #define SL_WROW_IS_INERT(k) ((k) == SL_WROW_DIMMED || (k) == SL_WROW_INFO_PAD || (k) == SL_WROW_INFO_RES)
 /* The SLIDER rows (#50 owner request, 2026-09-19: "make them sliders like
@@ -240,7 +248,8 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
 #define SL_WVIEW_DISPLAY    2
 #define SL_WVIEW_CONTROLS   3
 #define SL_WVIEW_STICK      4   /* STICK TUNING (#51): CONTROLS' second-level child */
-#define SL_WVIEW_COUNT      5
+#define SL_WVIEW_GRAPHICS   5   /* GRAPHICS (#43, 2026-09-21): world detail, back */
+#define SL_WVIEW_COUNT      6
 #define SL_WVIEW_ROWS_MAX   9   /* CONTROLS: button layout, stick layout, stick tuning, controller, invert, two sensitivities, bindings, back (#63, #51) */
 #define SL_WVIEW_DEPTH_MAX  2   /* the back stack: SIGHTLINE -> CONTROLS -> STICK TUNING */
 /* The #45 value rows' three cells: `-` steps down, `+` steps up, the value

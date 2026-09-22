@@ -617,6 +617,18 @@ Gfx *chrpropsRenderPass(Gfx *gdl, s32 roomid, s32 renderpass)
         }
     }
 
+#ifndef __sgi
+    /* #43 WORLD DETAIL ENHANCED: the props this tick lifted for the render
+     * only (src/native/sl_world_detail.c) - not on g_OnScreenPropList, which
+     * stays the simulation's list - drawn for this room and pass after its
+     * on-screen props. Empty under ORIGINAL and whenever the store is
+     * inactive, so the __sgi arm's output is the whole output there. */
+    {
+        extern Gfx *sl_world_detail_lift_render(Gfx *gdl, s32 roomid, s32 renderpass);
+        gdl = sl_world_detail_lift_render(gdl, roomid, renderpass);
+    }
+#endif
+
     return bgScissorCurrentPlayerViewDefault(gdl);
 }
 
@@ -1975,6 +1987,13 @@ void propsTick(void)
     PropRecord *prev;
     PropRecord *propprev;
 
+#ifndef __sgi
+    /* #43: this tick's render-only lift list starts empty (sl_world_detail.c). */
+    {
+        extern void sl_world_detail_lift_reset(void);
+        sl_world_detail_lift_reset();
+    }
+#endif
     prop = chrpropGetActiveTail();
 
     while (prop != NULL)
