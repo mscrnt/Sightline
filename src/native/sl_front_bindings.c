@@ -22,10 +22,12 @@
  * click on a VALUE captures that slot (the #40 rule: act on what the cursor
  * is over).
  *
- * FOURTEEN ROWS AT A 16-UNIT PITCH, no scrolling: the paper runs from the
+ * FIFTEEN ROWS AT A 15-UNIT PITCH, no scrolling: the paper runs from the
  * strip at y 0x1E to the footer at 0x122, and the last row's box ends at
  * 0x11C - inside the page (the PREVIOUS tab sits right of x 390, clear of
- * every column). The cheat menu's 0x14 pitch would not fit 14 rows plus the
+ * every column). It was fourteen rows at a 16-unit pitch until #47 added
+ * TEXTURE SET; the pitch absorbed the row without moving where the list
+ * ends. The cheat menu's 0x14 pitch would not fit this many rows plus the
  * header and footer.
  *
  * CAPTURE. Confirming a slot (or clicking it) asks the model to capture; the
@@ -101,7 +103,15 @@ extern char *getenv(const char *);
 #define BND_X_BACK    0x10E
 #define BND_TAB_Y     0x1E
 #define BND_HDR_Y     0x2E
-#define BND_ROW_Y(i)  (0x3E + (i) * 0x10)
+/* #47: FIFTEEN rows now (TEXTURE SET joined the list), so the pitch drops
+ * from 0x10 to 0x0F and the first row starts two units higher. That is
+ * arithmetic, not taste: 0x3C + 14 * 0x0F is 0x10E, the SAME y the last of
+ * the fourteen rows had, so the paper still ends where it did and the footer
+ * at 0x122 is as clear as before. Sixteen rows will not fit and the pitch
+ * cannot shrink again without touching the glyph height; the watch's copy of
+ * this editor scrolls and has no such limit. */
+#define BND_ROW_PITCH 0x0F
+#define BND_ROW_Y(i)  (0x3C + (i) * BND_ROW_PITCH)
 #define BND_FOOT_Y    0x122
 #define BND_MSG_Y     0x134
 #define BND_TOP(y)    ((f32) ((y) - 9))
@@ -183,7 +193,7 @@ void sl_interface_menu_bindings(void)
         }
         else if (cursor_v_pos >= BND_TOP(BND_ROW_Y(0)))
         {
-            i = (s32) ((cursor_v_pos - BND_TOP(BND_ROW_Y(0))) / 0x10);
+            i = (s32) ((cursor_v_pos - BND_TOP(BND_ROW_Y(0))) / BND_ROW_PITCH);
             if (i >= n) i = n - 1;
             s_row = i;
             s_col = -1;

@@ -1,0 +1,18 @@
+{
+ "version": 1,
+ "about": "Where the Community HD pack comes from, and how a copy of it is recognised as the right one. Identities only - a repository name, a release tag, an asset name, a size and a SHA-256. No pack content is recorded here and none is distributed with Sightline: the fetch runs on the user's own machine, against the maintainers' own release, and what it downloads stays outside the repository and outside every package.",
+ "project": "GoldenEye 007 HD",
+ "upstream": "https://github.com/GhostlyDark/GoldenEye-007-HD",
+ "api": "https://api.github.com/repos/GhostlyDark/GoldenEye-007-HD",
+ "repo": "GhostlyDark/GoldenEye-007-HD",
+ "pinned": {
+  "tag": "v2025-12-30",
+  "asset": "ge007-hd-v2025.12.30-gliden64-png-hd.zip",
+  "size": 135256079,
+  "sha256": "a72d082e23b516f28f4868b0b32cbb676a5b0ce7f00e7eb79badf89f71ab90ba",
+  "why": "The PNG/HD variant is the one the mapping table was made against and the only one this tool reads: its files are plain PNG, named with the texture checksum the mapping keys on. The 4K and HTS variants of the same release are different encodings of the same project and are deliberately not used - neither is needed and both are far larger.",
+  "verified": "2026-09-22"
+ },
+ "local_name": "community-hd.zip",
+ "asset_pattern": "*gliden64-png-hd.zip"
+}

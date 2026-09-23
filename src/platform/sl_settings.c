@@ -94,7 +94,12 @@ static const struct sl_setting_row s_rows[SL_SET_COUNT] = {
      * the N64 visibility tuning kept), 1 ENHANCED (the render-only policy at
      * the visibility seams; sl_settings.h). No version bump: an older file
      * lacks the key and reads ORIGINAL. */
-    { "world_detail",      SL_WORLD_DETAIL_ORIGINAL, 0, SL_WORLD_DETAIL_COUNT - 1 }
+    { "world_detail",      SL_WORLD_DETAIL_ORIGINAL, 0, SL_WORLD_DETAIL_COUNT - 1 },
+    /* #47 (2026-09-21): TEXTURES - 0 ORIGINAL (the ROM's own artwork, no
+     * pack read), 1 COMMUNITY HD, 2 XBLA (each falls back per texture to
+     * ORIGINAL; sl_settings.h). No version bump: an older file lacks the
+     * key and reads ORIGINAL. */
+    { "textures",          SL_TEXTURES_ORIGINAL, 0, SL_TEXTURES_COUNT - 1 }
     /* RETIRED 2026-09-20 (#63): control_style, pad_button_mode and
      * controller_profile. A file still carrying them reads them as unknown
      * keys - ignored, and dropped on the next write-on-change. */
@@ -112,6 +117,12 @@ const char *sl_world_detail_name(int detail)
 {
     static const char *const names[SL_WORLD_DETAIL_COUNT] = { "ORIGINAL", "ENHANCED" };
     return (detail >= 0 && detail < SL_WORLD_DETAIL_COUNT) ? names[detail] : "?";
+}
+
+const char *sl_textures_name(int set)
+{
+    static const char *const names[SL_TEXTURES_COUNT] = { "ORIGINAL", "COMMUNITY HD", "XBLA" };
+    return (set >= 0 && set < SL_TEXTURES_COUNT) ? names[set] : "?";
 }
 
 static int  s_value[SL_SET_COUNT];
@@ -1306,6 +1317,58 @@ int main(void)
     ck(file_has(path, "world_detail=1\n") && file_has(path, "vsync=1\n") && file_has(path, "aspect_ratio=1\n")
        && file_has(path, "crouch_mode=1\n") && file_has(path, "mouse_invert_y=1\n") && file_has(path, "bind.aim.kbm.2=none\n"),
        "the next write-on-change (world_detail) adds the line and keeps every other line");
+
+    /* 17. TEXTURES (#47, 2026-09-21): default ORIGINAL on a missing file,
+     *     the three ids and names, COMMUNITY HD / XBLA written on change,
+     *     out-of-range refused, reload, malformed / out-of-range lines read
+     *     ORIGINAL, and a pre-#47 file reads ORIGINAL without a rewrite. */
+    remove(path);
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_TEXTURES) == SL_TEXTURES_ORIGINAL, "textures default ORIGINAL (0) on a missing file");
+    ck(SL_TEXTURES_ORIGINAL == 0 && SL_TEXTURES_COMMUNITY == 1 && SL_TEXTURES_XBLA == 2 && SL_TEXTURES_COUNT == 3,
+       "ORIGINAL 0, COMMUNITY 1, XBLA 2");
+    ck(strcmp(sl_textures_name(SL_TEXTURES_ORIGINAL), "ORIGINAL") == 0
+       && strcmp(sl_textures_name(SL_TEXTURES_COMMUNITY), "COMMUNITY HD") == 0
+       && strcmp(sl_textures_name(SL_TEXTURES_XBLA), "XBLA") == 0
+       && strcmp(sl_textures_name(3), "?") == 0 && strcmp(sl_textures_name(-1), "?") == 0,
+       "textures names: ORIGINAL / COMMUNITY HD / XBLA, ? out of range");
+    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_COMMUNITY);
+    ck(sl_settings_get(SL_SET_TEXTURES) == 1 && file_has(path, "textures=1\n") && file_has(path, "world_detail=0\n"),
+       "textures=1 (COMMUNITY HD) written on change, the #43 row beside it");
+    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_XBLA);
+    ck(sl_settings_get(SL_SET_TEXTURES) == 2 && file_has(path, "textures=2\n"), "textures=2 (XBLA) written");
+    sl_settings_set(SL_SET_TEXTURES, 3);
+    sl_settings_set(SL_SET_TEXTURES, -1);
+    ck(sl_settings_get(SL_SET_TEXTURES) == 2, "textures 3 / -1 refused (stays XBLA)");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_TEXTURES) == 2, "reload: textures=2 read back");
+    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_ORIGINAL);
+    ck(sl_settings_get(SL_SET_TEXTURES) == 0 && file_has(path, "textures=0\n"), "textures=0 written back");
+    write_text(path, "version=1\ntextures=xbla\nworld_detail=1\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_TEXTURES) == 0 && sl_settings_get(SL_SET_WORLD_DETAIL) == 1,
+       "malformed textures=xbla -> ORIGINAL, world_detail=1 read beside it");
+    write_text(path, "version=1\ntextures=7\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_TEXTURES) == 0, "textures=7 out of range -> ORIGINAL");
+    write_text(path,
+        "version=1\nlook_updown=0\naim_control=0\nmouse_invert_y=1\nsprint_enabled=1\naspect_ratio=1\n"
+        "fov_vertical=5872\nmouse_sensitivity=100\nscoped_mouse_sensitivity=100\npad_button_layout=0\npad_stick_layout=0\n"
+        "pad_look_sensitivity=100\npad_look_deadzone=15\npad_move_deadzone=15\ncrouch_mode=1\nsprint_mode=0\n"
+        "window_mode=0\nwindow_width=0\nwindow_height=0\nfullscreen_width=0\nfullscreen_height=0\nvsync=1\nworld_detail=1\nbind.aim.kbm.2=none\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_TEXTURES) == 0 && sl_settings_get(SL_SET_WORLD_DETAIL) == 1
+       && sl_settings_ext_count() == 1 && !file_has(path, "textures="),
+       "a pre-#47 file: ORIGINAL, world_detail=1 read, the file not rewritten");
+    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_COMMUNITY);
+    ck(file_has(path, "textures=1\n") && file_has(path, "world_detail=1\n") && file_has(path, "vsync=1\n")
+       && file_has(path, "bind.aim.kbm.2=none\n"),
+       "the next write-on-change (textures) adds the line and keeps every other line");
 
     remove(path);
     printf("sl_settings selftest: %d checks, %d failed\n", g_checks, g_fail);

@@ -273,6 +273,10 @@ extern void  sl_action_mode_set(int which, int toggle);
  * _ENHANCED. The same pair the watch's GRAPHICS child calls. */
 extern int   sl_world_detail(void);
 extern void  sl_world_detail_set(int detail);
+/* TEXTURES (sl_settings_apply.c, #47): SL_TEXTURES_ORIGINAL / _COMMUNITY /
+ * _XBLA. The same pair the watch's GRAPHICS child calls. */
+extern int   sl_textures(void);
+extern void  sl_textures_step(int dir);
 /* The N64 include tree's <stdlib.h> has no getenv (sl_cheat.c's rule). */
 extern char *getenv(const char *);
 
@@ -537,7 +541,8 @@ enum { SR_NONE = 0, SR_LOOK, SR_AIM, SR_MINV, SR_SPRINT, SR_BINDINGS, SR_ASPECT,
        SR_WMODE,        /* #52: WINDOW MODE - one value cell, advancing (WINDOWED / BORDERLESS / FULLSCREEN) */
        SR_RES,          /* #52: RESOLUTION - `-` <WxH> `+` through the display's list; informational in BORDERLESS */
        SR_VSYNC,        /* #52: VSYNC - OFF / ON, a two-value row */
-       SR_WDETAIL };    /* #43: WORLD DETAIL - ORIGINAL / ENHANCED, a two-value row (sl_world_detail) */
+       SR_WDETAIL,      /* #43: WORLD DETAIL - ORIGINAL / ENHANCED, a two-value row (sl_world_detail) */
+       SR_TEXTURES };   /* #47: TEXTURES - one value cell, advancing (ORIGINAL / COMMUNITY HD / XBLA) */
 
 /* THE TAB LIST. Adding a tab = one entry: its label and its content rows in
  * slot order (BACK takes the slot after the last row, SET_ROW_BACK_MIN at
@@ -557,8 +562,11 @@ static const struct sl_settings_tab s_tabs[] = {
      * stayed in its accepted slot (SET_ROW_BACK_MIN). #43 (2026-09-21): the
      * WORLD DETAIL row after FIELD OF VIEW - what stays eligible inside the
      * frustum the two rows above it shape - six rows, so BACK takes slot 6
-     * (y 0x110, as the PAD tab's BACK already sits at slot 7). */
-    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_ASPECT, SR_FOV, SR_WDETAIL, SR_NONE } },    /* #52, #45, #43 */
+     * (y 0x110, as the PAD tab's BACK already sits at slot 7). #47
+     * (2026-09-21): the TEXTURES row after WORLD DETAIL - which artwork the
+     * eligible geometry is drawn with - seven rows, so BACK takes slot 7
+     * (y 0x130, the PAD tab's own BACK slot). */
+    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_ASPECT, SR_FOV, SR_WDETAIL, SR_TEXTURES } },    /* #52, #45, #43, #47 */
     /* #63: the pad's own tab (a fourth tab: CONTROL was full when it landed,
      * and the accepted rows do not move; three glyphs, so the strip's fourth
      * slot at x 0x145 clears the PREVIOUS tab at 390): the two layouts, the
@@ -985,6 +993,12 @@ static void set_activate(s32 row, s32 col)
                                            ? SL_WORLD_DETAIL_ORIGINAL : SL_WORLD_DETAIL_ENHANCED)
                                         : col);
             break;
+        case SR_TEXTURES:
+            /* #47: the label or the name advances to the next set and
+             * wraps (the WINDOW MODE rule); the provider reads the store
+             * at each texture's next resolve, the next frame drawn. */
+            sl_textures_step(1);
+            break;
         case SR_BINDINGS:
             s_set_go = MENU_SL_BINDINGS;         /* #46: the editor screen */
             s_set_open_tab = s_set_tab;          /* #63: BACK returns here */
@@ -1039,7 +1053,7 @@ static void set_activate(s32 row, s32 col)
         int wm = 0, ww = 0, wh = 0, wv = 0, sw = 0, sh = 0;
         sl_window_state(&wm, &ww, &wh, &wv);
         sl_window_size_shown(&sw, &sh);
-        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d wdetail=%d(%s)\n",
+        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d wdetail=%d(%s) textures=%d(%s)\n",
                 (int) s_set_tab, (int) row, (int) col,
                 sl_settings_get(SL_SET_LOOK_UPDOWN),
                 sl_settings_get(SL_SET_AIM_CONTROL), sl_mouse_invert_y_get(),
@@ -1054,7 +1068,8 @@ static void set_activate(s32 row, s32 col)
                 sl_action_mode(1), sl_action_mode(0),
                 wm, sl_window_mode_name(sl_window_mode_shown()), sw, sh, sl_window_size_editable() ? "editable" : "info",
                 wv, sl_window_request_pending(),
-                sl_world_detail(), sl_world_detail_name(sl_world_detail()));
+                sl_world_detail(), sl_world_detail_name(sl_world_detail()),
+                sl_textures(), sl_textures_name(sl_textures()));
     }
 }
 
@@ -1201,6 +1216,7 @@ void sl_interface_menu_settings(void)
                 }
                 else if (set_row_kind(s_set_row) != SR_BLAYOUT && set_row_kind(s_set_row) != SR_SLAYOUT
                     && set_row_kind(s_set_row) != SR_BINDINGS && set_row_kind(s_set_row) != SR_WMODE
+                    && set_row_kind(s_set_row) != SR_TEXTURES   /* #47: one cell, like WINDOW MODE */
                     && set_row_kind(s_set_row) != SR_PAD && s_set_row != set_row_back())
                 {
                     if (SET_COL_TOP(SET_X_VAL1) <= cursor_h_pos)      s_set_col = 1;
@@ -1363,6 +1379,8 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
     static char l_wdetail[]  = "WORLD DETAIL\n"; /* #43 */
     static char v_original[] = "ORIGINAL\n";
     static char v_enhanced[] = "ENHANCED\n";
+    static char l_textures[] = "TEXTURES\n";     /* #47 */
+    static char v_textures[16];
     static char v_minus[] = "-\n";
     static char v_plus[]  = "+\n";
     static char v_res[16];
@@ -1530,6 +1548,20 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
             DL = set_two_value_row(DL, i, l_wdetail, v_original, v_enhanced,
                                    sl_world_detail() == SL_WORLD_DETAIL_ENHANCED ? 1 : 0);
             break;
+        case SR_TEXTURES:
+        {
+            /* #47: the set's name as the one value cell, lit as the value,
+             * boxed with the label (the WINDOW MODE row's shape): ORIGINAL /
+             * COMMUNITY HD / XBLA, the store's set. */
+            const char *n = sl_textures_name(sl_textures());
+            s32 k = 0;
+            while (n[k] != '\0' && k < 13) { v_textures[k] = n[k]; k++; }
+            v_textures[k++] = '\n'; v_textures[k] = '\0';
+            on = s_set_row == i && !tab_prev_highlight;
+            DL = set_text(DL, SET_X_LABEL, y, l_textures, 0xFF, on);
+            DL = set_text(DL, SET_X_VAL0, y, (s8 *) v_textures, SHADE_ON, on);
+            break;
+        }
         case SR_PAD:
         {
             /* #63: informational - the family SDL classified the driving

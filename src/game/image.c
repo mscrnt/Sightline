@@ -2507,6 +2507,15 @@ void texInitPool(struct texpool *arg0, u8 *arg1, s32 arg2)
 	arg0->end = (struct tex *)(arg1 + arg2);
     arg0->leftpos = arg1;
     arg0->rightpos = (struct tex *)(arg1 + arg2);
+#ifndef __sgi
+    /* #47: every texture the native provider's identity bridge registered
+     * inside this pool's buffer is stale from here (src/gfx/sl_gfx_texprov.c).
+     * Native only; the cartridge arm above is untouched. */
+    {
+        extern void sl_texprov_note_pool(const void *start, unsigned bytes);
+        sl_texprov_note_pool(arg1, (unsigned) arg2);
+    }
+#endif
 }
 
 
@@ -2695,6 +2704,23 @@ void texLoad(s32 *updateword, struct texpool *pool)
             }
 
             pool->leftpos += bytesout;
+
+#ifndef __sgi
+            /* #47: the native texture provider's identity bridge - the bytes
+             * at tex->data ARE texture number tex->texturenum, whose base
+             * level the inflater recorded as tex->width x tex->height. The
+             * renderer resolves a tile's decoded pointer back to that id
+             * through this one registration (src/gfx/sl_gfx_texprov.c);
+             * nothing here reads the answer. Native only; the cartridge arm
+             * is untouched. */
+            {
+                extern void sl_texprov_note_load(const void *data, unsigned bytes,
+                                                 int texnum, int w, int h);
+                sl_texprov_note_load(tex->data, (unsigned) bytesout,
+                                     (int) tex->texturenum,
+                                     (int) tex->width, (int) tex->height);
+            }
+#endif
         }
 
         texFreeBytesInBuffer(pool);

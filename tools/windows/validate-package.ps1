@@ -36,6 +36,9 @@
     package's file list can see.
 
     REQUIRED: sightline.exe, Sightline.cmd, README.txt, VERSION.txt, the
+    optional texture fetcher's four files (Get-Textures.cmd,
+    tools\get-textures.ps1, tools\community-source.json,
+    tools\mapping\community.json - identities and code, never a pack), the
     LICENSES directory (README, 0BSD, CC0, the asset-overrides LICENSE), at
     least one data\asset-overrides\boot\*.slmodel, every non-system DLL the
     executable's import table names (read with objdump when it can be found,
@@ -262,7 +265,12 @@ if ($Rom) {
 $required = @(
     'sightline.exe', 'Sightline.cmd', 'README.txt', 'VERSION.txt',
     'LICENSES/README.md', 'LICENSES/Sightline-Code-0BSD.txt',
-    'LICENSES/Sightline-Assets-CC0-1.0.txt', 'LICENSES/asset-overrides-LICENSE.md'
+    'LICENSES/Sightline-Assets-CC0-1.0.txt', 'LICENSES/asset-overrides-LICENSE.md',
+    # #47: the optional texture fetcher ships whole or not at all - a menu
+    # entry that downloads nothing, or a fetcher that cannot say which release
+    # it wants, is worse than neither.
+    'Get-Textures.cmd', 'tools/get-textures.ps1',
+    'tools/community-source.json', 'tools/mapping/community.json'
 )
 foreach ($r in $required) { if (-not $present.Contains($r)) { Fail 'required-missing' $r } }
 $bootModels = @($files | Where-Object { $rel[$_.FullName] -match '^data/asset-overrides/boot/[^/]+\.slmodel$' })

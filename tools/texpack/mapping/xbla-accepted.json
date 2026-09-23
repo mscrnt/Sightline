@@ -1,0 +1,1658 @@
+{
+ "version": 1,
+ "set": "xbla",
+ "about": "N64 texture id -> the identity of the user-supplied XBLA resource that replaces it, for the 127 accepted mappings. \"bundle\" and \"res\" name a resource inside a source the USER supplies; \"flips\" are the two orientation corrections (HD->source, source->N64) applied when converting. \"n64\" is the image-table entry's width and height (imageTypes.txt). No source bytes are recorded here, Sightline neither distributes nor locates any source, and the review-tier candidates are deliberately absent.",
+ "entries": [
+  {
+   "id": "0008",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/bunker",
+   "res": "_0x0CA905B5.tga",
+   "flips": [
+    "none",
+    "none"
+   ]
+  },
+  {
+   "id": "0012",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x0E466D55.tga",
+   "flips": [
+    "v",
+    "none"
+   ]
+  },
+  {
+   "id": "0044",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/depot",
+   "res": "_0x04B22C75.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "0056",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/depot",
+   "res": "_0x0550D885.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "008e",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/aztec",
+   "res": "_0x0F9D3585.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "00a3",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/complex",
+   "res": "_0x0296C4E5",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "00a8",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/control",
+   "res": "_0x052A44D5.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "00c8",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "texture/bulletholes/bullethit",
+   "res": "bullethit",
+   "flips": [
+    "none",
+    "none"
+   ]
+  },
+  {
+   "id": "00f1",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/sevdish",
+   "res": "_0x0647F335.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "00f7",
+   "n64": [
+    32,
+    64
+   ],
+   "bundle": "new/prop/roofgun",
+   "res": "_0x0D82C805.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "00fa",
+   "n64": [
+    32,
+    64
+   ],
+   "bundle": "new/prop/roofgun",
+   "res": "_0x0D82C805.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "00fe",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/cavern",
+   "res": "_0x09DB2575.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0102",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/cavern",
+   "res": "_0x08065E65.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0107",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/prop/swivelchair1",
+   "res": "_0x0F771995.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "010b",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/chrknife",
+   "res": "_0x05BE1F25",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "011b",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x02109385.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "011e",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x095737C5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0120",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x07124795.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0124",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x0691D8C5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0125",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0C4B6CE5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0128",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/archives",
+   "res": "_0x091F9555.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0129",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/depot",
+   "res": "_0x091F9555.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "012a",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/control",
+   "res": "_0x08604595.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "012b",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/cavern",
+   "res": "_0x0ACC1305.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "012c",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/cavern",
+   "res": "_0x0ACC1305.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0132",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/control",
+   "res": "_0x0C0AEB65.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0197",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/jungle",
+   "res": "_0x0FF23B45.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01ab",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x05565A05.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01c1",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/depot",
+   "res": "_0x0A563D25.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "01c2",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/runway",
+   "res": "_0x0ACC1305.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "01c4",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x022A69E5.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "01d9",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x03C95905.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01dc",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x056BD865.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "01de",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x056BF865.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01e2",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x0A34DBF5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01e3",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x06A54595.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01e4",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x0CF11715.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01e6",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x0874BD45.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01e7",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x02AFB2A5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01e8",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x02AF62A5.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "01f2",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/aztec",
+   "res": "_0x030C44D5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "01fe",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/surface",
+   "res": "_0x093E2905.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "020e",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x08EB7B35.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0215",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x0B3BE845.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "021f",
+   "n64": [
+    33,
+    32
+   ],
+   "bundle": "new/prop/diskreader",
+   "res": "_0x0ECEEFA5.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "024b",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/depot",
+   "res": "_0x0E7F0505.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "025f",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/bunker",
+   "res": "_0x09D14F05.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "0265",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/destengine",
+   "res": "_0x0C7C1875.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0266",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/destengine",
+   "res": "_0x0C7CF875.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0268",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/destengine",
+   "res": "_0x0223EDF5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "026b",
+   "n64": [
+    32,
+    64
+   ],
+   "bundle": "new/background/aztec",
+   "res": "_0x05B5F2A5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0277",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x00A2C3F5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0282",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/cradle",
+   "res": "_0x06F066A5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0283",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/gasbarrel",
+   "res": "_0x005CAB55.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0284",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/gasbarrel",
+   "res": "_0x0A037A65.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0295",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/gun/knife",
+   "res": "_0x05BE1F25",
+   "flips": [
+    "hv",
+    "v"
+   ]
+  },
+  {
+   "id": "02a3",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/runway",
+   "res": "_0x0E374AF5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02a4",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/runway",
+   "res": "_0x019F6335.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "02ac",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x09AACE55.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02b7",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x02B9EC15.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02ba",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0A437EA5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02c1",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x010421B5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0301",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x002FB3B5.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "030a",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/gun/timedmine",
+   "res": "_0x07E34BA5",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0361",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/train",
+   "res": "_0x0EDD3F35.tga",
+   "flips": [
+    "hv",
+    "v"
+   ]
+  },
+  {
+   "id": "0385",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/bunker",
+   "res": "_0x09183DF5.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "0392",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/deskarecibo1",
+   "res": "_0x04A91A75.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0397",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/sat1reflect",
+   "res": "_0x0DE80265.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "03f0",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/chrstafflist",
+   "res": "_0x0343BB35.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "03f2",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/jungle",
+   "res": "_0x026F8315.tga",
+   "flips": [
+    "none",
+    "hv"
+   ]
+  },
+  {
+   "id": "047e",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/runway",
+   "res": "_0x0FE87815.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "0484",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/runway",
+   "res": "_0x0A91D515.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "048d",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/cradle",
+   "res": "_0x0F8E1435.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "0498",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/sat1reflect",
+   "res": "_0x0D0BE712.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "049a",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/chrblackbox",
+   "res": "_0x099E20B5.psd",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "049e",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/sat1reflect",
+   "res": "_0x099EDC85.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "04a9",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/runway",
+   "res": "_0x04774EA5.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "04ab",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/sevdish",
+   "res": "_0x0A20E2B5.tga",
+   "flips": [
+    "hv",
+    "v"
+   ]
+  },
+  {
+   "id": "04b2",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/surface",
+   "res": "_0x07367725.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "04c2",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/sfx/firebomb10",
+   "res": "firebomb10",
+   "flips": [
+    "none",
+    "none"
+   ]
+  },
+  {
+   "id": "04cc",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/woodsmcrate4",
+   "res": "_0x042CB485.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "04e2",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/silo",
+   "res": "_0x0E321905.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "04e3",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/silo",
+   "res": "_0x0E3A0905.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "04e4",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/silo",
+   "res": "_0x0E373905.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "04e7",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/silo",
+   "res": "_0x0F41F905.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "04ef",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/bunker",
+   "res": "_0x01709461.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "04f2",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/runway",
+   "res": "_0x0CA2CF15.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0500",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/cradle",
+   "res": "_0x085A03A5.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "0555",
+   "n64": [
+    32,
+    128
+   ],
+   "bundle": "new/background/cradle",
+   "res": "_0x09C01095.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "055d",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/control",
+   "res": "_0x0B0300E5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "055f",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/cradle",
+   "res": "_0x04C817A5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "058b",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x06CB2EC5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "058c",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x064EB395.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "0590",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/cradle",
+   "res": "_0x02C03995.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0592",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/train",
+   "res": "_0x0CC12C55.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05aa",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/tv1",
+   "res": "_0x0ECEEFA5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05ac",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/console1",
+   "res": "_0x0ECEEFA5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05b4",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0DC1D6D5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05cd",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/train",
+   "res": "_0x0D73E625.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  },
+  {
+   "id": "05d1",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0873FC55.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05d3",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0DC69D05.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "05d4",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x079DDAA5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05d5",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x06977345.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05d8",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/cradle",
+   "res": "_0x03B509E5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05d9",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0746A625.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05e7",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/dam",
+   "res": "_0x07D81155.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "06fb",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screen3",
+   "res": "screen3",
+   "flips": [
+    "none",
+    "hv"
+   ]
+  },
+  {
+   "id": "0763",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/head/headbike",
+   "res": "_0x04D360F1.tga",
+   "flips": [
+    "v",
+    "v"
+   ]
+  },
+  {
+   "id": "0826",
+   "n64": [
+    56,
+    56
+   ],
+   "bundle": "new/texture/sfx/firebomb16",
+   "res": "firebomb16",
+   "flips": [
+    "none",
+    "h"
+   ]
+  },
+  {
+   "id": "0872",
+   "n64": [
+    14,
+    14
+   ],
+   "bundle": "texture/bg/ammoiconmine",
+   "res": "ammoiconmine",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0873",
+   "n64": [
+    14,
+    18
+   ],
+   "bundle": "texture/bg/ammogrenadehand",
+   "res": "ammogrenadehand",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0875",
+   "n64": [
+    8,
+    21
+   ],
+   "bundle": "texture/bg/ammoicongrenade",
+   "res": "ammoicongrenade",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0877",
+   "n64": [
+    6,
+    20
+   ],
+   "bundle": "texture/bg/ammoiconshell",
+   "res": "ammoiconshell",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "088b",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/bondlogo",
+   "res": "bondlogo",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "08b1",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screennew3",
+   "res": "screennew3",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "08b2",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screennew4",
+   "res": "screennew4",
+   "flips": [
+    "none",
+    "none"
+   ]
+  },
+  {
+   "id": "08ca",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "texture/characters/brosnan",
+   "res": "brosnan",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "08d5",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/skydome/bunker2",
+   "res": "_0x0C4A5315.tga",
+   "flips": [
+    "none",
+    "hv"
+   ]
+  },
+  {
+   "id": "0968",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/streets",
+   "res": "_0x0E0AF895.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "097b",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/groundgun",
+   "res": "_0x0AB56EF5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "09ab",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/aztec",
+   "res": "_0x08AA27F5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "09af",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/skydome/bunker2",
+   "res": "_0x01709461.tga",
+   "flips": [
+    "none",
+    "h"
+   ]
+  },
+  {
+   "id": "09b0",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/frigate",
+   "res": "_0x054B9FD5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "09b4",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/jungle3tree",
+   "res": "_0x0B50E2A1.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "09b6",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/prop/jungle3tree",
+   "res": "_0x031A9701.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "09bb",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/plant2b",
+   "res": "_0x0036CAC5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "09bf",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/plant3",
+   "res": "_0x05F8FD35.tga",
+   "flips": [
+    "h",
+    "v"
+   ]
+  }
+ ]
+}

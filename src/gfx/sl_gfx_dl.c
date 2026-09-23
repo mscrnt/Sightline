@@ -427,6 +427,7 @@ static void sl_glFogCoordf(GLfloat c)
 #endif
 #include "sl_gfx.h"
 #include "sl_gfx_tex.h"
+#include "sl_gfx_texprov.h"           /* #47: the texture provider seam */
 #include "../sl_asset_override.h"
 #include "../platform/sl_display.h"     /* #45: the aspect selection and the one viewport fit */
 
@@ -3148,6 +3149,20 @@ struct sl_texent {
     unsigned char has_mips;          /* B-119: uploaded with a mip pyramid for
                                       * the detail-blend far image; keyed so a
                                       * non-blend reuse never inherits it */
+    /* #47. Which artwork this entry UPLOADED: 0 = the decode (ORIGINAL, or a
+     * set that has no file for the id), else the provider generation the
+     * replacement was taken under. Part of the cache key: a provider switch
+     * bumps the generation, so an entry holding COMMUNITY HD's pixels can
+     * never answer an XBLA or ORIGINAL resolve, and an entry holding the
+     * decode keeps answering for an id no set replaces. */
+    unsigned    rep_gen;
+    unsigned    rep_id, rep_w, rep_h;/* the replacement's id and physical size */
+    /* #47 PART A. The N64 texture number of the image this entry holds,
+     * PLUS ONE (0 = none: an unregistered source - a mip level, a game-built
+     * image, a font glyph). Read from the provider's own side table at
+     * upload, so the per-id coverage census below can name what a draw
+     * samples without a second identity mechanism. */
+    unsigned    cov_id;
     unsigned    checksum;            /* of the decoded RGBA, for reporting */
     /* B-051. The DECODED alpha channel, summarised at decode time because the
      * RGBA buffer is not retained past the upload. A texel alpha of zero
@@ -3167,6 +3182,8 @@ static unsigned g_texcache_n;
 /* Telemetry. */
 static unsigned g_tex_decoded, g_tex_hits, g_tex_uploads, g_tex_fail;
 static unsigned g_tex_enhanced;    /* B-116: distinct world textures enhanced */
+static unsigned g_tex_replaced;    /* #47: uploads that took a provider image */
+static unsigned g_tex_hilited;     /* #47 PART A: uploads painted flat */
 static unsigned g_tex_wrap_alias;      /* B-099: one source, two wrap modes */
 static unsigned g_tex_palwrap_imgs, g_tex_palwrap_texels;  /* B-141, cumulative */
 
@@ -3605,6 +3622,133 @@ static void dump_palette(const char *path, const unsigned char *pal,
 
 static unsigned tex_roughness(const unsigned char *rgba, unsigned w, unsigned h);
 
+/* SL_TEX_DUMP_IDS=<dir> - THE DECODE, KEYED BY THE GAME'S OWN TEXTURE NUMBER.
+ *
+ * The dump above is keyed by the order images happened to be decoded in, which
+ * answers "what did this draw look like" and cannot answer "what is the game's
+ * own artwork for id 0112". This one writes each decoded image ONCE per id,
+ * in the pack format (SLTX, docs/texture-packs.md), so the ROM's artwork and a
+ * pack's replacement for the same id are two files one reader opens - which is
+ * what comparing a whole mapping offline needs.
+ *
+ * Diagnostic and off unless the variable is set: no allocation, no cost and no
+ * call beyond a registry lookup when it is unset. The id comes from the
+ * provider's existing side table (sl_texprov_id_of), so an image that never
+ * passed through texLoad has none and is skipped rather than guessed at. */
+static void tex_dump_by_id(const unsigned char *rgba, unsigned w, unsigned h,
+                           const unsigned char *src_addr)
+{
+    static unsigned char seen[SL_TEXPROV_MAX_ID / 8u];
+    static const char *dir;
+    static int checked;
+    unsigned char hdr[SL_TEXPROV_HEADER];
+    unsigned nw = 0, nh = 0;
+    char path[512];
+    int id;
+    FILE *f;
+
+    if (!checked) { checked = 1; dir = getenv("SL_TEX_DUMP_IDS"); }
+    if (dir == NULL || dir[0] == '\0') return;
+    id = sl_texprov_id_of(src_addr, &nw, &nh);
+    if (id < 0 || (unsigned) id >= SL_TEXPROV_MAX_ID) return;
+    if (w == 0u || h == 0u || w > 0xffffu || h > 0xffffu) return;
+    if (seen[id >> 3] & (unsigned char) (1u << (id & 7))) return;
+    seen[id >> 3] |= (unsigned char) (1u << (id & 7));
+
+    sprintf(path, "%s/%04x.sltx", dir, (unsigned) id);
+    f = fopen(path, "wb");
+    if (f == NULL) return;
+    memset(hdr, 0, sizeof hdr);
+    hdr[0] = SL_TEXPROV_MAGIC0; hdr[1] = SL_TEXPROV_MAGIC1;
+    hdr[2] = SL_TEXPROV_MAGIC2; hdr[3] = SL_TEXPROV_MAGIC3;
+    hdr[4] = (unsigned char) SL_TEXPROV_VERSION;
+    hdr[8]  = (unsigned char) (id & 0xff);
+    hdr[9]  = (unsigned char) ((id >> 8) & 0xff);
+    /* n64 size = the pool's logical size; phys = what was decoded. For the
+     * decode they are the same image, and a reader can check that they are. */
+    hdr[12] = (unsigned char) (nw & 0xff);  hdr[13] = (unsigned char) ((nw >> 8) & 0xff);
+    hdr[14] = (unsigned char) (nh & 0xff);  hdr[15] = (unsigned char) ((nh >> 8) & 0xff);
+    hdr[16] = (unsigned char) (w & 0xff);   hdr[17] = (unsigned char) ((w >> 8) & 0xff);
+    hdr[18] = (unsigned char) (h & 0xff);   hdr[19] = (unsigned char) ((h >> 8) & 0xff);
+    {   unsigned payload = w * h * 4u;
+        hdr[24] = (unsigned char) (payload & 0xff);
+        hdr[25] = (unsigned char) ((payload >> 8) & 0xff);
+        hdr[26] = (unsigned char) ((payload >> 16) & 0xff);
+        hdr[27] = (unsigned char) ((payload >> 24) & 0xff);
+    }
+    fwrite(hdr, 1, sizeof hdr, f);
+    fwrite(rgba, 1, (size_t) w * h * 4u, f);
+    fclose(f);
+}
+
+/* SL_TEX_HILITE - WHICH PIXELS DOES THIS TEXTURE ACTUALLY PAINT.
+ *
+ * The provider's census counts UPLOADS, and the coverage census below counts
+ * projected primitive AREA. Neither is a count of pixels on the screen: the
+ * first is blind to how large a texture is drawn, the second is blind to
+ * what is drawn in front of it. This is the measurement, and it needs no
+ * renderer surgery at all - paint the textures in question a flat colour and
+ * capture the frame; every pixel whose final colour depends on one of them
+ * changes with the colour.
+ *
+ *   SL_TEX_HILITE=mapped    every texture the ACTIVE SET replaces
+ *   SL_TEX_HILITE=<hex id>  one N64 texture number, under any set
+ *   SL_TEX_HILITE_RGB=rrggbb  the flat colour (default ff00ff)
+ *
+ * Used in PAIRS: the same pose captured under two different colours, and the
+ * mask is the pixels that differ. Differencing against an ordinary capture
+ * instead would miss every pixel the hilited texture paints BLACK (a surface
+ * at shade zero is black under any texel), and would falsely include nothing
+ * - so the pair is the honest instrument and a single run is not.
+ *
+ * The decode's ALPHA is kept, so a cutout stays a cutout and the mask has the
+ * shape of the artwork rather than of its bounding tile. The replacement is
+ * deliberately NOT uploaded under this flag even when one exists: what is
+ * being measured is where the id lands, which is a property of the draw, not
+ * of the pack. Diagnostic; dark unless the variable is set. */
+static int tex_hilite_id(void)
+{
+    static int checked, want = -2;          /* -2 off, -1 "mapped", else id */
+    if (!checked) {
+        const char *v = getenv("SL_TEX_HILITE");
+        checked = 1;
+        if (v != NULL && v[0] != '\0') {
+            if (strcmp(v, "mapped") == 0) want = -1;
+            else want = (int) strtoul(v, NULL, 16);
+        }
+    }
+    return want;
+}
+
+/* Whether the per-id coverage census (below, at cover_account) wants the id
+ * recorded on each cache entry. Only the variable's presence is read here -
+ * the frame window is applied where the area is accumulated - because a cache
+ * entry outlives the frame that created it. */
+static int texcov_armed(void)
+{
+    static const char *p; static int checked;
+    if (!checked) { checked = 1; p = getenv("SL_TEX_COVERAGE");
+                    if (p != NULL && p[0] == '\0') p = NULL; }
+    return p != NULL;
+}
+
+static const unsigned char *tex_hilite_rgb(void)
+{
+    static unsigned char rgb[3] = { 0xff, 0x00, 0xff };
+    static int checked;
+    if (!checked) {
+        const char *v = getenv("SL_TEX_HILITE_RGB");
+        checked = 1;
+        if (v != NULL && strlen(v) >= 6u) {
+            unsigned long c = strtoul(v, NULL, 16);
+            rgb[0] = (unsigned char) ((c >> 16) & 0xff);
+            rgb[1] = (unsigned char) ((c >> 8) & 0xff);
+            rgb[2] = (unsigned char) (c & 0xff);
+        }
+    }
+    return rgb;
+}
+
 static void tex_dump(const unsigned char *rgba, unsigned w, unsigned h,
                      int slfmt, const unsigned char *pal, unsigned paln,
                      const unsigned char *fdbase, const unsigned char *src_addr)
@@ -3941,6 +4085,19 @@ static GLuint tex_acquire(const unsigned char *src, const unsigned char *pal,
     const unsigned char *rows;
     struct sl_texent *e;
     int rc;
+    /* #47. THE TEXTURE PROVIDER SEAM. Resolved below, once the source has
+     * passed the same readability checks the decode needs: the provider's
+     * replacement for THIS image (src is the decoded pointer texLoad
+     * registered, w x h the tile's logical size), or NULL - ORIGINAL in
+     * force, no file in the selected set, a mip level, a sub-window. A
+     * replacement is uploaded IN PLACE of the decode at its own physical
+     * size; everything else about the texture - the wrap modes, the tile
+     * size the coordinates divide by, the combiner, the alpha path - is
+     * decided from the same state as before, so the replacement is sampled
+     * over exactly the region and repeat count the decode was. */
+    const struct sl_texprov_image *rep = NULL;
+    unsigned rep_gen = 0u;
+    int hil = 0;                   /* #47 PART A: SL_TEX_HILITE selected this */
     /* B-116. Whether THIS draw is eligible for world-texture enhancement:
      * a 3D world draw, the feature on, not the animated/multi-tile water or
      * mip-lerp family (g_cc_tex1lerp), and small enough to gain a real integer
@@ -4049,6 +4206,30 @@ static GLuint tex_acquire(const unsigned char *src, const unsigned char *pal,
         }
     }
 
+    /* #47. Ask the provider. Under ORIGINAL this is one store read and an
+     * immediate NULL; under a set it is two hash probes (pointer -> id,
+     * (set, id) -> resident image), the file read happening once per (set,
+     * id). A replacement is already at its final size, so the B-116
+     * enhancement never resamples it (want_enh off), and the generation it
+     * was taken under joins the cache key below. */
+    rep = sl_texprov_lookup(src, w, h);
+    if (rep != NULL) { rep_gen = sl_texprov_generation(); want_enh = 0; }
+
+    /* #47 PART A. SL_TEX_HILITE (see tex_hilite_id): this image is painted a
+     * flat colour instead of its artwork, so a captured frame says where it
+     * lands. Decided HERE, before the cache probe, because want_enh is part
+     * of the cache key - deciding it after the probe would leave a stored
+     * entry and a later lookup disagreeing and re-uploading every draw. */
+    if (tex_hilite_id() != -2) {
+        int want = tex_hilite_id();
+        if (want == -1) hil = (rep != NULL);
+        else {
+            int id = sl_texprov_id_of(src, NULL, NULL);
+            hil = (id >= 0 && id == want);
+        }
+        if (hil) want_enh = 0;
+    }
+
     /* tex_acquire runs once per triangle, so memoise the content hash on the
      * (src, size) pair - without this the walker re-hashed 256 bytes ~1700
      * times a frame for the handful of distinct sources actually in play. */
@@ -4064,7 +4245,8 @@ static GLuint tex_acquire(const unsigned char *src, const unsigned char *pal,
             e->pal == (const void *) pal && e->flags == texflags &&
             e->fmt == (unsigned) slfmt && e->w == w && e->h == h &&
             e->has_enh == (unsigned char) want_enh &&
-            e->has_mips == (unsigned char) want_mips) {
+            e->has_mips == (unsigned char) want_mips &&
+            e->rep_gen == rep_gen) {
             unsigned d_s = 0, d_t = 0;
             if (e->wrap_s != tex_wrap(cms, masks, &d_s) ||
                 e->wrap_t != tex_wrap(cmt, maskt, &d_t))
@@ -4107,6 +4289,7 @@ static GLuint tex_acquire(const unsigned char *src, const unsigned char *pal,
                     sl_tex_pal_wrapped);
     }
     tex_dump(dst, w, h, slfmt, pal, palneed >> 1, g_ti_addr, src);
+    tex_dump_by_id(dst, w, h, src);
     noisy_note(src, (unsigned) (unsigned long) pal, slfmt, w, h, texflags, dst);
 
     {   /* entropy of the SOURCE, reported once per distinct texture */
@@ -4216,6 +4399,44 @@ static GLuint tex_acquire(const unsigned char *src, const unsigned char *pal,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, e->wrap_s);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, e->wrap_t);
     e->has_enh = (unsigned char) want_enh;
+    e->rep_gen = rep_gen;
+    e->rep_id = rep ? rep->id : 0u;
+    e->rep_w = rep ? rep->phys_w : 0u;
+    e->rep_h = rep ? rep->phys_h : 0u;
+    /* #47 PART A. One registry probe per UPLOAD (not per draw), so the
+     * coverage census can rank a frame's ids without a second bridge. */
+    {   int cid = texcov_armed() ? sl_texprov_id_of(src, NULL, NULL) : -1;
+        e->cov_id = (cid >= 0 && (unsigned) cid < SL_TEXPROV_MAX_ID)
+                        ? (unsigned) cid + 1u : 0u;
+    }
+    if (hil) {
+        /* #47 PART A. The flat colour over the decode's own alpha - a cutout
+         * stays a cutout. `dst` is the decode scratch and is dead after this
+         * upload, so painting it here costs nothing and keeps the flag out of
+         * every other branch. */
+        const unsigned char *hc = tex_hilite_rgb();
+        unsigned n = w * h, k;
+        for (k = 0; k < n; k++) {
+            dst[k * 4u + 0u] = hc[0];
+            dst[k * 4u + 1u] = hc[1];
+            dst[k * 4u + 2u] = hc[2];
+        }
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei) w, (GLsizei) h, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, dst);
+        g_tex_hilited++;
+    } else
+    if (rep != NULL) {
+        /* #47. The provider's image, at ITS physical size, in place of the
+         * decode. The same principle B-116 already relies on: the GL texture
+         * is larger, the S/T coordinates the draw path emits divide by the
+         * tile's logical w x h (tex_apply / draw_texrect), so the pattern
+         * repeats exactly as before with more texels per repeat. The wrap
+         * modes set above are the tile's own. */
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+                     (GLsizei) rep->phys_w, (GLsizei) rep->phys_h, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, rep->rgba);
+        g_tex_replaced++;
+    } else
     if (want_enh) {
         /* B-116. Resample the decoded RGBA up by an integer factor and upload
          * THAT, with the tile's own wrap at the edges so a repeating texture
@@ -4237,12 +4458,17 @@ static GLuint tex_acquire(const unsigned char *src, const unsigned char *pal,
     }
     if (want_mips) {
         /* B-119. The complete pyramid down to 1x1 - these headers predate
-         * GL_TEXTURE_MAX_LEVEL, so an incomplete chain would sample black. */
-        static unsigned char mbuf0[TEX_MAX_DIM * TEX_MAX_DIM * 4];
-        static unsigned char mbuf1[TEX_MAX_DIM * TEX_MAX_DIM * 4];
-        const unsigned char *cur = dst;
+         * GL_TEXTURE_MAX_LEVEL, so an incomplete chain would sample black.
+         * #47: a replacement's pyramid halves from ITS level 0, so the two
+         * scratch levels are sized to half the provider's largest image
+         * (SL_TEXPROV_MAX_DIM / 2 squared), which also holds every decode. */
+        static unsigned char mbuf0[(SL_TEXPROV_MAX_DIM / 2u) * (SL_TEXPROV_MAX_DIM / 2u) * 4u];
+        static unsigned char mbuf1[(SL_TEXPROV_MAX_DIM / 2u) * (SL_TEXPROV_MAX_DIM / 2u) * 4u];
+        const unsigned char *cur = (rep && !hil) ? rep->rgba : dst;
         unsigned char *nxt = mbuf0, *oth = mbuf1, *tmp;
-        unsigned cw = w, ch = h, nw, nh, level = 1;
+        unsigned cw = (rep && !hil) ? rep->phys_w : w;
+        unsigned ch = (rep && !hil) ? rep->phys_h : h;
+        unsigned nw, nh, level = 1;
         while (cw > 1u || ch > 1u) {
             mip_box_halve(cur, cw, ch, nxt, &nw, &nh);
             glTexImage2D(GL_TEXTURE_2D, (GLint) level, GL_RGBA,
@@ -4610,9 +4836,12 @@ static void texprobe_note(const struct sl_tile *t, unsigned tile,
     if (te != NULL)
         fprintf(stderr,
             "  TEXELS decoded rgbmax=%u,%u,%u rgbmean=%u,%u,%u"
-            " alpha min=%u max=%u mean=%u zero=%u/%u\n",
+            " alpha min=%u max=%u mean=%u zero=%u/%u"
+            "  #47 uploaded=%s id=%04x phys=%ux%u gen=%u\n",
             te->rmax, te->gmax, te->bmax, te->rmean, te->gmean, te->bmean,
-            te->amin, te->amax, te->asum, te->azero, te->atot);
+            te->amin, te->amax, te->asum, te->azero, te->atot,
+            te->rep_gen ? "PROVIDER" : "decode", te->rep_id,
+            te->rep_w, te->rep_h, te->rep_gen);
     else
         fprintf(stderr, "  TEXELS no cache slot recorded - REPORT NOTHING\n");
 
@@ -10053,6 +10282,183 @@ static int rect_colour(unsigned char out[4])
     return constant;
 }
 
+/* ---- #47 PART A. WHAT IS ON SCREEN, PER N64 TEXTURE NUMBER ---------------
+ *
+ * The provider's census counts UPLOADS - how many distinct images a run
+ * replaced. That answers "did the provider work" and cannot answer the
+ * owner's observation, "most of it looks the same", because an id replaced
+ * once and drawn on a doorframe counts exactly as much as an id drawn across
+ * the whole sky. This accumulates, per texture number, the SCREEN AREA of
+ * the primitives that sample it, clipped to the viewport, so a frame's ids
+ * can be RANKED by how much of the picture they paint.
+ *
+ * WHAT IT IS NOT, stated because the number invites the wrong reading: there
+ * is no depth test here. It is projected, viewport-clipped primitive area -
+ * overdraw counted, occlusion not - so it ranks and it bounds, it does not
+ * measure visible pixels. SL_TEX_HILITE is the visible-pixel measurement and
+ * the two are taken together so the estimate can be checked against it.
+ *
+ *   SL_TEX_COVERAGE=<file>        write the table here at report time
+ *   SL_TEX_COVERAGE_FIRST=<n>     first DL frame counted (default 0)
+ *   SL_TEX_COVERAGE_LAST=<n>      last DL frame counted (default: all)
+ *
+ * The frame window is how ONE settled pose is measured instead of a whole
+ * run including its fade-in and its menus.
+ */
+#define TEXCOV_UNREG  SL_TEXPROV_MAX_ID     /* the bucket for "no texture id" */
+struct sl_texcov_ent {
+    double        area;          /* viewport-clipped primitive area, fb px */
+    unsigned      prims;
+    unsigned      w, h;          /* logical tile size last seen */
+    unsigned char replaced;      /* the active set had a file for this id */
+    unsigned char kind;          /* 1 geometry, 2 texrect, 3 both */
+};
+static struct sl_texcov_ent g_texcov[SL_TEXPROV_MAX_ID + 1u];
+static double   g_texcov_tex, g_texcov_plain;
+static unsigned g_texcov_frames, g_texcov_lastf = 0xffffffffu;
+
+static int texcov_now(void)
+{
+    static long first = -2, last;
+    if (!texcov_armed()) return 0;
+    if (first == -2) {
+        const char *a = getenv("SL_TEX_COVERAGE_FIRST");
+        const char *b = getenv("SL_TEX_COVERAGE_LAST");
+        first = (a != NULL) ? strtol(a, NULL, 10) : 0;
+        last  = (b != NULL) ? strtol(b, NULL, 10) : 0x7fffffffL;
+    }
+    return (long) g_dl_frame >= first && (long) g_dl_frame <= last;
+}
+
+static void texcov_tick(void)
+{
+    if (g_dl_frame != g_texcov_lastf) { g_texcov_lastf = g_dl_frame;
+                                        g_texcov_frames++; }
+}
+
+/* SL_TEX_COVERAGE_FRAME=1: the table describes ONE frame - cleared as each
+ * frame starts, written out as the next one does. Without it the table is
+ * the whole run (or the SL_TEX_COVERAGE_FIRST/_LAST window), which averages
+ * a moving camera into something no single capture shows. A still pose reads
+ * the same either way; a cutscene does not, which is why the switch exists. */
+static int texcov_perframe(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_TEX_COVERAGE_FRAME");
+                  on = (v != NULL && *v != '0'); }
+    return on;
+}
+
+static void texcov_write(void)
+{
+    const char *p = getenv("SL_TEX_COVERAGE");
+    FILE *cf;
+    unsigned i;
+    double fa;
+    if (p == NULL || p[0] == '\0') return;
+    cf = fopen(p, "wb");
+    if (cf == NULL) return;
+    fa = (double) g_scr_w * (double) g_scr_h
+         * (double) (g_texcov_frames ? g_texcov_frames : 1u);
+    fprintf(cf, "# frames=%u dl_frame=%u screen=%ux%u textured_area=%.1f"
+                " untextured_area=%.1f frame_area=%.1f\n",
+            g_texcov_frames, g_dl_frame, g_scr_w, g_scr_h,
+            g_texcov_tex, g_texcov_plain, fa);
+    fprintf(cf, "id,hex,area,share_of_frame,share_of_textured,"
+                "prims,w,h,kind,replaced\n");
+    for (i = 0; i <= SL_TEXPROV_MAX_ID; i++) {
+        const struct sl_texcov_ent *c = &g_texcov[i];
+        if (c->prims == 0u) continue;
+        if (i == TEXCOV_UNREG) fprintf(cf, "-1,unregistered,");
+        else                   fprintf(cf, "%u,%04x,", i, i);
+        fprintf(cf, "%.1f,%.6f,%.6f,%u,%u,%u,%u,%u\n",
+                c->area, c->area / fa,
+                g_texcov_tex > 0.0 ? c->area / g_texcov_tex : 0.0,
+                c->prims, c->w, c->h, c->kind, c->replaced);
+    }
+    fclose(cf);
+}
+
+/* Called as a DL frame begins. Publishes the frame that just ended, then
+ * starts the next one empty. */
+static void sl_texcov_frame_begin(void)
+{
+    if (!texcov_armed() || !texcov_perframe()) return;
+    if (g_texcov_frames != 0u) texcov_write();
+    memset(g_texcov, 0, sizeof g_texcov);
+    g_texcov_tex = g_texcov_plain = 0.0;
+    g_texcov_frames = 0u;
+    g_texcov_lastf = 0xffffffffu;
+}
+
+/* `slot` is g_tex_slot - the cache entry the draw is bound to, or < 0 for an
+ * untextured primitive. */
+static void texcov_add(int slot, double area, int kind)
+{
+    unsigned id = TEXCOV_UNREG;
+    struct sl_texcov_ent *c;
+    if (area <= 0.0 || !texcov_now()) return;
+    texcov_tick();
+    if (slot < 0) { g_texcov_plain += area; return; }
+    {   const struct sl_texent *e = &g_texcache[slot];
+        if (e->cov_id != 0u) id = e->cov_id - 1u;
+        c = &g_texcov[id];
+        if (id != TEXCOV_UNREG) {
+            c->w = e->w; c->h = e->h;
+            if (e->rep_gen != 0u) c->replaced = 1;
+        }
+    }
+    c->area += area;
+    c->prims++;
+    c->kind |= (unsigned char) kind;
+    g_texcov_tex += area;
+}
+
+/* The area a triangle covers INSIDE the viewport, in framebuffer pixels.
+ * Sutherland-Hodgman against the four NDC side planes, then the shoelace.
+ * Without the clip a wall that extends far past the screen edge reports an
+ * area many times the whole frame, which would rank the census by how far
+ * offscreen a surface runs rather than by how much of it is seen. */
+static double ndc_tri_area_clipped(float n[3][5])
+{
+    float px[16], py[16], qx[16], qy[16];
+    int np = 3, nq, i, j, k;
+    double a = 0.0;
+
+    for (i = 0; i < 3; i++) { px[i] = n[i][0]; py[i] = n[i][1]; }
+    for (k = 0; k < 4; k++) {
+        nq = 0;
+        for (i = 0; i < np; i++) {
+            int i2 = (i + 1) % np;
+            float d0, d1, t;
+            switch (k) {
+            case 0:  d0 = px[i]  + 1.0f; d1 = px[i2] + 1.0f; break;
+            case 1:  d0 = 1.0f - px[i];  d1 = 1.0f - px[i2];  break;
+            case 2:  d0 = py[i]  + 1.0f; d1 = py[i2] + 1.0f; break;
+            default: d0 = 1.0f - py[i];  d1 = 1.0f - py[i2];  break;
+            }
+            if (d0 >= 0.0f && nq < 16) { qx[nq] = px[i]; qy[nq] = py[i]; nq++; }
+            if ((d0 >= 0.0f) != (d1 >= 0.0f) && nq < 16) {
+                t = d0 / (d0 - d1);
+                qx[nq] = px[i] + t * (px[i2] - px[i]);
+                qy[nq] = py[i] + t * (py[i2] - py[i]);
+                nq++;
+            }
+        }
+        np = nq;
+        if (np < 3) return 0.0;
+        for (j = 0; j < np; j++) { px[j] = qx[j]; py[j] = qy[j]; }
+    }
+    for (i = 0; i < np; i++) {
+        int i2 = (i + 1) % np;
+        a += (double) px[i] * (double) py[i2] - (double) px[i2] * (double) py[i];
+    }
+    if (a < 0.0) a = -a;
+    /* NDC spans 2 x 2 over the whole viewport, so one NDC unit of area is
+     * (w/2) * (h/2) framebuffer pixels. */
+    return a * 0.5 * ((double) g_scr_w * 0.5) * ((double) g_scr_h * 0.5);
+}
+
 static void cover_account(float x0, float y0, float x1, float y1, int is_fill)
 {
     float area;
@@ -10233,6 +10639,17 @@ static void draw_texrect(void)
     g_tr_drawn++;
     if (g_tris > 0) g_2d_post_geom_tr++; else g_2d_pre_geom_tr++;
     cover_account(x0, y0, x1, y1, 0);
+    /* #47 PART A. The 2D half of the per-id coverage census - the HUD, the
+     * menus and the gunsight reach the screen through here and nowhere near
+     * emit_tri_slots. Same viewport clip cover_account applies. */
+    if (texcov_armed()) {
+        float cx0 = x0 < 0.0f ? 0.0f : x0, cy0 = y0 < 0.0f ? 0.0f : y0;
+        float cx1 = x1 > (float) g_scr_w ? (float) g_scr_w : x1;
+        float cy1 = y1 > (float) g_scr_h ? (float) g_scr_h : y1;
+        if (cx1 > cx0 && cy1 > cy0)
+            texcov_add(name ? g_tex_slot : -1,
+                       (double) (cx1 - cx0) * (double) (cy1 - cy0), 2);
+    }
 }
 
 static void draw_fillrect(int ix0, int iy0, int ix1, int iy1)
@@ -12016,6 +12433,14 @@ static void emit_tri_slots(int a, int b, int c)
         g_tri_area_sum += (double) ar;
         if (ar < 0.25f) g_tri_degen++; else g_tri_area++;
         if (ar > g_tri_area_max) g_tri_area_max = ar;
+        /* #47 PART A. The geometry half of the per-id coverage census. The
+         * area just computed is the WHOLE triangle's, offscreen included,
+         * which is right for "did this rasterise anything" and wrong for
+         * "how much of the picture is this" - so the census takes its own,
+         * clipped to the viewport. */
+        if (texcov_armed())
+            texcov_add(g_tex_gl_on ? g_tex_slot : -1,
+                       ndc_tri_area_clipped(ndc), 1);
     } else {
         g_tri_clipped++;
     }
@@ -14739,6 +15164,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
      * dropped, because pass one entered with it dropped too. */
     if (!g_wit_pass) {
         g_dl_frame++;
+        sl_texcov_frame_begin();   /* #47 PART A, per-frame mode */
 
         /* A new seed every frame is what makes the dither MOVE rather than sit
          * there as a fixed screen pattern; the cached density is dropped with it
@@ -15448,9 +15874,23 @@ void sl_gfx_frame_dl(const void *first, const void *end)
                 g_tex_reject[6], g_tex_reject[7], g_tex_tlut16);
         fprintf(stderr, "sl_tex: B-116 world-enhanced=%u of %u decoded"
                         "  B-141 pal-wrap images=%u texels=%u (cumulative,"
-                        " SL_PAL_WRAP)\n",
+                        " SL_PAL_WRAP)  #47 provider-replaced uploads=%u\n",
                 g_tex_enhanced, g_tex_decoded,
-                g_tex_palwrap_imgs, g_tex_palwrap_texels);
+                g_tex_palwrap_imgs, g_tex_palwrap_texels, g_tex_replaced);
+        sl_texprov_report(stderr);       /* #47: the provider's own census */
+        /* #47 PART A. The per-id coverage table, if it was asked for. CSV,
+         * one row per texture number seen, plus the two aggregates the shares
+         * are taken against. Written here so it lands in the same report the
+         * provider's own census does. */
+        if (texcov_armed()) {
+            fprintf(stderr, "sl_texcov: frames=%u dl-frame=%u per-frame=%d"
+                            " textured-area=%.0f untextured-area=%.0f"
+                            " frame=%ux%u hilited=%u -> %s\n",
+                    g_texcov_frames, g_dl_frame, texcov_perframe(),
+                    g_texcov_tex, g_texcov_plain, g_scr_w, g_scr_h,
+                    g_tex_hilited, getenv("SL_TEX_COVERAGE"));
+            if (!texcov_perframe()) texcov_write();
+        }
         fprintf(stderr, "sl_texenv: plain-under-alpha-program=%u (B-142"
                         " invariant, must be 0)  untextured-left-mode-5=%u\n",
                 g_plain_under_prog, g_plain_prog_reset);

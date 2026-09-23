@@ -39381,3 +39381,1030 @@ Scratch (session, not committed): worlddetail\ M1-*, M2-*, M1b-*, M2b-*,
 PerfM1-*, T4-dam-* logs and traces; shots\ M1-O/E, M2b-O/E, M1-crops,
 M1-3way, rom-mark1/2; owner\mark-00{1,2}.png (copies of the owner's
 marks); cartridge frames %TEMP%\sightline-oracle\wd-mark1, wd-mark2.
+
+## 2026-09-22 - v0.3.0 VISUAL FIDELITY, sprint 2: TEXTURE PROVIDERS (#47) -
+## the native texture pipeline mapped, the one upload seam found, the
+## `textures` setting shipped: ORIGINAL (default) / COMMUNITY HD / XBLA in
+## the front end's DISPLAY tab and the watch's GRAPHICS child; D-020.
+## Branch sightline/texture-providers off master 1fd6335a.
+
+Scope: Gitea #47 as re-scoped 2026-09-18 (three texture sets through one
+abstraction, per-texture fallback to ORIGINAL, no set assumed complete, the
+renderer consuming (active set, canonical id) only; NOT #48 lighting, NOT
+the retired D-007 filtering, NOT model / UV replacement). Owner replay is
+the acceptance gate; nothing here is accepted. docs/texture-packs.md is the
+architecture; this entry is the evidence.
+
+### Docs first
+
+gedocs `topic textures` / `for src/game/image.c`: 'imageTypes.txt' is the
+per-id authority the sets are keyed on (the N64 texture NUMBER, 12 bits in
+struct tex, the argument to texLoadFromTextureNum), and its W/H per id is
+what a replacement's N64 size must equal - it named both witnesses (08B7
+W05 H0C 32-bit RGBA, the pistol ammo icon; 0111-0115 W20 H30 CI8, the
+Archives posters). The corpus is SILENT on the texture pool's runtime
+layout (grep 'texture pool|texpool|tex pool', 'leftpos|rightpos',
+'texture cache': nothing; 'image buffer' hits address ranges only) - the
+decomp's texLoad / texInflateZlib is the only authority; not_covered
+entry added, sl_gfx_texprov.c routed under textures.
+
+### The pipeline map, texture number to pixels (file : function)
+
+1. IDENTITY - image.c texLoad: `g_TexNumToLoad = *updateword & 0xffff`,
+   texFindInPool, else the inflate into the pool: an s16 texturenum at
+   leftpos, `leftpos += 8`, `tex->data = leftpos`, the LOD images in
+   sequence (texInflateZlib / NonZlib; texSwapAltRowBytes on each) then
+   the palette; struct tex (rightpos) records texturenum, data, width,
+   height (u8), gbiformat, depth, lutmodeindex, maxlod. Then
+   `*updateword = osVirtualToPhysical(tex->data)` - natively the pointer
+   itself (sl_ultra_shim.c :1313). Six pools: the stage pool
+   (initmttex.c), the two weapon pools (gun.c), title.c's, front.c's,
+   bondview2.c's - all through texInitPool, all through texLoad.
+2. DISPLAY LIST - tex.c texWriteLoadToTmemZero / texLoadFromGdl: FD
+   settextureimage(tex->data), one F3 loadblock of the whole image (all
+   LODs), F5 / F2 per LOD at tmem offsets (texWriteTileLods: masks =
+   texDimensionToMask(width), line from the width).
+3. NATIVE TILE - sl_gfx_dl.c tile_texture :4766: tmem_resolve gives the
+   load covering the tile's tmem and the OFFSET into it (B-128) - src =
+   ld->src + off, so LOD 0 resolves to tex->data exactly and a mip level
+   to an inner address; the logical w x h from the F2 window, on a
+   wrapping masked axis the 2^mask period (B-088 / B-102 / B-108, a
+   stride when line != period); gbi_to_sl_fmt; then tex_acquire.
+4. NATIVE UPLOAD - tex_acquire :3933: readability and palette checks,
+   the content key (memoised), the ring cache of 256 sl_texent (src, key,
+   pal, flags, fmt, w, h, has_enh, has_mips), glGenTextures once per slot
+   and reused on wrap, the decode into the 256x256x4 scratch,
+   glTexParameteri wrap from the tile's clamp / mirror / mask, then
+   glTexImage2D of the decode - or the B-116 Catmull-Rom 4x enhancement
+   (world draws at most 64 a side) - and the B-119 pyramid for the far
+   image.
+5. SAMPLER / UV - tex_apply :11812: glTexCoord2f((s / sdiv / 32 - uls) /
+   tile_w, ...) and draw_texrect :10174 u = s / 32 / tile_w: the divisor
+   is the LOGICAL tile size, never the uploaded size. THE LOAD-BEARING
+   FINDING, and B-116 already relied on it (4x uploads, unchanged S/T).
+
+### The seam and the identity bridge
+
+The one seam is (4): a replacement is uploaded IN PLACE of the decode at
+its own physical size, everything else from the same state. Identity is
+a native side table (decoded pointer -> id, w, h) written by texLoad's
+native arm and emptied per pool by texInitPool's (two #ifndef __sgi
+islands in image.c) - no runtime pixel hashing, no filename matching; the
+game's own 8-byte texturenum prefix was considered as a bridge and set
+aside (a mip level's src - 8 lies inside the previous level's data: a
+false positive replaces the wrong art silently). Guards: src must be a
+registered base pointer (a mip level / sub-window / game-built image /
+raw ROM segment / font glyph is UNREGISTERED -> the decode) and the tile
+must be the whole image (w, h == the pool entry's; a wrap period larger
+than a NPOT image is a SHAPE MISS -> the decode: the RDP reads past the
+image there and no replacement can reproduce it).
+
+### Format decision and pack root
+
+The tree links SDL2, opengl32 and libm only; no PNG decoder, none added.
+SLTX: 28-byte little-endian header + tightly packed RGBA8 rows top first
+(docs/texture-packs.md), converted once outside the engine (the
+converter lives with the user's own copy of a set, outside Git; it
+validates the set first - manifest, declared files, sizes, no review-tier
+file in the accepted root, no duplicate id - and converts only the
+community and the accepted XBLA options). Root: SL_TEXPACK_ROOT, else
+<asset override dir>\texpacks (%LOCALAPPDATA%\sightline\assets\texpacks);
+<root>\community\<hex4>.sltx, <root>\xbla\<hex4>.sltx. ORIGINAL never
+touches it.
+
+### Measurements
+
+- Identity bridge, first run (Facility catwalk, COMMUNITY HD): registry
+  283, lookups 282699, unregistered 16272 (all 8x7 / 8x8 font glyphs at
+  one address range - not image-table textures), shape-miss 2181 (one
+  id, 0648: a 1x1 image under a 16x1 wrap tile), 38 files loaded, 51
+  missing, 0 invalid; the catwalk grating, stairs, railings, wall panels
+  and the ammo icon substituted, geometry identical, the repeat grid in
+  the same places.
+- Orientation (asymmetric witnesses): the Archives poster 0112 (32x48
+  CI8 -> 352x528; pose Archives 260 / 167 / 963 theta 156.4 room 14)
+  under COMMUNITY HD keeps ORIGINAL's orientation, mirroring, placement
+  and size - the headline at the top, the photo at the left, the red
+  band - at 11x; the pistol ammo icon 08b7 (5x12 -> 80x180, the 2D
+  texrect path) keeps its tip up at the same HUD place. No flip anywhere.
+- Community production witness: 0112 above. XBLA production witness: the
+  Facility door sign 05d3 (38x38 CI8 -> 256x256, accepted, background /
+  facility; pose Facility 6750 / 106 / -2550 theta 90 room 68):
+  ORIGINAL's sign under ORIGINAL and COMMUNITY HD (no community file -
+  the WATCH line reads `set=COMMUNITY HD ... -> ORIGINAL`), the XBLA
+  remaster's under XBLA (`-> REPLACED phys=256x256`), same square, same
+  placement, the white edge alpha as before.
+- Provider independence both ways: 05d3 (XBLA yes, COMMUNITY no) and 0112
+  (COMMUNITY yes, XBLA no - the XBLA frame at the poster draws the
+  decode).
+- Review negative: at the sign pose under XBLA, 02c2 / 011a / 02c5 / 07bc
+  / 0703 / 0701 each carry only a review-tier candidate and read MISSING
+  (never converted, never loaded) - ORIGINAL drawn.
+- Alpha: opaque (the Facility walls 0125 / 02a3), cutout (the Depot
+  spawn's fence bars: crisp bars, the wall and sky through the gaps, no
+  halo, no black box); graded not individually witnessed in a found
+  scene (76 of 468 community images carry mid alpha; the upload and blend
+  path are the decode's own).
+- Cache identity, live (the watch, posted messages only, the sign pose):
+  ORIGINAL -> COMMUNITY HD -> XBLA -> ORIGINAL by RIGHT, then LEFT x3 -
+  gen 1..7, the 05d3 transcript ORIGINAL / ORIGINAL / REPLACED / ORIGINAL,
+  window captures matching; no restart, no level reload.
+- Switch stress: three cycles ORIGINAL -> COMMUNITY HD -> XBLA -> COMMUNITY
+  HD -> ORIGINAL (12 switches, gen 13): no crash, the correct transcript
+  each cycle, files loaded 21 with reloaded 0 (the resident cache served
+  every re-switch), resident 21 images 12376 KB (no growth), GL cache 127
+  slots of the 256 ring, replaced uploads 118 over the run.
+- Simulation: dam-pad.input, windowed, store active, SL_TRACE_OUT, 3000
+  pumped frames: ORIGINAL / COMMUNITY HD (49 loaded, 2074430 replaced
+  resolves) / XBLA (9 loaded) traces byte-identical, 613402 b, sha256
+  A1FD1FB830CCED8D - the #43 baseline's hash.
+- ORIGINAL identity: master 1fd6335a exe (scratch worktree build) vs this
+  exe, key absent and key 0, four poses (Facility theta 270 / theta 90,
+  Archives room 14, Depot spawn): frames byte-identical (1C9ABB4E...,
+  23818A31..., 87E29178..., 4F0C02B6...); census lookups 0.
+- 2x2 at the owner's Dam mark 1 (15227.031 / 60.308 / 13970.599 theta
+  212.418 room 110): eval / reject / lifted / tick-lift and tris move
+  only with WORLD DETAIL (60/10/0/0, 1650 tris vs 92/42/42/16, 2550 -
+  under either set), the WD-only pixel diff the same bbox 318..491 x
+  314..367 (1604 / 1611 px), the TEX-only diff frame-wide.
+- Real scenes x three sets (360 frames): Facility catwalk loaded 38 / 10
+  (comm / xbla), Dam mark 1 41 / 11, Archives room 14 32 / 3, Frigate
+  spawn 16 / 6; invalid 0 everywhere; the GL cache ring identical across
+  sets per scene (171 / 195 / 130 / 101); every run survived.
+- Performance, Dam mark 1, SL_PHASE, 179 rendered frames, twice each: DL
+  walk ORIGINAL 7.965 / 7.959 s, COMMUNITY HD 8.072 / 8.051 s (+1.1%),
+  XBLA 8.006 / 7.987 s; resident 21 MB / 4.3 MB RGBA; the runs' wall
+  within 0.08 s (the initial load of 41 files inside that).
+- Missing / malformed: a truncated, a wrong-magic, a garbage and a
+  wrong-embedded-id file each reported ONCE and drawn ORIGINAL, the good
+  file beside them loaded; a set folder that does not exist is ONE line
+  (`set-folder=... NOT FOUND - every texture falls back to ORIGINAL`);
+  with SL_TEXPACK_ROOT unset the line names the player-data root.
+- UI: front end OPTIONS -> SETTINGS -> DISPLAY row 6 TEXTURES (BACK at
+  slot 7), Enter advancing ORIGINAL -> COMMUNITY HD -> XBLA -> ORIGINAL,
+  each witnessed by the options line (`textures=1(COMMUNITY HD)` ...),
+  `textures=1` written; watch SIGHTLINE -> GRAPHICS -> textures (row 1),
+  LEFT / RIGHT wrapping both ways.
+- Gates: build.ps1 OK (normal, last); test.ps1 facility 300 PASS;
+  settingstest 168 -> 180 / 180; texprovtest 56 / 56 (new); displaytest
+  67 + 171; inputtest 223 checks, 22 failed (B-096, unchanged);
+  check_layering.py 282 = baseline; __sgi proof (texprov\sgi_proof.sh,
+  base 1fd6335a): image.c / options.c / options.h token-identical under
+  __sgi, controls differ, native arms +22 / +22 / +3 lines, zero #47
+  tokens in any __sgi expansion. `make trace-verify` NOT run (no MIPS
+  toolchain).
+
+### Parked coverage debt (with the evidence to pick it up)
+
+- Fonts and HUD glyphs: not image-table textures (UNREGISTERED at the
+  seam, 8x7 / 8x8 tiles) - a font provider would be a second bridge.
+- Effects frames (explosion / smoke / death sprites): a different draw
+  path; 1 of 706 community effect files maps to an image-table id.
+- XBLA whole-model UV atlases (characters, heads, most guns and the
+  re-authored level art): no per-texture mapping exists; a UV-changing set
+  is a separate adaptation layer (the issue body's stop-and-document).
+- Review-tier XBLA candidates (148): a visual skim promotes or drops
+  each; never loaded until promoted into the accepted root.
+- NPOT wrap tiles (shape misses): a replacement for a texture the RDP
+  reads past would need the padding rows the pool holds; not attempted.
+- Graded-alpha witness in a found scene (candidates 01c7 / 01c8 at the
+  Depot, 01a5 in the Archives).
+- The Archives posters render MIRRORED under ORIGINAL (and therefore
+  under every set) - a pre-existing rendering question, not this
+  sprint's; a cartridge frame at the pose would settle whether Rare's
+  mapping mirrors them.
+- A shipped converter for a player's own copy of a set (the pack-to-SLTX
+  step lives outside the repository today).
+
+Scratch (session, not committed): texprov\ run.ps1 / replay.ps1 /
+scenes.ps1 / montage.py / abdiff.py / sgi_proof.sh / boundary.ps1; the
+A-*, P-*, X-*, T-*, S-*, R-*, I-*, Q-*, SC-*, PF*, MB-* logs; shots\ (the
+ORIGINAL / COMMUNITY HD / XBLA frames and crops, the front-end and watch
+captures); the master worktree build under %TEMP%\slm.
+
+## 2026-09-22 - #47 OWNER ACCEPTANCE **FAILED**, and the repair. The first
+## round's packs lived OUTSIDE the tree behind an exported SL_TEXPACK_ROOT,
+## so the owner's ordinary launch read a pack root that did not exist and
+## drew ORIGINAL under every set. The converter now ships (tools/texpack),
+## a checkout prepares its own pack, and play.ps1 hands it to the child.
+## The second report - the two UI surfaces disagreeing - was MEASURED in
+## five flows and DOES NOT REPRODUCE. #47 stays OPEN; retest pending.
+
+Owner, verbatim: "I don't notice any changes with the graphics or textures.
+Still seems to be the original when i switch to any option." and "when i
+changed textures in watch, and went back outside the mission, the change
+didn't translate to the options either."
+
+Owner observation wins the gate. The previous round's visual claim was made
+under `SL_TEXPACK_ROOT=<a research workspace>` - a variable the owner's
+launch never sets - so the agent's launch and the owner's launch were never
+the same launch, and the one that mattered read nothing.
+
+### First wrong stage: root resolution, before a single texture is looked up
+
+The causality was already on the owner's disk, no instrumentation needed:
+their `config.ini` persists `textures=2` (XBLA - so the SETTING had been
+changed and saved) while `%LOCALAPPDATA%\sightline\assets\texpacks` DOES NOT
+EXIST. An ordinary launch, scratch config `textures=1`, no SL_TEXPACK_ROOT,
+Facility catwalk, 600 frames:
+
+```
+sl_texprov: TEXTURES=COMMUNITY HD root=...\assets\texpacks (player data)
+            set-folder=...\assets\texpacks\community NOT FOUND
+            - every texture falls back to ORIGINAL
+sl_texprov: ... lookups=162579 hits=0 miss-hits=149980 files loaded=0
+sl_tex: ... #47 provider-replaced uploads=0
+sl_texprov: WATCH id=05d3 set=COMMUNITY HD ... -> ORIGINAL 0x0
+```
+
+Every stage after that was right and had nothing to work on. `grep texpack
+tools/windows/play.ps1` came back EMPTY: the launcher had no texture-set
+handling at all, which is the whole defect. The provider, the seam, the
+cache identity, the UV rule and the SLTX format are unchanged and were never
+implicated - nothing in the renderer was touched this round.
+
+### The private convention, and the tooling that fills it
+
+Two directories in the checkout, behind the boundary `baserom.u.z64` already
+lives behind, both gitignored: `texsources\` (what the user supplies) and
+`texpacks\` (what the tool writes - the pack root). The owner's XBLA source
+archive was MOVED out of a personal downloads folder into `texsources\`
+under a neutral project filename; size and SHA-256 recorded and re-verified
+equal after the move, the old location proved empty, `git status` clean.
+
+`tools/texpack/` now holds the converter, ported from the research
+workspace: the container reader, the DXT1 / DXT3 / DXT5 / ARGB /
+single-channel decoders with the console's untiling, the SLTX writer with
+the runtime's own bounds, and TWO MAPPING TABLES - per texture the N64
+image-table id, that image's width and height, and the identity of the file
+that replaces it (a checksum for Community HD, a resource name for XBLA).
+Identities and dimensions; no pixels, no payload, no path, no acquisition
+pointer. 38 KB and 21 KB. The issue body's own rule is the authority here:
+"tests use hashes, metadata and synthetic fixtures only".
+
+`tools\windows\prepare-textures.ps1` is the one command (`-Community`,
+`-Xbla`, `-CommunityArchive`, `-XblaArchive`, `-SelfTest`; both sets by
+default). Community HD is read straight out of the official release archive
+- no extraction, no external tool. XBLA needs a container step, so 7-Zip
+(discovered at runtime, a developer tool like the compiler) takes out ONLY
+the 52 bundles the accepted mapping names, into gitignored build scratch,
+and the archive's own top-level layout is DISCOVERED from its index rather
+than assumed or spelled anywhere. Writes go through a temporary and are
+renamed, so a rerun replaces a pack and never half-writes one.
+
+**Community HD acquisition, per the recorded decision of 2026-09-18**: the
+maintainers declined direct redistribution of the texture files in any form
+and suggested a script/mapping adapting the official pack, or direct
+consumption of it. That is exactly what this is. The tool DOWNLOADS NOTHING
+and MIRRORS NOTHING: the user obtains an official release and puts it in
+`texsources\`. No pack bytes, converted or otherwise, in Git or in a
+release.
+
+### Measured: the port reproduces the accepted pipeline exactly
+
+Both sets regenerated from the user's own source archives, with the research
+workspace used only as an oracle: **468 of 468 community and 126 of 126
+accepted XBLA `.sltx` files byte-identical (sha256) to the ones the previous
+round rendered from.** Counts are the authoritative 468 / 126. Review-tier
+and alternative candidates are not in the mapping and cannot be emitted.
+
+### The normal launch now shows them - `.\tools\windows\play.ps1`, nothing set
+
+play.ps1 hands the child `SL_TEXPACK_ROOT=<checkout>\texpacks` when that
+exists; an explicit value still wins, exactly as `SL_ROM` does; and with a
+non-ORIGINAL set selected and no pack prepared it prints ONE line naming
+`prepare-textures.ps1`, never per texture.
+
+- XBLA, Facility 6750/106/-2550 th90 room 68: `root=<checkout>\texpacks
+  (SL_TEXPACK_ROOT) set-folder=...\xbla found`, `WATCH id=05d3 ... ->
+  REPLACED phys=256x256`, hits 23055, files loaded 10, replaced uploads 11.
+- COMMUNITY HD, Archives 260/167/963 th156.4 room 14: `WATCH id=0112 ... ->
+  REPLACED phys=352x528`, hits 95115, files loaded 32, replaced uploads 50.
+- ORIGINAL: replaced uploads 0, no pack read - unchanged, as designed.
+- Explicit root precedence: `SL_TEXPACK_ROOT=<scratch>` named in the census
+  in place of the checkout's.
+- Malformed `textures=banana`: the store reads 0, TEXTURES=ORIGINAL, zero
+  lookups, zero replaced uploads.
+- **Independence:** with the research workspace RENAMED AWAY for the
+  duration of the launch, the same witness still replaced - the checkout
+  owes that workspace nothing.
+
+### The second report: measured in five flows, NOT REPRODUCED
+
+An exhaustive call-site audit found no cache to be stale: `textures` is one
+row in one table (`sl_settings.c`, index == enum), `sl_textures()` is the
+only getter and `sl_textures_step()` the only writer, and BOTH surfaces
+rebuild their displayed string from `sl_textures()` inside the per-frame
+draw - the watch at `options.c:4577`, the front end at
+`sl_front_options.c:1556`, the same pattern WORLD DETAIL, ASPECT, FOV, LOOK
+and AIM already use. `sl_settings_init` returns early once active, so
+nothing re-reads the file after boot; `sl_settings_sync_from_game` touches
+only LOOK_UPDOWN and AIM_CONTROL.
+
+Then measured, through a synthesised-input UI harness (scratch config and
+eeprom throughout, waiting on the game's own witness lines, exit by the
+window's own close):
+
+- **A, same process:** Facility -> watch -> SIGHTLINE -> GRAPHICS ->
+  textures, stepped twice (`textures step dir=1 -> 1(COMMUNITY HD)`, then
+  `-> 2(XBLA)`) -> mission ABORTED from the watch -> the front end comes up
+  in the SAME process -> OPTIONS > SETTINGS prints
+  `... wdetail=1(ENHANCED) textures=2(XBLA)`. The two surfaces agree.
+- **C, across a restart:** the watch wrote `textures=1`, clean quit,
+  relaunch from that config, front end prints `textures=1(COMMUNITY HD)`.
+- **E, malformed:** ORIGINAL everywhere, above.
+- Plus the two root-precedence flows.
+
+No flow produced a mismatch. The honest reading of the owner's second
+sentence is therefore the SAME defect as the first: with no pack on disk,
+changing the set in the watch changed nothing visible, and changing it in
+the front end changed nothing visible either - "the change didn't translate
+to the options either" is the absence of any effect, not two rows
+disagreeing. If the owner's retest still shows two DIFFERENT values in the
+two places, that is new evidence and the flows above are the harness to
+re-run against it. Nothing in C was changed on a hypothesis.
+
+### Gates
+
+`prepare-textures.ps1 -SelfTest` 74 checks 0 failed (new; synthetic
+fixtures only - a generated image, a zip built in a temporary directory,
+bytes that are deliberately not a container - and it asserts the mapping
+tables carry no URL, no drive letter and no archive extension).
+build.ps1 OK (normal, last); test.ps1 facility 300 PASS; settingstest
+180/180; texprovtest 56/56; displaytest 67 + 171; inputtest 223 checks 22
+failed (B-096, unchanged); check_layering 282 = baseline. No `src/` change,
+so no `__sgi` proof was owed and none of the trace surface moved.
+
+Asset boundary, re-proved before every commit: `git status` clean of both
+private directories, `git ls-files` holds neither, `git check-ignore`
+names the rule for each, and `git archive HEAD` (3724 entries - what the
+public export publishes) matches nothing under `texsources`, `texpacks`,
+`.sltx`, `.7z` or the pack archive. `package-release.ps1` stages named
+files, never a tree. No owner path, no username and no acquisition pointer
+in any tracked file.
+
+### Parked, unchanged
+
+Every coverage debt from the first round stays parked exactly as recorded
+(fonts and HUD glyphs, effects frames, XBLA whole-model UV atlases, the 148
+review-tier candidates, NPOT wrap shape-misses, the graded-alpha witness,
+the Archives posters' pre-existing mirroring). Added to the list: a CI step
+for the preparation tooling's selftest - it is asset-free and would run
+anywhere, but CI was out of scope this round and the change is the owner's
+to approve. The conversion's Pillow / numpy prerequisite is a developer-tool
+dependency, declared nowhere and linked by nothing; requirements.txt was
+deliberately NOT touched (project rules: ask before adding).
+
+Scratch (session, not committed): texrepair\ run.ps1 / ui.ps1 /
+derive_mapping.py and the R-*, N-*, I-*, U-*, F-*, A-*, E-*, P-* run logs.
+
+## 2026-09-22 - #47 ACQUISITION AUTOMATED (developer AND player), and the
+## whole mapping verified against the game's own decode. The Community HD set
+## is now fetched from its maintainers' pinned release, verified by hash and
+## converted locally - by a checkout, and by a release package with no Python
+## in sight. 594 mapped textures compared, 20 campaign levels swept per
+## provider. Sightline still redistributes nothing. #47 stays OPEN.
+
+Owner, verbatim: "I don't want to do any of that myself. I don't have the
+textures on hand, they must be pulled dyanmically"; "we will never
+redistribute the community textures so we need to automate that for the users
+too if not already"; "Make sure you are looking at the texture files and IDing
+where they are in game and automatically go to those textures and compare all
+of them."
+
+### The manual step that had no reason to exist
+
+The previous round ended with a tool that could convert a pack but not obtain
+one: the source archive had to be found and placed by hand. Nothing in the
+recorded permission of 2026-09-18 required that. The maintainers declined
+redistribution BY Sightline and suggested a script adapting their official
+pack; a tool that downloads that pack, on the user's own machine, from the
+maintainers' own release, redistributes nothing and is exactly what was
+suggested.
+
+Upstream, discovered rather than assumed (the releases API): the project
+publishes ONE release, v2025-12-30, with three assets - a 4K HTS pack
+(1.28 GB), an HD HTS pack (80 MB) and the PNG/HD zip (135256079 bytes,
+sha256 a72d082e...90ba). The PNG/HD asset is the one the mapping table was
+made against and the only one this tooling reads. The copy already in
+texsources\ proved BIT-IDENTICAL to that asset - same size, same SHA-256 as
+the release's own digest field - so the pin was written against the very
+release the previous round converted 468 textures from.
+
+tools\texpack\community-source.json records repository, tag, asset, size and
+SHA-256 - identities only - and tools\texpack\get-textures.ps1 asks for that
+release BY TAG. Not "latest": a release discovered by "latest" drifts under a
+mapping table made against one, and the listing is consulted only to say
+something useful when the pin is gone. Resumable (HTTP Range into a .part),
+progress-reporting, hash-verified before use, and an archive already present
+and matching is used as it stands.
+
+### The player half, and the dependency question answered rather than assumed
+
+A packaged player has no venv, so "the converter needs Pillow" would have made
+the player path impossible. Measured instead: a conversion written against
+System.Drawing (PNG) that writes SLTX directly needs only the PowerShell
+Windows already ships - and produces 468 of 468 files BYTE-IDENTICAL to the
+Python converter's. selftest.py now asserts that agreement on synthetic
+fixtures (an RGBA gradient, an odd size, 1x1, a mapped id the archive lacks)
+so the two cannot drift apart unnoticed.
+
+So a release package gains four files and no pack byte: Get-Textures.cmd
+beside the launcher, tools\get-textures.ps1, tools\community-source.json,
+tools\mapping\community.json. It writes to
+%LOCALAPPDATA%\sightline\assets\texpacks\community - the runtime's own second
+root - and caches the archive beside it. validate-package.ps1 now REQUIRES all
+four (the fetcher ships whole or not at all) and every existing prohibition is
+untouched; the mapping table was renamed community-hd.json -> community.json
+precisely because the validator refuses any file whose NAME looks like a
+texture set, a rule worth keeping exactly as strict as it is.
+
+requirements.txt now declares Pillow and numpy in their own section, marked as
+prerequisites of ONE developer tool. The file's own rule is "add them only
+when something actually imports them" and tools/texpack imports both.
+
+XBLA IS UNCHANGED AND UNAUTOMATED: user-supplied, never fetched, no
+acquisition pointer in the tree, in the package or in these notes.
+
+### Measured, end to end, from a clean state
+
+texpacks\ deleted and the local archive moved away, then a bare
+.\tools\windows\prepare-textures.ps1: fetched the pinned release (129 MB in
+3 s), verified size and SHA-256, and rebuilt community 468 / xbla 126 with all
+594 files byte-identical (sha256 manifest) to the previous generation. A
+second run downloaded nothing and converted nothing - both sets stamp their
+source's SHA-256 into gitignored build output. The packaged entry point, run
+from a staged package with no repository on the path, downloaded and converted
+468 textures identical to the developer pack, exit 0; a second run re-used the
+cache. Failure UX exercised by pointing a copy of the tool at a tag that does
+not exist: one paragraph naming the upstream project, what it currently
+publishes, and -AllowUnpinned.
+
+Witnesses re-taken through an ordinary launch (play.ps1, no SL_TEXPACK_ROOT
+exported, scratch config): Archives 260/167/963 th156.4 room 14 under
+COMMUNITY HD - WATCH id=0112 -> REPLACED phys=352x528, 32 files loaded, 38
+replaced uploads, 106019 hits; Facility 6750/106/-2550 th90 room 68 under
+XBLA - WATCH id=05d3 -> REPLACED phys=256x256, 10 files loaded, 10 replaced
+uploads; ORIGINAL at both poses - zero lookups, zero replaced uploads, no pack
+read. The root line names <checkout>\texpacks (SL_TEXPACK_ROOT), handed to the
+child by play.ps1.
+
+### STAGE V - the whole mapping, checked rather than asserted
+
+New seam, dark by default: SL_TEX_DUMP_IDS=<dir> writes the renderer's decode
+ONCE PER TEXTURE NUMBER in the pack's own format, so a decode and a
+replacement for the same id are two files one reader opens. The id comes from
+the provider's existing side table (sl_texprov_id_of, new, reading the same
+reg_find the resolve path reads). Without it, "compare all of them" has no
+second operand.
+
+THE SWEEP. All 20 campaign levels x 3 providers, bounded frames at each
+level's own start, 60 runs. (First attempt discarded: SL_BOOT_LEVEL is a STAGE
+NUMBER - strtol - so passing a NAME booted stage 0 sixty times and produced
+twenty identical results. The tell was that every level reported the same 12
+ids.)
+
+V1/V3 - where the ids live, and what each provider did with them:
+
+```
+                            community        xbla
+mapped ids                      468           126
+resolved in >= 1 level          331            85
+replaced somewhere              331            83
+resolved but NEVER replaced       0             2   (0826, 0828)
+mapped but never resolved       137            41
+```
+
+Per level, replaced-id counts run 7 (egypt) to 53 (runway) for COMMUNITY HD
+and 0 (egypt) to 15 (runway) for XBLA; provider-replaced uploads peak at 224
+(aztec, community). The 137 / 41 "never resolved" are not a defect: a level's
+start pose does not draw the whole level, and the owner's direction was
+explicitly not to walk the world looking for textures.
+
+V2 - ALL 594 MAPPINGS COMPARED OFFLINE (v2-table.csv in scratch), each against
+the decode where one was seen: 363 of 468 community and 84 of 126 xbla.
+Checked per id: the mapping's declared N64 size against the pool's, the
+replacement's physical size and scale, alpha kind on both sides, luma MAE and
+Pearson correlation of the replacement box-filtered down to the decode's size,
+degenerate content, and duplicate payloads.
+
+- Dimensions: every community entry's declared N64 size matches the decode.
+  Two xbla entries do not - and they are exactly the two that never draw.
+- Scale: 24 community and 14 xbla entries are a non-integer multiple of the
+  N64 image, 14 and 2 anisotropic. Harmless by design - the renderer
+  normalises by the LOGICAL tile size - with 0a88 (32x32 -> 487x512) the
+  extreme.
+- Degenerate: 0478 and 0479 (runway) are all-black replacements, but so are
+  their decodes (MAE 0.0, correlation 1.0) - black decals, not a defect. 033a
+  (jungle) is a single-colour replacement of a binary-alpha decode; not
+  visible at the sampled scene.
+- Duplicates: 30 community and 8 xbla replacements share payload with another
+  id in the same set (013b/013c, 012b/012c and so on). The game's own artwork
+  for those pairs is near-identical too; recorded, not flagged.
+- Correlation is a weak instrument here and is reported as such: an HD pack is
+  a REPAINT, not an upscale, so a faithful replacement can correlate poorly
+  with the decode. Median 0.599 (community) / 0.761 (xbla). Used only to RANK
+  candidates for the eye, never to judge.
+
+THE ALPHA FINDING, AND WHAT IT IS NOT. 118 community and 24 xbla mapped ids
+have a decode with transparency and a fully opaque replacement (54 and 12 of
+them with the decode more than half transparent). This is a property of the
+UPSTREAM PACK, not of the conversion or the mapping: probed directly, the
+pack's own files for those ids are RGBA PNGs whose alpha channel is 255
+everywhere (1760 of 1761 pack files are RGBA; exactly one is RGB). The
+converter carries what it is given. At the two scenes captured for it (dam,
+jungle) it produced no visible artefact - the affected ids in view are drawn
+opaque anyway - so it is recorded as a measured property with a named check,
+not claimed as a defect.
+
+THE ONE HONEST COVERAGE DEFECT: xbla 0826 and 0828 can never draw. They are
+the only mapped ids resolved in a level and never replaced anywhere, and the
+runtime says why in one line: `id=0828 SHAPE-MISS tile 64x64 vs image 56x56 -
+ORIGINAL drawn`. Docs first settled which number is right: `images text and
+font/imageTypes.txt` gives both as [W38 H38] - 0x38 = 56 - so THE MAPPING IS
+CORRECT and the pool reports the power-of-two-padded 64x64 that the tile
+samples. The provider compares the pack's declared N64 size against the pool
+entry, so for a non-power-of-two image the two can never agree. That is also
+the cause of the jungle shape-miss cluster (31 ids, e.g. `tile 16x14 vs image
+14x14`), until now parked as "NPOT wrap shape-misses" without a cause. NOTHING
+WAS CHANGED on this: the fix is a decision - whether the provider should
+compare against the image table's size, or the mapping should record the
+pool's - and it is the owner's. 0828 additionally looks like a wrong resource
+(MAE 156, correlation -0.41, a 1:1 "replacement"), so promoting it by editing
+dimensions would have been exactly the "lower the threshold" move the brief
+forbids. Parked, with evidence.
+
+V4 - IN-WORLD CONFIRMATION. dam and jungle captured under all three providers
+at an identical pose with the RNG pinned. Geometry, character pose, foliage
+shape and placement are identical; only texel colour changes (dam 56.1% of
+pixels under COMMUNITY HD, 43.2% under XBLA; jungle 24.8% / 10.6%). No filled
+cutout, no shifted UV, no stretched tile.
+
+### The owner's second report, driven for real this time
+
+A synthetic-pad harness (SL_PAD_VIRTUAL + SL_PAD_SCRIPT, the seam that already
+exists) drove Facility -> watch -> SIGHTLINE -> GRAPHICS -> TEXTURES: the row
+stepped 0(ORIGINAL) -> 1(COMMUNITY HD) -> 2(XBLA) -> 0, the provider switched
+live at each step, and the setting was PERSISTED (textures=1 written to the
+scratch config). A second process launched from that same file came up with
+`TEXTURES=COMMUNITY HD ... set-folder ... found` before any mission - so the
+watch's change does reach a front end. No disagreement was observed between
+the store and either surface.
+
+The in-process leg was NOT completed, and the reason is itself a finding:
+ABORTING THE MISSION FROM THE WATCH UNDER DIRECT BOOT HANGS THE FRAME PUMP -
+the watchdog fires with the allocator-spin signature (memp.c `while (1)`),
+exit 3, at the Z+A abort confirm. Direct boot skips the front end the abort
+path returns to, so this is very likely a developer-path artefact rather than
+a player one; it was NOT reproduced from a front-end launch and nothing was
+changed on that hypothesis. Recorded so the next attempt starts from it.
+
+Front-end navigation by synthetic pad was parked after five attempts (those
+menus are pointer-driven and the intro timing varies, so a scripted press
+lands on a different screen run to run). The DISPLAY row was therefore read
+from the store and from a fresh process, not from the rendered row.
+
+### Gates
+
+prepare selftest 78 checks 0 failed 0 skipped (up from 74: the two converters'
+agreement is now asserted); texprovtest 56/56; test.ps1 facility 300 PASS;
+settingstest 180/180; displaytest 67 + 171; inputtest 223 checks 22 failed
+(B-096 baseline, unchanged); check_layering 282 = baseline; build.ps1 normal,
+last. make trace-verify not run (no MIPS toolchain on this host); the one src/
+change is a diagnostic that is dark unless its variable is set and touches no
+game state.
+
+validate-package.ps1 on a hand-staged package carrying the four new files:
+every prohibition passes and REQUIRED passes; the single failure is the
+compile path in THIS checkout's debug executable, which a real package build
+(a scratch worktree) does not carry.
+
+### Asset boundary, re-proved
+
+git status clean of both private directories; git ls-files holds neither and
+no .sltx; git check-ignore names the rule for each; git archive HEAD (3737
+entries - what the public export publishes) matches nothing under texsources,
+texpacks, .sltx, .7z or the pack archive. The staged diff of every commit
+greps ZERO for the owner's name, the XBLA archive's name, the private
+workspace name and the user-profile path. The upstream Community HD URL
+appears in tracked files deliberately: it is the legitimate official source
+and the whole point of the round.
+
+### Parked, unchanged or added
+
+Every coverage debt from the previous rounds stays parked (fonts and HUD
+glyphs, effects frames, XBLA whole-model UV atlases, the review-tier
+candidates, the graded-alpha witness, the Archives posters' pre-existing
+mirroring - re-confirmed in frame this round: the right-hand poster is
+mirrored under ORIGINAL and COMMUNITY HD alike, which is Rare's own draw).
+Added: the NPOT pool-padding shape-miss above with its cause and the decision
+it needs; xbla 0828 as a suspected wrong resource; the abort hang under direct
+boot; the pack's opaque-alpha ids; and a CI step for the preparation selftest
+(still asset-free, still the owner's to approve).
+
+Scratch (session, not committed): texrepair2\ sweep.ps1 / witness.ps1 /
+padrun.ps1 / padscript.py / v4.ps1 / verify.py / coverage.py / cutout.py /
+alphaprobe.py / ppm2png.py, the sweep\ and v4\ run logs, origdump\ (the decode
+for 20 levels), frames\ (the witness and comparison captures), pkgstage\ and
+playerdata\ (a staged package and the pack a player would get), v2-table.csv
+and v1-where.csv.
+
+## 2026-09-22 - #47 THE OWNER'S QUESTION ANSWERED WITH A MEASUREMENT, and the
+## cycle key. "Did you test them? ... Most of it looks the same. Water on the
+## dam looks the same in all version." Nine poses, three providers, one frame
+## each, plus two new dark-by-default seams that say WHAT IS ON SCREEN and
+## WHICH PIXELS A TEXTURE PAINTS. The observation is CORRECT, has two
+## separate causes, and neither is a defect. TEXTURES now cycles on F5 and on
+## the pad button that used to mark. #47 stays OPEN.
+
+Owner, verbatim: "Did you test them? Like visually start it at the same
+scene, check what graphics get loaded and cycle through each setting? Most of
+it looks the same. Water on the dam looks the same in all version. Also, I'd
+like to be able to cycle by using F5 on keyboard, and the 'Select' button
+(the button that currently marks) on controller? We wont need to mark with
+controller."
+
+The honest reading of the previous rounds: they proved replacement COUNTS and
+mapping sanity. Neither answers "what is on screen and did it change", and
+"most of it looks the same" is a statement about exactly that.
+
+### The two seams the question needed (src/gfx/sl_gfx_dl.c, both dark)
+
+SL_TEX_COVERAGE=<file> (+ _FRAME=1, _FIRST/_LAST): per N64 texture number,
+the screen area its primitives cover, viewport-clipped, for ONE frame - the
+id recorded on the GL cache entry at upload from the provider's existing side
+table (sl_texprov_id_of), one probe per upload, not per draw. Per-frame mode
+clears at each frame start and publishes the frame that just ended, because
+averaging a moving camera describes no capture. It counts OVERDRAW and does
+NOT depth-test, and is reported as ranking, not as visible pixels.
+
+SL_TEX_HILITE=mapped|<hex id> (+ _RGB): the visible-pixel measurement beside
+it. The selected textures upload as a FLAT COLOUR over the decode's own alpha
+(a cutout stays a cutout), decided before the cache probe so want_enh stays
+in the key. Used in PAIRS - the same pose in two colours, the mask is the
+pixels that differ - because differencing one hilite against an ordinary
+capture misses every pixel the texture paints black.
+
+### THE CONTROL, which the previous rounds did not have
+
+ORIGINAL captured TWICE per scene. First attempt: control and depot reported
+98-99% of pixels changed under BOTH sets while XBLA had replaced 0% of the
+area - changed > could, which is impossible. Cause: the frame pump's VI
+CATCH-UP steps the simulation extra times when a frame ran late, so a
+windowed run advances the world by a machine-load-dependent number of ticks
+and two captures of the "same" pose differ wherever anything moves.
+SL_VI_CATCHUP=0 on every capture: the ORIGINAL-vs-ORIGINAL control now
+differs in 0.00% of pixels at ALL NINE poses, and every number below is a
+texture effect. The first table was discarded, not explained away.
+
+### Nine poses, COULD change vs DID change (community / xbla)
+
+```
+scene                     could C   did C   could X   did X   ids on screen
+archives, the posters      99.4%   92.7%      0.0%    0.0%        4
+archives, facing away      99.4%   81.6%      0.0%    0.0%       10
+jungle, the start          93.6%   41.4%      2.7%    1.9%       20
+facility, the door sign    91.2%   32.0%     20.9%   15.3%       18
+dam, the gate yard (mk1)   89.2%   22.9%      0.1%    0.1%       73
+facility, the corridor     88.0%   41.2%      2.1%    0.2%       61
+dam, the reservoir         80.3%   11.5%      0.0%    0.0%       36
+depot, the yard            37.7%   13.8%     40.2%   26.3%       81
+control, the lift cutscene  4.3%    1.9%      0.0%    0.0%       23
+```
+
+TWO CAUSES, and the table separates them. (a) NOTHING ON SCREEN IS MAPPED -
+Control's lift is 4.3% mappable; one 64x32 texture (08c0) covers 60% of that
+frame and no set has art for it. (b) IT IS MAPPED, IT IS REPLACED, AND THE
+REPLACEMENT LOOKS LIKE THE ORIGINAL - the Dam reservoir, below. Where the
+pack's art really differs the change is not subtle at all: Archives 92.7% of
+the frame, mean delta 24/255.
+
+### THE DAM WATER, the owner's own example, settled
+
+id 0123, 64x64, greyscale, decode alpha 34..153, geometry path. Hiliting that
+id ALONE puts the mask exactly on the water: 30.1% of the frame at that pose.
+
+- XBLA: NOT MAPPED. 0.00% of the water's pixels differ. Unchanged, correctly.
+- COMMUNITY HD: MAPPED and REPLACED (512x512, 8x; census REPLACED, WATCH
+  agrees). 7.5% of the water's pixels differ by more than 6/255; mean 2.4.
+
+Why, arithmetically: box-filtered to 64x64 the replacement differs from the
+decode by MAE 14.3/255, and the Dam at night draws that surface at mean
+luminance 47.9/255 - 19% of full. 14.3 x 0.19 = 2.7 against 2.4 measured.
+THE LEVEL'S OWN LIGHTING IS THE WHOLE DIFFERENCE between "replaced" and
+"looks replaced". The replacement is also SMOOTHER than the decode (luma std
+7.1 vs 15.2) and fully opaque where the decode is graded. Not a bug; nothing
+was changed on it.
+
+NO BLOCKER FOUND: no scene showed a REPLACED id with a zero-difference
+footprint, and `did` <= `could` at all nine poses in both sets.
+
+### C5 with a number, for the size-contract decision that is still the owner's
+
+Across the nine poses NOT ONE SHAPE MISS occurred - the NPOT pool-padding
+question costs 0.00% of on-screen area here. Tree-wide: 732 of 2698 ids are
+NPOT on at least one axis, and 86 of the 541 currently mapped ids are, so
+that is the population the contract can gate. Still the owner's call; still
+not implemented.
+
+### The highest-coverage ids NO set maps (the useful backlog, not a promise)
+
+08c0 (64x32, 60.1% of the control frame), 08d9 (32x32, 9.6%), 09b7 (32x32,
+9.4%, jungle), 08d8 (6.2%), 01c3 (64x16, 6.0%, depot), 0055 (64x64, 4.3%),
+08df (64x17, 3.7%), 0880 (64x64, 2.2%), 05e7 (32x32, 1.9%, dam), 0139, 08de,
+03d7, 0882, 01b5, 05d6, 0648, 028e, 01b1, 04c7, 043e. Nothing was promoted,
+no threshold was lowered and no mapping was invented.
+
+### THE CYCLE ACTION (the owner's request), and the pad's mark
+
+TEXTURE SET is now a REGISTRY action (SL_ACT_TEXTURE_CYCLE, appended last -
+no published bit moves), not another hard-wired scancode: keyboard F5, pad
+BACK ("View" / "Create" / "Select") in EVERY preset, listed by the bindings
+editor in both UIs, re-bindable, persisted as bind.texture_cycle.*. It writes
+the one store row both UIs read (sl_textures_step), so the provider switches
+live at the next resolve. Consumed in sl_input.c and published to the game
+nowhere - the setting is the renderer's - gated on the same `live && !menu`
+predicate the action channels take, and taking its edge from the evaluator's
+raw level memory so a button held across a menu's close makes no edge.
+
+THE PAD NO LONGER MARKS. The hard-wired BACK -> sl_run_mark block is gone and
+BACK left the reserved list to become an ordinary bindable source; F9 and F8
+are untouched and still deliberately unbindable so nothing can steal them.
+The watch controller page's BACK row moved from SL_WC_FIXED (printing "MARK")
+to SL_WC_BUTTON reading pad:BACK, so it prints what is bound. The front-end
+bindings page went from fourteen rows at a 0x10 pitch to fifteen at 0x0F
+starting two units higher - 0x3C + 14*0x0F = 0x10E, the same y the last of
+the fourteen had, so the page ends where it did.
+
+FEEDBACK: the game's OWN bottom HUD message line (bondview.h
+HUDMESSAGEBOTTOM, the FIFO the cartridge's cheats use) prints "TEXTURES:
+COMMUNITY HD". No new text system, no new font, one existing call from
+src/native. Witnessed in a capture.
+
+### Measured, end to end (the pad driving a real launch)
+
+Four presses of BACK via SL_PAD_SCRIPT, Facility door-sign pose: cycle -> 1
+(COMMUNITY HD) -> 2 (XBLA) -> 0 (ORIGINAL) -> 1, provider generation 2/3/4/5
+each time, the 05d3 WATCH transcript ORIGINAL / ORIGINAL / REPLACED /
+ORIGINAL / ORIGINAL (05d3 is an XBLA-only mapping), `textures=1` left in the
+scratch config, and "TEXTURES: COMMUNITY HD" on the HUD in the capture. One
+cycle per press; a 12-frame hold does not repeat.
+
+### PART C, INVENTORY FIRST - and the ceiling is the pack, not the engine
+
+Before promoting anything, both source sides were counted (identities only;
+no pack byte reaches anything tracked):
+
+```
+N64 image table (imageTypes.txt, rule 7)   2698 ids
+   CI8 1646  I/IA 860  CI4 88  RGBA32 70  RGBA16 34; 459 flagged transparent
+   NPOT on at least one axis                732 (27.1%)
+Community HD official release              1763 files, 1750 parse as Rice names
+   already used by the mapping               459 distinct crcs (468 ids)
+   unused                                   1291
+      of which effects/cutscene sprites      976 (explosion 325, smoke 312,
+                                                  gunbarrel 299, death 40)
+      of which font glyphs                   207 (upper/lower/numeric/
+                                                  punctuation/bankgothic/loc)
+      ADDRESSABLE unused                     108 (in-game 59, bunker 28,
+                                                  custom 20, monitor 1)
+XBLA user-supplied source                  1804 non-empty files (334 bundle
+                                                  pairs); the accepted
+                                                  mapping uses 52 bundles,
+                                                  126 entries
+ids mapped by community 468 / xbla 126 / either 541 / NEITHER 2157
+```
+
+THE HONEST CEILING. The Community pack's addressable pool is 108 files - so
+even a perfect keying closes at most 108 more ids and takes coverage to about
+576 of 2698. The remaining ~2100 ids are not gaps in Sightline's mapping: the
+packs contain no art for them. 67 of the 108 have an HD size that is an exact
+4x of some unmapped id's logical size and 89 an exact 8x, so the upside is
+real but bounded, and closing it is an exact-CRC job, not a perceptual one.
+NOT ATTEMPTED THIS ROUND and nothing was promoted: the Rice texel/palette CRC
+has to be reproduced against the 459 known-good pairs before a single new
+mapping can be called evidence rather than a guess.
+
+Also measured and worth correcting: 242 of the 459 already-mapped community
+files are `ciByRGBA` (palette-keyed) names, so the paletted cases are NOT
+categorically unreachable today - only 29 ciByRGBA files are unused.
+
+### Gates
+
+build.ps1 OK (normal, last); test.ps1 facility 300 PASS; inputtest 240 checks
+22 failed (223/22 before; the 17 new checks all pass and the 22 are the
+unchanged B-096 class); settingstest 180/180; texprovtest 56/56; displaytest
+67 + 171; prepare selftest 78/0/0; check_layering 282 = baseline. No src/game
+change, so no __sgi proof was owed. `make trace-verify` not run (no MIPS
+toolchain on this host); nothing in the two new seams is reachable without
+its variable and neither touches game state.
+
+Scratch (session, not committed): tex3way\ run.ps1 / sweep.ps1 / scenes.ps1 /
+capture.ps1 / analyze.py / c0_inventory.py / c5_shapemiss.py / cycletest.ps1,
+the run\ captures and sheets\ (nine 3-up sheets with diff and footprint
+masks, the per-scene id tables, summary.csv, c4-unmapped-ranked.csv).
+
+## 2026-09-22 - #47 THE WATER WITNESS WAS POINTED AT THE WRONG SURFACE, and
+## the XBLA set is NOT replacing art with itself. An audit of all 126 accepted
+## mappings, a correction to the Dam answer, and the two mappings that make
+## the owner's own scene finally change. #47 stays OPEN.
+
+Two owner inputs drove this round. First, a hypothesis: "i don't think
+original and xbla change at all. Maybe we are using the original textures
+that are in that rom and we need the updated textures?" Second, a correction
+to the previous round's Dam analysis: **"wrong side of the dam"**.
+
+The hypothesis is FALSE and was measured, not argued. The correction is
+RIGHT, and it invalidates the previous round's headline answer about the
+water. Both are settled below.
+
+### The hypothesis, tested on all 126 accepted mappings
+
+The source really does ship both asset generations, so the concern was sound.
+The rule that separates them was derived from the source itself: where an HD
+bundle carries a texture with the same dimensions as one in its own legacy
+bundle and near-identical pixels (NCC >= 0.97, absdiff <= 0.035), the old art
+was carried across unchanged. Measured tree-wide: **1464** HD textures have a
+same-size legacy counterpart and **1325 of those are carry-overs** - about
+41% of the HD tree is not remastered at all. The worry had a real target.
+
+It is not this set. Every accepted mapping's replacement was decoded, scaled
+to the N64 logical size and compared with the ROM's own decode:
+
+```
+REMASTERED    124     2x-32x and materially different art
+LEGACY-NO-OP    1     088b, a monitor logo: a faithful 3.75x upscale, KEPT
+UNCLEAR         1     0828, attract button: 1.14x and NEGATIVE ncc, DROPPED
+```
+
+**0 of 126 source from a carry-over texture.** Size ratios: 8x (63), 4x (36),
+16x (11), tail of 2x/3x/7x/32x. The pipeline's requirement that a replacement
+be higher-resolution than the legacy texture had already excluded every
+carry-over. The one demotion is 0828: 1.14x is no resolution gain and a
+negative structural score is the signature of a wrong pairing. A mapping that
+cannot change anything is worse than none.
+
+The same test over the 468 Community mappings: **zero** no-ops, minimum ratio
+2.0, median 8.0. Nothing to report there and nothing changed.
+
+So the reason XBLA looked inert was never legacy termination. It was
+**coverage** - and the Dam was the worst case precisely because its witness
+was aimed at the wrong surface.
+
+### "Wrong side of the dam" - the owner is right, and the old answer was
+### about the concrete
+
+The previous round declared id **0123** the water and explained the lack of
+visible change by the level's night lighting. Sixteen poses were swept this
+round - a full turn from the level's own elevated intro camera and another
+from the crest - with the per-frame census at each, and then the two Dam
+vantages hilited id-by-id:
+
+- **0123 is the dam's DOWNSTREAM CONCRETE FACE.** 64x64, I4, opaque; a grey
+  wall with vertical expansion joints. The Community pack's CRC-exact texture
+  for it is dark rough concrete, which agrees. **Hiliting 0123 at the
+  reservoir pose paints 0.00% of the frame** - it is not drawn on that side.
+- **The water is id 05e7.** 32x32, CI8_RGBA16, opaque, geometry path, found
+  from the level's own intro camera 4 looking across the impounded water.
+  **Hiliting 05e7 alone paints 47.2% of that frame.** The ROM decode is a
+  pale blue-grey ripple.
+
+Why it looked the same in every setting, measured at the reservoir pose
+against an ORIGINAL-vs-ORIGINAL control of 0.000%:
+
+```
+                  whole frame     the water's own pixels
+COMMUNITY HD         8.44%              0.01%
+XBLA                 0.00%              0.00%
+```
+
+Community's 8.44% is mountains and dam, not water. **05e7 was mapped by
+NEITHER set**, so the water was byte-identical under all three. The plainest
+possible reason, and not the one previously given. The lighting arithmetic
+recorded last round (14.3/255 x 19% = 2.7 against 2.4 measured) was always a
+correct statement about **0123, the concrete** - only mislabelled as water.
+docs/texture-packs.md is corrected accordingly; the old claim is not left
+standing.
+
+### The two mappings that were earned
+
+**05e7, the reservoir water.** Stage A already pairs it to the legacy tile
+`_0x0864E125.rgb` in the Dam bundle at NCC **0.945**. The HD Dam bundle
+carries a 512x512 water albedo beside its own matching normal map - the same
+ripple pattern in both, a material pair. Pixels cannot join the halves (best
+NCC against every HD texture in that bundle is +0.14; it is re-authored), but
+everything else agrees: same bundle, clean **16x**, 1:1 aspect both sides,
+and the subject confirmed **in the engine** rather than by eye. Result at the
+same pose and control:
+
+```
+XBLA, before     0.00% of frame      0.00% of the water
+XBLA, after     40.46% of frame     85.76% of the water   (mean delta 10.2)
+```
+
+**011e, the Dam concrete band.** Rank 1 of 1895 remastered candidates from
+two independent queries (z ~ 8.5 on both), clean 8x, 1:1 aspect, opaque both
+sides, and the same distinctive horizontal seam in the ROM decode, the
+Community texture and the XBLA one. It sat in the review tier only because
+the pairing step scored 0.46 against a 0.60 bar. It is **38.6% of the gate
+yard frame** - the largest texture at the owner's own Dam mark.
+
+Accepted XBLA set: **126 -> 127** (+05e7, +011e, -0828).
+
+### Three pairing methods that were tried and FAILED - recorded so nobody
+### re-walks them
+
+The 938 re-authored textures are the real ceiling. Each of these was
+calibrated against the 231-232 pairs pixels had already established:
+
+- **Bundle texture-table order.** If HD and legacy bundles listed textures in
+  the same order every re-authored texture would pair for free. **31 of 231
+  agree** - about chance.
+- **Cross-source agreement** (Community CRC-exact vs XBLA for one id).
+  **40 of 53** true pairs score below the 99th percentile of the null. Two
+  artists remastering one tile diverge as much as strangers. Not a gate.
+- **Cross-bundle co-occurrence.** True for **112 of 232**, and where true it
+  narrows to a single candidate only **9** times. Narrows; does not decide.
+
+### Does the source carry its own original-to-remastered table? NO, not at
+### texture granularity - and this was checked, not assumed
+
+On the owner's lead that the build renders either generation at runtime and
+so must know the correspondence:
+
+- **In the bundles.** Every bundle does hold a resource named "texture
+  pairs" - but it is the bundle's shared **texture pool**, its bytes pixel
+  data, not a table. The generations are separate files with no
+  cross-reference.
+- **In the executable.** It is **not encrypted** and its image is stored raw
+  (format info: encryption 0, compression 1), so it is statically readable.
+  All **144** Dam-bundle texture names were searched for as text and as
+  32-bit values: **0 hits each**, against a control of 0 hits for the same
+  count of random values. Bundle paths absent too; the asset namespace is
+  resolved through the file system.
+
+Consistent with the design: the display switch swaps **whole models**, so the
+runtime pairs a legacy bundle to an HD bundle **by item path** - which this
+pipeline already uses - and never needs per-texture correspondence. Running
+the build under an emulator was NOT attempted and is not proposed.
+
+### Nine poses, re-verified, ORIGINAL-vs-ORIGINAL control 0.00% at every one
+
+```
+scene                        could C   did C   could X   did X
+archives, the posters          91.1%   85.0%     0.0%    0.0%
+archives, facing away          91.1%   74.8%     0.0%    0.0%
+jungle, the start              85.5%   37.9%     2.4%    1.8%
+facility, the door sign        83.6%   29.3%    19.1%   14.0%
+dam, the gate yard             81.7%   21.0%    41.9%   11.9%   <- was 0.1/0.1
+facility, the corridor         71.9%   37.8%     1.6%    0.2%
+dam, THE RESERVOIR  (new)      17.5%    8.4%    47.2%   40.5%   <- was 0.0/0.0
+dam, the face (was "water")    44.6%   10.5%     0.2%    0.0%
+depot, the yard                34.1%   12.7%    36.7%   24.1%
+control, the lift cutscene      4.0%    1.7%     0.0%    0.0%
+```
+
+The Dam rows are the ones that moved. `dam-water` is renamed `dam-face` and
+the reservoir added as `dam-res`, because they are different surfaces with
+different answers.
+
+Note on the two seams: at the face pose the census reports 011e at 4.7% of
+frame while the hilite mask gives 0.24%. Not a contradiction - the census
+counts overdraw and does not depth-test (011e is drawn 490x there and is
+almost entirely occluded); the hilite is the visible-pixel measurement. Both
+behave as documented.
+
+### A pack defect found and fixed
+
+`prepare.py` never pruned: an id REMOVED from the mapping kept shipping from
+an earlier run, so the 0828 demotion would silently not have taken effect
+(the pack stayed at 127 files for a 126-entry table until this was fixed).
+Pack files the mapping no longer names are now removed, and the count matches
+the table exactly.
+
+### Still absent, and honestly so
+
+The other high-coverage unmapped ids were searched against **every** texture
+in the source, not just through the two-step chain: 08c0 (60% of the Control
+frame), 08d9, 09b7, 08d8, 01c3, 0055, 08df, 0880, 03b5, 03b4, 001a. **None
+has a credible counterpart** - every candidate that ranked was the wrong
+aspect or sat inside the null. For the two big Dam backdrop tiles (03b5,
+03b4) the remaster exists but is a full-colour panorama containing sky, on
+different UVs - different art for different geometry, which per-id
+substitution cannot use. Nothing was promoted wholesale, no threshold was
+lowered and no mapping was invented.
+
+### Gates
+
+build.ps1 OK (normal, last); test.ps1 facility 300 PASS; texprovtest 56/56;
+settingstest 180/180; displaytest 67 + 171; prepare selftest 78/0/0;
+inputtest 240 checks 22 failed (the unchanged B-096 baseline);
+check_layering 282 = baseline. No src/game change. `make trace-verify` not
+run (no MIPS toolchain on this host); the change is a mapping table plus a
+developer tool, and neither touches game state.
+
+Scratch (session, not committed): xblaaudit\ - audit1.py / rule.py /
+idxtest.py / crossconfirm.py / cooccur.py / hunt.py / triangulate.py /
+water05e7.py / xexhdr.py / xexpair.py / damexplore2.ps1 / damexplore3.ps1 /
+shoot.ps1 / resanalyze.py / summary.py, the p1-p5 CSVs, the Dam exploration
+sheets and the reservoir panels.

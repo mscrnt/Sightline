@@ -62,6 +62,131 @@ Copy this block. Newest entries at the top of the log.
 
 ## Log
 
+### D-020 — TEXTURES COMMUNITY HD / XBLA (#47): under an opt-in persisted setting the native renderer uploads, for a game texture the selected set carries, that set's image at its own physical size in place of the ROM decode, sampled over the same logical tile; a texture the set lacks stays the decode (never the other set's); default ORIGINAL = the accepted rendering byte for byte (native-only, render-only, the D-009 / D-019 class)
+
+- **Date:**        2026-09-22
+- **Phase:**       1 (v0.3.0 Visual Fidelity, the texture-providers sprint)
+- **Commit:**      (this branch, sightline/texture-providers) - Gitea #47: src/platform/sl_settings.{c,h} (the row) + src/native/sl_settings_apply.c (the accessor pair), src/gfx/sl_gfx_texprov.{c,h} (the provider: identity side table, SLTX loader, resident cache, the one policy owner), src/game/image.c (texLoad / texInitPool native arms feeding the side table), src/gfx/sl_gfx_dl.c tex_acquire (the upload seam and the cache key), src/native/sl_front_options.c (the DISPLAY tab row), src/game/options.{c,h} (the watch's GRAPHICS child row)
+- **Re-baseline:** none required - see "Why it is safe"
+- **Levels:**      all (the seam is one function; which textures change depends on what the player's installed set carries)
+- **First tick:**  n/a - no hashed state moves (measured: the Dam pad replay's per-tick state trace is byte-identical under all three sets, below)
+- **Fields:**      none. Pixels only: under COMMUNITY HD or XBLA a texture the set carries is drawn from the set's image (larger, the same wrap / clamp / mirror, the same tile size the coordinates divide by, the same combiner and alpha path); every other texture, and every texture under ORIGINAL, is the decode
+- **Toggle:**      `textures` in the native settings store (`%LOCALAPPDATA%\sightline\config.ini`), **0 = ORIGINAL (default): the accepted Sightline rendering exactly as it stood before this entry, no pack read**; 1 = COMMUNITY HD; 2 = XBLA. Read by the renderer through `sl_texprov_active()` (src/gfx/sl_gfx_texprov.c) at each texture resolve; an inactive store (trace replay, headless) answers ORIGINAL. THREE ways in, one row: OPTIONS -> SETTINGS -> DISPLAY `TEXTURES  ORIGINAL / COMMUNITY HD / XBLA` (an advancing cell); the watch's SIGHTLINE -> GRAPHICS `textures  original / community hd / xbla` (LEFT / RIGHT, wrapping); and, from 2026-09-22, the binding-registry action **TEXTURE SET** - keyboard **F5**, pad **BACK** (View / Create / "Select") in every preset, re-bindable in both editors - which steps the same row while the player is on foot with no menu up, names the set it landed on through the game's own bottom HUD message line, and cannot fire from inside a menu or from a stale edge as one closes. The pad's BACK stopped marking to make room for it (the owner's decision); the keyboard's F9 / F8 marks are unchanged. docs/texture-packs.md is the architecture.
+
+**What changed**
+
+`tex_acquire` (sl_gfx_dl.c), the one place a resolved tile becomes a GL
+texture, asks the provider for a replacement of the tile's decoded pointer
+at the tile's logical w x h. Under ORIGINAL the answer is NULL at the cost
+of one store read and the upload is the pre-#47 statement. Under a set,
+the provider maps the pointer back to the N64 texture number through a
+side table texLoad's native arm fills (image.c: the bytes at tex->data ARE
+texture tex->texturenum, tex->width x tex->height at the base level;
+texInitPool's native arm drops a pool's registrations), then asks the
+set's folder for `<hex4>.sltx` - once per (set, id), the outcome
+remembered - and, when the file is present, valid and the tile is the
+whole image, returns its RGBA8 at the file's physical size. tex_acquire
+uploads THAT with glTexImage2D in place of the decode (or the B-116
+enhancement, which is skipped for a replacement) and keys the cache entry
+on the provider generation, which every switch bumps. The texture
+coordinates the draw path emits divide by the tile's logical size (tex_apply:
+s / 32 / tile_w; draw_texrect the same), so the replacement is sampled
+over exactly the region and repeat count the decode was.
+
+**Why**
+
+The owner's #47 contract: three texture sets through one abstraction -
+ORIGINAL the game's own, COMMUNITY HD an externally maintained pack the
+player installs, XBLA a user-supplied set - with per-texture fallback to
+ORIGINAL, no set assumed complete, the renderer consuming (active set,
+canonical id) only, no per-frame filename or hash matching, and nothing
+from any set in the repository. The N64 texture number is that canonical
+id; it reaches the seam through the game's own loader, which is why no
+runtime pixel hashing exists.
+
+**Why it is safe**
+
+The boundary: two `#ifndef __sgi` islands in image.c (proof: image.c,
+options.c and options.h preprocess token-identical to the base under
+__sgi, a bare-token control differs, zero #47 tokens in any __sgi
+expansion); the side table is written by the loader and read by the
+renderer and no value flows back. Measured: the dam-pad input stream
+replayed WINDOWED with the settings store active and SL_TRACE_OUT, 3000
+pumped frames, under ORIGINAL, COMMUNITY HD (49 files loaded, 2074430
+replaced resolves) and XBLA (9 files) - all three per-tick state traces
+byte-identical (613402 bytes, sha256 A1FD1FB8...) and identical to the
+#43 baseline trace. ORIGINAL identity: the pre-feature exe (master
+1fd6335a, a scratch worktree build) and this exe at four teleport poses
+(Facility catwalk theta 270 and theta 90, Archives room 14, the Depot
+spawn), key absent and key 0 - byte-identical frames (sha256 1C9ABB4E...,
+23818A31..., 87E29178..., 4F0C02B6...). Positive controls: the Archives
+poster (id 0112, 32x48 CI8 -> 352x528, an asymmetric lettered witness)
+under COMMUNITY HD keeps the ORIGINAL's orientation, mirroring, placement
+and size at a crisp 11x; the Facility door sign (id 05d3, 38x38 ->
+256x256) is replaced under XBLA only and stays the decode under COMMUNITY
+HD (no cross-set fallback), and the poster the reverse; the pistol ammo
+icon (08b7, 5x12 -> 80x180, the 2D texrect path) keeps its orientation
+and placement. A live switch through the watch (ORIGINAL -> COMMUNITY HD
+-> XBLA -> ORIGINAL, then the other way, three full cycles) shows each
+expected image with no stale carry-over, no re-read of resident files
+(reloaded=0), a bounded resident cache (21 images, 12 MB) and the same GL
+cache ring. World Detail x Textures 2x2 at the owner's Dam mark 1: the
+prop population and triangle count move only with WORLD DETAIL (the same
+1604 / 1611-pixel lift under either set), pixels only with TEXTURES.
+Malformed files (wrong magic, truncated, garbage, wrong embedded id) are
+each reported once and drawn ORIGINAL; a missing set folder is one line.
+Performance at the highest-replacement scene (Dam mark 1, 92 replaced
+uploads, 41 resident): the DL walk 7.96 / 7.96 s ORIGINAL vs 8.07 / 8.05 s
+COMMUNITY HD vs 8.01 / 7.99 s XBLA over 179 rendered frames (+1.1% at
+most), the run's wall within 0.08 s. test.ps1 facility 300 PASS;
+settingstest 180/180; texprovtest 56/56; displaytest and inputtest
+unchanged; check-layering 282 = baseline. `make trace-verify` NOT run (no
+MIPS toolchain on this host).
+
+**Amendment, 2026-09-22 (owner acceptance FAILED; the runtime contract is
+unchanged).** Everything above still holds and nothing in `src/` moved -
+the toggle, the seam, the SLTX format, the root ladder (`SL_TEXPACK_ROOT`,
+else the player-data directory) and the per-texture fallback are exactly as
+described. What was WRONG was the claim's reach: every measurement above
+was taken with `SL_TEXPACK_ROOT` exported at a research workspace, which an
+ordinary launch never sets, so on the owner's machine the player-data root
+did not exist, `set-folder=... NOT FOUND` and every texture drew ORIGINAL
+under all three settings. Read the visual evidence above as "the runtime
+does this WHEN A PACK IS PRESENT", never as "a launch finds one".
+
+The repair is entirely outside the binary: the converter now lives in the
+tree (`tools/texpack`, driven by `tools\windows\prepare-textures.ps1`), a
+checkout keeps two gitignored directories for the sources and the pack it
+writes, and `tools\windows\play.ps1` hands that pack root to the child when
+it exists - an explicit `SL_TEXPACK_ROOT` still winning. The witnesses were
+then re-taken through `play.ps1` with NOTHING set (Facility 05d3 REPLACED
+256x256 under XBLA, Archives 0112 REPLACED 352x528 under COMMUNITY HD,
+ORIGINAL replacing nothing), and with the research workspace made
+unavailable to the launch. Owner acceptance remains PENDING: docs/backlog.md
+(2026-09-22) is the evidence.
+
+**Second amendment, 2026-09-22 (acquisition; the runtime contract is again
+unchanged).** Nothing above moves. `src/gfx`, `src/game` and `src/platform`
+keep the same seam, the same SLTX format, the same root ladder and the same
+per-texture fallback; the only binary change in this round is a diagnostic
+that is dark unless `SL_TEX_DUMP_IDS` is set (the decode written once per
+texture number, so a whole mapping can be compared offline).
+
+What changed is where a pack comes from, and it changed in the direction the
+recorded permission already allowed. Sightline still redistributes, mirrors
+and pre-converts NOTHING. Instead `tools\texpack\get-textures.ps1` fetches
+the Community HD project's own pinned release from its own GitHub releases,
+on the user's machine, verifies size and SHA-256 against
+`tools\texpack\community-source.json`, and converts it; `prepare-textures.ps1`
+calls it for a checkout, and a RELEASE PACKAGE now ships the same script with
+a `Get-Textures.cmd` beside the launcher, writing the converted set into the
+player-data root the binary already reads. The packaged conversion needs no
+Python (PNG through System.Drawing) and is byte-identical to the developer
+one over the whole set, so a player's pack and a developer's pack are the
+same files. **The XBLA set is unchanged and unautomated: user-supplied,
+never fetched, with no acquisition pointer anywhere in the tree or in any
+package.**
+
 ### D-019 — WORLD DETAIL ENHANCED (#43): the near-fog visibility-range rejection of props and characters is not applied at the render seam, and a prop the TICK's copy of the same test rejected is drawn without its on-screen flag (the render-only lift), so a prop stays eligible until the far-fog cull or the room / portal set removes it; default ORIGINAL = the accepted rendering byte for byte (native-only setting, the D-009 class; render only, the simulation's own copy of the same test is untouched)
 
 - **Date:**        2026-09-21 (the lift added the same day, on the owner's Dam yard marks)

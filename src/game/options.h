@@ -202,6 +202,10 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                                   * glyphs, too wide for the toggles' columns); the latched
                                   * LEFT / RIGHT and a click on the name step to the other
                                   * profile, through sl_world_detail_step (sl_settings_apply.c) */
+#define SL_WROW_VALUE_TEXTURES 23 /* TEXTURES (#47, 2026-09-21): the same NAMED idiom - original /
+                                   * community hd / xbla; the latched LEFT / RIGHT and a click on
+                                   * the name step through the three sets, wrapping, through
+                                   * sl_textures_step (sl_settings_apply.c) */
 /* The #56 mode rows: toggle rows with hold / toggle for their two cells. */
 #define SL_WROW_IS_MODE(k) ((k) == SL_WROW_TOGGLE_SMODE || (k) == SL_WROW_TOGGLE_CMODE)
 /* A value row of any kind: the same LEFT / RIGHT latch (a step down / up). */
@@ -209,7 +213,7 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                              || (k) == SL_WROW_VALUE_MSENS || (k) == SL_WROW_VALUE_SSENS \
                              || (k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
                              || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
-                             || (k) == SL_WROW_VALUE_WDETAIL \
+                             || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_TEXTURES \
                              || SL_WROW_IS_PAD_TUNE(k))
 /* The #51 controller tuning rows, and each one's id for sl_pad_tune_*. */
 #define SL_WROW_IS_PAD_TUNE(k) ((k) == SL_WROW_VALUE_PSENS || (k) == SL_WROW_VALUE_PDZ || (k) == SL_WROW_VALUE_MDZ)
@@ -217,7 +221,7 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
 /* A NAMED value row: label + name, no cells (the pointer hits the name). */
 #define SL_WROW_IS_NAMED(k) ((k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
                              || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
-                             || (k) == SL_WROW_VALUE_WDETAIL)
+                             || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_TEXTURES)
 /* A row the cursor never rests on. */
 #define SL_WROW_IS_INERT(k) ((k) == SL_WROW_DIMMED || (k) == SL_WROW_INFO_PAD || (k) == SL_WROW_INFO_RES)
 /* The SLIDER rows (#50 owner request, 2026-09-19: "make them sliders like

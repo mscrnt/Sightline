@@ -63,7 +63,8 @@
 static const char *const g_names[SL_ACT_COUNT] = {
     "INTERACT", "RELOAD", "CROUCH", "WEAPON_PREVIOUS", "WEAPON_NEXT",
     "ZOOM_IN", "ZOOM_OUT", "SPRINT",
-    "MOVE_FORWARD", "MOVE_BACK", "STRAFE_LEFT", "STRAFE_RIGHT", "FIRE", "AIM"
+    "MOVE_FORWARD", "MOVE_BACK", "STRAFE_LEFT", "STRAFE_RIGHT", "FIRE", "AIM",
+    "TEXTURE_CYCLE"
 };
 
 /* Previous poll's level per action, for the edge. */

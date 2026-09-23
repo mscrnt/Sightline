@@ -39,6 +39,7 @@
  *     fullscreen_height=0
  *     vsync=0
  *     world_detail=0
+ *     textures=0
  *
  * Unknown keys are ignored and preserved nowhere (the file is rewritten from
  * the table), a malformed or out-of-range value falls back to that setting's
@@ -228,8 +229,29 @@ enum sl_setting {
      * store (replay, headless) answers ORIGINAL. Missing / malformed /
      * out-of-range -> ORIGINAL. */
     SL_SET_WORLD_DETAIL,
+    /* TEXTURES (#47, 2026-09-21): which texture SET the native renderer
+     * draws with. SL_TEXTURES_ORIGINAL (0, the default = the game's own
+     * artwork decoded from the player's ROM exactly as the accepted build
+     * renders it, the #15 enhancement layer included - no pack is read),
+     * SL_TEXTURES_COMMUNITY (1: the Community HD pack, converted locally
+     * into the pack root's community\ folder) or SL_TEXTURES_XBLA (2: the
+     * user-supplied XBLA set, likewise under xbla\). A texture the selected
+     * set does not carry falls back to ORIGINAL - never to the other set.
+     * Read by the renderer through the one provider seam
+     * (src/gfx/sl_gfx_texprov.c, sl_texprov_active) only; nothing in the
+     * simulation reads it, and an INACTIVE store (replay, headless) answers
+     * ORIGINAL. Missing / malformed / out-of-range -> ORIGINAL. */
+    SL_SET_TEXTURES,
     SL_SET_COUNT
 };
+
+/* The #47 texture sets' persisted ids (append-only), and their display
+ * names, "ORIGINAL" / "COMMUNITY HD" / "XBLA"; "?" out of range. */
+#define SL_TEXTURES_ORIGINAL   0
+#define SL_TEXTURES_COMMUNITY  1
+#define SL_TEXTURES_XBLA       2
+#define SL_TEXTURES_COUNT      3
+const char *sl_textures_name(int set);
 
 /* The #43 world-detail profiles' persisted ids (append-only), and their
  * display names, "ORIGINAL" / "ENHANCED"; "?" out of range. */
@@ -301,7 +323,8 @@ const char *sl_stick_layout_name(int layout);
 #define SL_PAD_DEADZONE_DEFAULT  15
 
 /* The "bind." extension (#46): at most this many lines, key / value sizes
- * including the terminator. 14 actions x 2 devices x 2 slots = 56 fit. */
+ * including the terminator. 15 actions x 2 devices x 2 slots = 60 fit (#47
+ * added the fifteenth, TEXTURE SET; a sixteenth is the last that would). */
 #define SL_SETTINGS_EXT_MAX  64
 #define SL_SETTINGS_EXT_KEY  48
 #define SL_SETTINGS_EXT_VAL  32

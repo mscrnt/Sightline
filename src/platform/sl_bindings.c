@@ -49,8 +49,10 @@
  * Escape (cancels a capture; closes menus), Tab (opens the watch), Return /
  * keypad Enter (menu confirm), Space (the fixed classic N64 B, sl_input.c
  * read_keyboard), Backspace and Delete (clear a slot during capture), F8 / F9
- * (the owner's mark keys), and the pad's Start / Back / Guide (pause, the
- * mark). The d-pad's four directions ARE bindable since round 6 (#63 / #64,
+ * (the owner's mark keys), and the pad's Start and Guide (pause). The pad's
+ * BACK left that list in #47: it used to mark, the owner asked for the mark
+ * off the pad, and it is now an ordinary source every preset binds to
+ * TEXTURE SET. The d-pad's four directions ARE bindable since round 6 (#63 / #64,
  * 2026-09-20, the owner: "D pad isn't used at all, and it should be"): in
  * PLAY they are registry sources like any button (pad:DPAD_UP etc., DEFAULT
  * zoom in / out on up / down and the weapon cycle on left / right); in a
@@ -118,6 +120,9 @@ static const struct action_meta g_actions[SL_ACT_COUNT] = {
     { "strafe_right",    "STRAFE RIGHT",    "RIGHT",    SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
     { "fire",            "FIRE",            "FIRE",     SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
     { "aim",             "AIM",             "AIM",      SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
+    /* #47: step the TEXTURES setting. Not a gameplay semantic and not half
+     * of a pair, so its rows carry no wheel context and fire in every one. */
+    { "texture_cycle",   "TEXTURE SET",     "TEX SET",  SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
 };
 
 /* ------------------------------------------------------------ sources -- */
@@ -221,6 +226,15 @@ static const struct source_meta g_pad[] = {
     PADB(SDL_CONTROLLER_BUTTON_DPAD_DOWN,     "DPAD_DOWN",  "PAD D-PAD DOWN"),
     PADB(SDL_CONTROLLER_BUTTON_DPAD_LEFT,     "DPAD_LEFT",  "PAD D-PAD LEFT"),
     PADB(SDL_CONTROLLER_BUTTON_DPAD_RIGHT,    "DPAD_RIGHT", "PAD D-PAD RIGHT"),
+    /* #47: BACK - "View" on an Xbox pad, "Create" on a DualSense, "Select"
+     * on the pad the owner learned it as. It used to be excluded from this
+     * table on purpose (the file header's reserved list) because it marked;
+     * the mark moved off the pad at the owner's request ("We wont need to
+     * mark with controller"), so the button is an ordinary bindable source
+     * now and the texture cycle is what the presets put on it. Appended
+     * last: the indices above are shared with the family name tables and
+     * the capture masks and must not move. */
+    PADB(SDL_CONTROLLER_BUTTON_BACK,          "BACK",       "PAD BACK"),
 };
 #define N(t) ((int) (sizeof t / sizeof t[0]))
 
@@ -270,6 +284,7 @@ void sl_bind_copy(char *dst, int n, const char *src)
 #define P_DD  SPB(SDL_CONTROLLER_BUTTON_DPAD_DOWN)
 #define P_DL  SPB(SDL_CONTROLLER_BUTTON_DPAD_LEFT)
 #define P_DR  SPB(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)
+#define P_BK  SPB(SDL_CONTROLLER_BUTTON_BACK)   /* #47: View / Create / Select */
 
 /* THE BUTTON LAYOUT PRESETS (#63): the PAD slots of every action, in enum
  * sl_action order, two sources each. DEFAULT is ALSO the compiled default
@@ -334,7 +349,8 @@ static const struct sl_pad_layout g_layouts[SL_BUTTON_LAYOUT_PRESETS] = {
         /* STRAFE_LEFT     */ { S0,   S0   },
         /* STRAFE_RIGHT    */ { S0,   S0   },
         /* FIRE            */ { P_RT, P_RB },
-        /* AIM             */ { P_LT, P_LB } } },
+        /* AIM             */ { P_LT, P_LB },
+        /* TEXTURE_CYCLE   */ { P_BK, S0   } } },
     { "SOUTHPAW", 0, {
         /* INTERACT        */ { P_A,  S0   },
         /* RELOAD          */ { P_X,  S0   },
@@ -349,7 +365,8 @@ static const struct sl_pad_layout g_layouts[SL_BUTTON_LAYOUT_PRESETS] = {
         /* STRAFE_LEFT     */ { S0,   S0   },
         /* STRAFE_RIGHT    */ { S0,   S0   },
         /* FIRE            */ { P_LT, P_LB },
-        /* AIM             */ { P_RT, P_RB } } },
+        /* AIM             */ { P_RT, P_RB },
+        /* TEXTURE_CYCLE   */ { P_BK, S0   } } },
     /* RETIRED (owner, 2026-09-21). BUMPER's whole point was fire and aim on
      * the bumpers with the TRIGGERS cycling weapons, and the triggers
      * cycling is exactly what the decision above removes; with the bumpers
@@ -376,7 +393,8 @@ static const struct sl_pad_layout g_layouts[SL_BUTTON_LAYOUT_PRESETS] = {
         /* STRAFE_LEFT     */ { S0,   S0   },
         /* STRAFE_RIGHT    */ { S0,   S0   },
         /* FIRE            */ { P_RB, S0   },
-        /* AIM             */ { P_LB, S0   } } },
+        /* AIM             */ { P_LB, S0   },
+        /* TEXTURE_CYCLE   */ { P_BK, S0   } } },
     { "GREEN THUMB", 0, {
         /* INTERACT        */ { P_A,  S0   },
         /* RELOAD          */ { P_X,  S0   },
@@ -391,7 +409,8 @@ static const struct sl_pad_layout g_layouts[SL_BUTTON_LAYOUT_PRESETS] = {
         /* STRAFE_LEFT     */ { S0,   S0   },
         /* STRAFE_RIGHT    */ { S0,   S0   },
         /* FIRE            */ { P_RT, P_RB },
-        /* AIM             */ { P_LT, P_RS } } },
+        /* AIM             */ { P_LT, P_RS },
+        /* TEXTURE_CYCLE   */ { P_BK, S0   } } },
 };
 
 /* THE ONE COMPILED DEFAULT TABLE. [action][device][slot]. The KBM half is
@@ -413,6 +432,7 @@ static sl_bind_source g_defaults[SL_ACT_COUNT][SL_BIND_DEVICES][SL_BIND_SLOTS] =
     /* STRAFE_RIGHT    */ KD(SK(SDL_SCANCODE_D),      S0),
     /* FIRE            */ KD(SM(SDL_BUTTON_LEFT),     SK(SDL_SCANCODE_F)),
     /* AIM             */ KD(SM(SDL_BUTTON_RIGHT),    SK(SDL_SCANCODE_Q)),
+    /* TEXTURE_CYCLE   */ KD(SK(SDL_SCANCODE_F5),     S0),
 };
 static int g_defaults_ready;
 
@@ -499,11 +519,13 @@ const char *sl_bindings_source_token(const sl_bind_source *src, char *buf, int n
  * g_pad's order; the test suite asserts the three tables stay parallel. */
 static const char *const g_pad_name_xbox[] = {
     "A", "B", "X", "Y", "LB", "RB", "LS", "RS", "LT", "RT",
-    "D-PAD UP", "D-PAD DOWN", "D-PAD LEFT", "D-PAD RIGHT"
+    "D-PAD UP", "D-PAD DOWN", "D-PAD LEFT", "D-PAD RIGHT",
+    "VIEW"      /* #47: BACK - the same word the watch page already printed */
 };
 static const char *const g_pad_name_ps[] = {
     "CROSS", "CIRCLE", "SQUARE", "TRIANGLE", "L1", "R1", "L3", "R3", "L2", "R2",
-    "D-PAD UP", "D-PAD DOWN", "D-PAD LEFT", "D-PAD RIGHT"
+    "D-PAD UP", "D-PAD DOWN", "D-PAD LEFT", "D-PAD RIGHT",
+    "CREATE"    /* #47: BACK, likewise */
 };
 
 const char *sl_bindings_source_label(const sl_bind_source *src, int family,

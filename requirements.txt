@@ -26,3 +26,14 @@ argcomplete==3.7.2
 
 # --- transitive, pinned for reproducibility ---
 RapidFuzz==3.14.5
+
+# --- texture-pack preparation, tools/texpack (#47) ---
+# DEVELOPER TOOL ONLY, and only for the Python converter: Pillow decodes the
+# Community HD PNGs, numpy decodes the XBLA block formats. NOTHING in the
+# engine, the native build, CI or a release package links either - a player
+# who runs the packaged Get-Textures.cmd needs no Python at all, and a
+# checkout without Pillow falls back to that same PowerShell converter.
+# tools/texpack/selftest.py SKIPS the checks that need them rather than
+# failing, so a clone without them still runs the suite.
+Pillow==12.3.0
+numpy==2.5.3

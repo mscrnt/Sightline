@@ -72,6 +72,10 @@
  * occupy bits 8..13. They are consumed inside sl_input.c (the walk / strafe
  * channels and the N64 Z / R buttons) and published here only so the
  * witness line names them; no game seam reads those bits. */
+/* #47: SL_ACT_TEXTURE_CYCLE is enum bit 14 and DELIBERATELY has no channel.
+ * It changes a renderer setting, not game state, and is consumed in
+ * sl_input.c; the bound below is what drops its pulse, so the game's reader
+ * never sees it and no seam has to know it exists. */
 #define SL_ACTCH_COUNT            14
 
 #define SL_ACT_ZOOM_TICKS_PER_NOTCH 2

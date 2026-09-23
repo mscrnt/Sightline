@@ -236,6 +236,12 @@ void sl_action_channels_pulse(int action, int count)
 #define ACT_STRAFE_R 11
 #define ACT_FIRE     12
 #define ACT_AIM      13
+/* #47: the texture-set cycle. It has NO action channel on purpose (the
+ * setting is the renderer's, not the game's) - sl_input.c calls the native
+ * consumer directly, so the harness captures THAT instead of a pulse. */
+#define ACT_TEXCYCLE 14
+static int tex_cycles;
+void sl_textures_cycle(void) { tex_cycles++; }
 static void act_clear(void) { memset(act_pulse, 0, sizeof act_pulse); }
 
 /* --------------------------------------------------------------------------
@@ -2271,6 +2277,10 @@ int main(void)
             { SL_ACT_WEAPON_NEXT,     "key:2",      "wheel:DOWN", "pad:DPAD_RIGHT", "none" },
             { SL_ACT_ZOOM_IN,         "wheel:UP",   "none",       "pad:DPAD_UP",    "none" },
             { SL_ACT_ZOOM_OUT,        "wheel:DOWN", "none",       "pad:DPAD_DOWN",  "none" },
+            /* #47: the texture-set cycle. F5 on the keyboard; on the pad,
+             * BACK - the button that used to mark, which is why no pad slot
+             * anywhere in this table reads "pad:BACK" for anything else. */
+            { SL_ACT_TEXTURE_CYCLE,   "key:F5",     "none",       "pad:BACK",       "none" },
         };
         int ok = 1, j;
         char t[4][32], line[160];
@@ -2288,12 +2298,112 @@ int main(void)
                 ck(0, "default row", line);
             }
         }
-        ck(ok, "all 14 default rows read back as expected (14 actions x 4 slots)", "");
-        ck(SL_ACT_COUNT == 14 && sl_bedit_action_count() == 14,
-           "14 canonical actions; the editor lists all of them", "");
+        ck(ok, "all 15 default rows read back as expected (15 actions x 4 slots)", "");
+        ck(SL_ACT_COUNT == 15 && sl_bedit_action_count() == 15,
+           "15 canonical actions; the editor lists all of them", "");
         for (j = 0; j < SL_ACT_COUNT; j++)
             if (sl_bindings_is_default(j, 0, 0) == 0 || sl_bindings_is_default(j, 1, 1) == 0) ok = 0;
         ck(ok, "every slot reports is_default with no overrides", "");
+    }
+
+    printf("\n== TEXTURE SET CYCLE (#47): F5, the pad's BACK, and the mark ==\n");
+    {
+        sl_bind_source s;
+        char t[32];
+
+        reset(); stub_menu = 0; poll(); act_clear(); tex_cycles = 0;
+
+        /* The keyboard default. ONE cycle per press, however long it is held
+         * - the same edge rule every other action gets, and the reason this
+         * is a registry action instead of a private `static int held`. */
+        stub_keys[SDL_SCANCODE_F5] = 1; poll();
+        ck(tex_cycles == 1, "F5 pressed -> one texture-set cycle", "");
+        poll(); poll();
+        ck(tex_cycles == 1, "F5 HELD -> still one (no repeat)", "");
+        stub_keys[SDL_SCANCODE_F5] = 0; poll();
+        stub_keys[SDL_SCANCODE_F5] = 1; poll();
+        ck(tex_cycles == 2, "F5 released and pressed again -> a second cycle", "");
+        stub_keys[SDL_SCANCODE_F5] = 0; poll();
+
+        /* The pad default: BACK - "View" / "Create" / "Select". The pad was
+         * detached by the sections above, so attach one first. */
+        pad_attach(SDL_CONTROLLER_TYPE_XBOX360);
+        tex_cycles = 0;
+        stub_padb[SDL_CONTROLLER_BUTTON_BACK] = 1; poll();
+        ck(tex_cycles == 1, "pad BACK (View / Create / Select) -> one cycle", "");
+        stub_padb[SDL_CONTROLLER_BUTTON_BACK] = 0; poll();
+        ck(held_after_button(SDL_CONTROLLER_BUTTON_BACK) == (1u << ACT_TEXCYCLE),
+           "DEFAULT: BACK -> TEXTURE SET and nothing else", "");
+
+        /* A MENU OWNS INPUT: the press must not land, and it must not land
+         * on the frame the menu closes either (the raw level memory has
+         * already seen the button down, so no edge is manufactured). */
+        tex_cycles = 0; stub_menu = 1;              /* the watch */
+        stub_keys[SDL_SCANCODE_F5] = 1; poll(); poll();
+        ck(tex_cycles == 0, "F5 while the WATCH owns input -> no cycle", "");
+        stub_menu = 2; poll();
+        ck(tex_cycles == 0, "F5 in the FRONT END -> no cycle", "");
+        stub_menu = 0; poll(); poll();
+        ck(tex_cycles == 0, "... and NOT on the frame the menu closes with F5 still down", "");
+        stub_keys[SDL_SCANCODE_F5] = 0; poll();
+        stub_keys[SDL_SCANCODE_F5] = 1; poll();
+        ck(tex_cycles == 1, "a fresh press after the menu closes does cycle", "");
+        stub_keys[SDL_SCANCODE_F5] = 0; poll(); act_clear();
+
+        /* Re-bindable like any other row. */
+        tex_cycles = 0;
+        {   int stolen = -1;
+            ck(sl_bindings_source_parse("key:F6", &s)
+               && sl_bindings_set(SL_ACT_TEXTURE_CYCLE, 0, 0, &s, &stolen),
+               "TEXTURE SET rebinds to F6 through the editor's own setter", "");
+        }
+        stub_keys[SDL_SCANCODE_F6] = 1; poll();
+        ck(tex_cycles == 1, "F6 now cycles", "");
+        stub_keys[SDL_SCANCODE_F6] = 0; poll();
+        stub_keys[SDL_SCANCODE_F5] = 1; poll();
+        ck(tex_cycles == 1, "... and F5 no longer does", "");
+        stub_keys[SDL_SCANCODE_F5] = 0; poll();
+        sl_bindings_reset_defaults();
+        sl_bindings_source_token(sl_bindings_get(SL_ACT_TEXTURE_CYCLE, 0, 0), t, 32);
+        ck(strcmp(t, "key:F5") == 0, "reset to defaults puts F5 back", t);
+
+        /* THE MARK. The pad's BACK no longer marks (owner, #47: "We wont
+         * need to mark with controller"), and no preset binds MARK on the
+         * pad because MARK was never a registry action at all - it is F9 /
+         * F8, deliberately OUTSIDE the bindable key table so nothing can
+         * steal them. Asserted rather than assumed: if either key ever
+         * became bindable, a player could lose the mark by rebinding. */
+        ck(!sl_bindings_source_parse("key:F9", &s),
+           "F9 (mark) is not a bindable source - the keyboard mark is untouched", "");
+        ck(!sl_bindings_source_parse("key:F8", &s),
+           "F8 (full mark) is not a bindable source either", "");
+        {   int a, d, sl, back = 0;
+            char tok[32];
+            for (a = 0; a < SL_ACT_COUNT; a++)
+                for (d = 0; d < SL_BIND_DEVICES; d++)
+                    for (sl = 0; sl < SL_BIND_SLOTS; sl++) {
+                        sl_bindings_source_token(sl_bindings_get(a, d, sl), tok, 32);
+                        if (strcmp(tok, "pad:BACK") == 0) back++;
+                    }
+            ck(back == 1, "pad:BACK appears in the defaults exactly once - TEXTURE SET", "");
+        }
+        {   int p, a, sl, bad = 0, seen = 0;
+            for (p = 0; p < SL_BUTTON_LAYOUT_PRESETS; p++)
+                for (a = 0; a < SL_ACT_COUNT; a++)
+                    for (sl = 0; sl < SL_BIND_SLOTS; sl++) {
+                        const sl_bind_source *q = sl_bindings_layout_source(p, a, sl);
+                        if (q != NULL && q->kind == SL_SRC_PAD_BUTTON
+                            && q->code == SDL_CONTROLLER_BUTTON_BACK) {
+                            seen++;
+                            if (a != SL_ACT_TEXTURE_CYCLE) bad++;
+                        }
+                    }
+            ck(bad == 0 && seen == SL_BUTTON_LAYOUT_PRESETS,
+               "every preset binds BACK, and only to TEXTURE SET", "");
+        }
+        /* Leave the harness as this section found it: no pad, defaults. */
+        stub_pad_present = 0; sl_input_live_device_change();
+        reset(); poll(); act_clear(); tex_cycles = 0;
     }
 
     printf("\n== BINDINGS (#46): tokens and names ==\n");

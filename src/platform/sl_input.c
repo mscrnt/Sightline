@@ -1758,18 +1758,16 @@ static void read_pad(sl_intent *in, int layout)
     if (SDL_GameControllerGetButton(g_pad, SDL_CONTROLLER_BUTTON_B))
         in->action = 1;
 
-    /* BACK ("Select", left of the trackpad) marks, the same as F9 - the owner
-     * plays on a pad and should not have to reach for the keyboard to point at
-     * something. Not a game binding, so it never reaches the pad state and
-     * never enters the recorded stream. */
-    {
-        extern void sl_run_mark(unsigned);
-        extern unsigned sl_record_index(void);
-        static int held;
-        int now = SDL_GameControllerGetButton(g_pad, SDL_CONTROLLER_BUTTON_BACK) != 0;
-        if (now && !held) sl_run_mark(sl_record_index());
-        held = now;
-    }
+    /* BACK ("Select" / "View" / "Create") USED TO MARK HERE, the same as F9.
+     * It does not any more (#47, the owner: "the 'Select' button (the button
+     * that currently marks) on controller? We wont need to mark with
+     * controller"), so the button left this hard-wired block and became an
+     * ordinary REGISTRY source (sl_bindings.c g_pad), which every preset
+     * binds to TEXTURE SET. Two consequences worth stating: the pad can no
+     * longer mark at all - F9 and F8 are unchanged and are still the way to
+     * mark - and the button is now re-bindable like any other, so a player
+     * who wants something else there changes it in the bindings editor.
+     * Nothing here reaches the recorded stream, then or now. */
 
     if (SDL_GameControllerGetButton(g_pad, SDL_CONTROLLER_BUTTON_START))
         in->pause = 1;
@@ -2738,6 +2736,20 @@ void sl_input_live_poll(void)
         for (i = 0; i < SL_ACT_COUNT; i++)
             if (act[i].pressed)
                 sl_action_channels_pulse(i, act[i].pressed);
+
+        /* #47. THE TEXTURE CYCLE is consumed HERE and published to the game
+         * nowhere: the setting is the renderer's, not the simulation's, and
+         * sl_action_channels_pulse drops it at its own SL_ACTCH_COUNT bound.
+         * It takes `act_on` - the same "live input and no menu is up"
+         * predicate the publish takes - so a press cannot land while the
+         * watch, the front end or a binding capture owns input; and because
+         * the edge comes from the evaluator's raw level memory rather than a
+         * private `static int held`, a button still down as a menu closes
+         * produces no edge on the frame it closes. */
+        if (act_on && act[SL_ACT_TEXTURE_CYCLE].pressed) {
+            extern void sl_textures_cycle(void);
+            sl_textures_cycle();
+        }
     }
 
     /* While a capture waits, or the key it just took is still down, the

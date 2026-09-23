@@ -148,6 +148,12 @@ extern int         sl_window_request_pending(void);
 extern int         sl_world_detail(void);
 extern const char *sl_world_detail_name(int detail);
 extern void        sl_world_detail_step(int dir);
+/* #47 (2026-09-21): the GRAPHICS child's TEXTURES, the same shape: the set
+ * id, its name from the store, the step through the three sets. The
+ * renderer's provider reads the store itself; no copy here. */
+extern int         sl_textures(void);
+extern const char *sl_textures_name(int set);
+extern void        sl_textures_step(int dir);
 #endif
 
 #define WATCH_BACKGROUND_VERTEX_COUNT 30
@@ -1134,7 +1140,8 @@ static const struct sl_watch_view sl_watch_views[SL_WVIEW_COUNT] = {
      * DISPLAY tab's WORLD DETAIL row - here under GRAPHICS, the child the
      * owner's structure reserved for it. */
     { "graphics\n",  { { "world detail\n",   SL_WROW_VALUE_WDETAIL, 0 },   /* #43: original / enhanced */
-                       { "back\n",           SL_WROW_BACK, 0 } }, 2 },
+                       { "textures\n",       SL_WROW_VALUE_TEXTURES, 0 },  /* #47: original / community hd / xbla */
+                       { "back\n",           SL_WROW_BACK, 0 } }, 3 },
 };
 
 static s32 sl_wview;              /* the view in force (SL_WVIEW_*) */
@@ -4326,6 +4333,16 @@ static void sl_sightline_value_step(s32 kind, s32 dir)
             fprintf(stderr, "sightline watch: world detail step dir=%d -> %d(%s)\n",
                     (int) dir, sl_world_detail(), sl_world_detail_name(sl_world_detail()));
     }
+    else if (kind == SL_WROW_VALUE_TEXTURES)
+    {
+        /* #47: the next set, wrapping; the renderer's provider reads the
+         * store at each texture's next resolve, so the world behind the
+         * watch changes when it closes. */
+        sl_textures_step(dir > 0 ? 1 : -1);
+        if (getenv("SL_INPUT_DEBUG") != NULL)
+            fprintf(stderr, "sightline watch: textures step dir=%d -> %d(%s)\n",
+                    (int) dir, sl_textures(), sl_textures_name(sl_textures()));
+    }
     else if (SL_WROW_IS_NAMED(kind))
     {
         /* #63: BUTTON LAYOUT steps through the presets (a step off CUSTOM
@@ -4392,6 +4409,7 @@ void sl_sightline_click(s32 row, s32 value)
     case SL_WROW_VALUE_WMODE:
     case SL_WROW_VALUE_RES:
     case SL_WROW_VALUE_WDETAIL:
+    case SL_WROW_VALUE_TEXTURES:
         if (value < 0) { watch_play_beep_sound(); break; }
         sl_sightline_value_step(kind, value == 0 ? -1 : +1);
         break;
@@ -4555,6 +4573,8 @@ const char *sl_sightline_row_value_name(s32 row)
         return sl_window_mode_name(sl_window_mode_shown());
     if (kind == SL_WROW_VALUE_WDETAIL)         /* #43: ORIGINAL / ENHANCED */
         return sl_world_detail_name(sl_world_detail());
+    if (kind == SL_WROW_VALUE_TEXTURES)        /* #47: ORIGINAL / COMMUNITY HD / XBLA */
+        return sl_textures_name(sl_textures());
     if (kind == SL_WROW_VALUE_RES || kind == SL_WROW_INFO_RES)
     {
         int w = 0, h = 0;
@@ -4744,6 +4764,7 @@ Gfx *sl_draw_watch_sightline_page(Gfx *gdl, Mtx *param_2)
             case SL_WROW_VALUE_WMODE:
             case SL_WROW_VALUE_RES:
             case SL_WROW_VALUE_WDETAIL:
+            case SL_WROW_VALUE_TEXTURES:
                 gdl = sl_draw_sightline_named(gdl, i, y, label);
                 break;
             case SL_WROW_INFO_PAD:

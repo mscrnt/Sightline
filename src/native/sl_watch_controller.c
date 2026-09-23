@@ -385,8 +385,9 @@ Gfx *sl_watch_layout_rows_draw(Gfx *gdl)
  *            CLICK's action(s) as "CLICK <action>" - so a reader can never
  *            take the click's binding for the stick's motion (the owner read
  *            R3's "ZOOM IN" as the right stick's function)
- *   FIXED    what the control does outside the registry: Start PAUSE, View /
- *            Create MARK */
+ *   FIXED    what the control does outside the registry: Start PAUSE. (View
+ *            / Create used to be FIXED too, printing MARK; #47 moved it to
+ *            the registry - see the table below.) */
 enum { SL_WC_BUTTON = 0, SL_WC_DPAD, SL_WC_STICK, SL_WC_FIXED };
 struct sl_wc_control {
     unsigned int part;
@@ -408,7 +409,11 @@ static const struct sl_wc_control g_controls[] = {
     { SL_PART_RIGHT_STICK,    SL_WC_STICK,  "pad:RS", NULL, NULL, 0 },
     { SL_PART_DPAD,           SL_WC_DPAD,   "",       "D-PAD", "D-PAD", 0 },
     { SL_PART_MENU,           SL_WC_FIXED,  "",       "START", "OPTIONS", 0 },
-    { SL_PART_BACK,           SL_WC_FIXED,  "",       "VIEW",  "CREATE", 0 },
+    /* #47: BACK stopped being a fixed MARK and became a registry source, so
+     * this row reads its binding like every other button instead of printing
+     * a hard-coded word. Every preset puts TEXTURE SET there; a player who
+     * rebinds it sees whatever they bound, and UNBOUND if they clear it. */
+    { SL_PART_BACK,           SL_WC_BUTTON, "pad:BACK", NULL, NULL, 0 },
 };
 #define SL_WC_NCONTROLS ((int) (sizeof g_controls / sizeof g_controls[0]))
 static const char *const g_dpad_tokens[4] = { "pad:DPAD_UP", "pad:DPAD_DOWN", "pad:DPAD_LEFT", "pad:DPAD_RIGHT" };
@@ -575,7 +580,8 @@ static int sl_wc_label_text(const struct sl_wc_control *c, int family, struct sl
         break;
     }
     default:
-        sl_wc_cat(l->what, &i, (int) sizeof l->what, c->part == SL_PART_MENU ? "PAUSE" : "MARK");
+        /* #47: START is the only FIXED row left (BACK moved to the registry). */
+        sl_wc_cat(l->what, &i, (int) sizeof l->what, "PAUSE");
         break;
     }
     l->what[i++] = '\n'; l->what[i] = '\0';

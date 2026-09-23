@@ -25,6 +25,10 @@
       data\asset-overrides\    every built *.slmodel under
                                <SourceDir>\build\win32\data\asset-overrides
       Sightline.cmd            tools\windows\release\Sightline.cmd (this tree)
+      Get-Textures.cmd         tools\windows\release\Get-Textures.cmd (this tree)
+      tools\get-textures.ps1   the optional Community HD fetcher / converter
+      tools\community-source.json   which upstream release it asks for
+      tools\mapping\community.json  id -> checksum identities (no pixels)
       README.txt               tools\windows\release\README.txt, placeholders filled
       VERSION.txt              generated: version, commits, tags, build date,
                                toolchain identity, .build_key, the SHA-256 of
@@ -155,6 +159,19 @@ if (Test-Path -LiteralPath $aov) {
 
 # launcher and README from THIS tree
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'release\Sightline.cmd') -Destination (Join-Path $stage 'Sightline.cmd')
+
+# The OPTIONAL texture-pack fetcher (#47). Four files, all of them identities
+# and code: the entry point beside the launcher, the PowerShell that fetches
+# and converts, the record of WHICH upstream release is wanted (repository,
+# tag, asset, size, SHA-256) and the id -> checksum mapping. NO PACK BYTE IS
+# STAGED and none exists to stage: what the player runs downloads from the
+# pack's own maintainers, onto their own machine. Named files, as everything
+# else here is - never a directory of the checkout.
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'release\Get-Textures.cmd') -Destination (Join-Path $stage 'Get-Textures.cmd')
+New-Item -ItemType Directory -Force -Path (Join-Path $stage 'tools\mapping') | Out-Null
+Copy-Item -LiteralPath (Join-Path $SourceDir 'tools\texpack\get-textures.ps1') -Destination (Join-Path $stage 'tools\get-textures.ps1')
+Copy-Item -LiteralPath (Join-Path $SourceDir 'tools\texpack\community-source.json') -Destination (Join-Path $stage 'tools\community-source.json')
+Copy-Item -LiteralPath (Join-Path $SourceDir 'tools\texpack\mapping\community.json') -Destination (Join-Path $stage 'tools\mapping\community.json')
 $readme = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'release\README.txt'))
 $readme = $readme.Replace('{{VERSION}}', $Version).Replace('{{QUIT}}', $QuitHint)
 Write-TextFileLf (Join-Path $stage 'README.txt') $readme

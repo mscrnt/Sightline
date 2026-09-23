@@ -181,3 +181,18 @@ build/bootsweep/
 
 # package-demo.ps1 output: carries the user's ROM, private and local
 SightlineDemo.exe
+
+# Texture sets (#47). Exactly the baserom boundary above, one level out: the
+# user brings the SOURCE, a local tool writes the PACK, and neither is ours to
+# distribute. Nothing under either directory is ever committed, packaged or
+# exported.
+#
+#   texsources/   the player's own copies of a texture set's source - the
+#                 Community HD project's official release archive, and any
+#                 user-supplied XBLA source. Read only by
+#                 tools/windows/prepare-textures.ps1.
+#   texpacks/     what that tool WRITES: <set>/<hex4>.sltx, the development
+#                 SL_TEXPACK_ROOT. Derived from the sources above, so it
+#                 inherits their boundary exactly.
+/texsources/
+/texpacks/

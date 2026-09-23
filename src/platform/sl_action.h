@@ -88,6 +88,15 @@ enum sl_action {
     SL_ACT_STRAFE_RIGHT,
     SL_ACT_FIRE,
     SL_ACT_AIM,
+    /* #47: cycle the TEXTURES setting, ORIGINAL -> COMMUNITY HD -> XBLA ->
+     * ORIGINAL. Appended last, so no published bit moves. It is NOT a
+     * gameplay semantic and the game never reads it - like the mark, it is
+     * consumed in sl_input.c, which is also why it is published as a bit
+     * nowhere (sl_action_channels.c stops at SL_ACTCH_COUNT). It lives in
+     * the registry rather than as another hard-wired scancode so that it is
+     * re-bindable, labelled by the same tables every other control is, and
+     * inherits the stale-edge rule instead of a private `static int held`. */
+    SL_ACT_TEXTURE_CYCLE,
     SL_ACT_COUNT
 };
 

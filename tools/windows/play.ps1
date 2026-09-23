@@ -245,6 +245,69 @@ if ($saveDir -and -not (Test-Path $saveDir)) {
     New-Item -ItemType Directory -Force -Path $saveDir | Out-Null
 }
 
+# TEXTURE SETS (#47). The binary's own contract is unchanged and no source
+# path is compiled into it: it reads SL_TEXPACK_ROOT when that is set, and
+# otherwise the player-data ladder, %LOCALAPPDATA%\sightline\assets\texpacks.
+# What a SOURCE CHECKOUT needs on top of that is for a developer who has run
+# tools\windows\prepare-textures.ps1 to SEE the pack without exporting
+# anything, which is what this does - the repository's own texpacks\ is
+# handed to the child when it is there. Same shape as $rom above: an explicit
+# value wins, otherwise the checkout supplies one.
+#
+# THIS IS THE DEFECT THAT FAILED #47's FIRST ROUND. The prepared packs lived
+# outside the tree and only an explicitly exported SL_TEXPACK_ROOT found
+# them. An ordinary `.\tools\windows\play.ps1` therefore read a pack root
+# that did not exist, every texture fell back to ORIGINAL - "I don't notice
+# any changes with the graphics or textures" - while the automated runs that
+# did set the variable saw replacements and called it working. The two were
+# never the same launch. They are now.
+$texpack = $env:SL_TEXPACK_ROOT
+$texpackWhy = 'SL_TEXPACK_ROOT'
+if (-not $texpack) {
+    $devPack = Join-Path $repo 'texpacks'
+    if (Test-Path $devPack) {
+        $texpack = $devPack
+        $texpackWhy = 'this checkout'
+    }
+}
+if (-not $texpack) {
+    $tpBase = $env:LOCALAPPDATA
+    if (-not $tpBase -and $env:USERPROFILE) { $tpBase = Join-Path $env:USERPROFILE 'AppData\Local' }
+    if ($tpBase) { $texpackShown = Join-Path $tpBase 'sightline\assets\texpacks' }
+    else         { $texpackShown = '(no player-data directory)' }
+    $texpackWhy = 'player data'
+} else {
+    $texpackShown = $texpack
+}
+
+# ONE line, once, when a non-ORIGINAL set is selected and there is nothing
+# for it to read - naming the command that prepares a pack. Never per
+# texture, and never when ORIGINAL is selected, which reads no pack at all.
+$cfgPath = $env:SL_CONFIG
+if (-not $cfgPath) {
+    $cfgBase = $env:LOCALAPPDATA
+    if (-not $cfgBase -and $env:USERPROFILE) { $cfgBase = Join-Path $env:USERPROFILE 'AppData\Local' }
+    if ($cfgBase) { $cfgPath = Join-Path $cfgBase 'sightline\config.ini' }
+}
+$texSet = 0
+if ($cfgPath -and (Test-Path -LiteralPath $cfgPath)) {
+    $m = Select-String -LiteralPath $cfgPath -Pattern '^\s*textures\s*=\s*([0-9]+)' |
+         Select-Object -Last 1
+    if ($m) { $texSet = [int]$m.Matches[0].Groups[1].Value }
+}
+if ($texSet -ne 0) {
+    $setName = @('ORIGINAL', 'COMMUNITY HD', 'XBLA')[$texSet]
+    if ($texSet -ge 1 -and $texSet -le 2) {
+        $setDir = Join-Path $texpackShown @('community', 'xbla')[$texSet - 1]
+        if (-not (Test-Path -LiteralPath $setDir)) {
+            Write-Host ""
+            Write-Host "TEXTURES is set to $setName and no pack is prepared ($setDir)."
+            Write-Host "  Run .\tools\windows\prepare-textures.ps1 to build one from your own"
+            Write-Host "  sources. Until then every texture draws the game's own artwork."
+        }
+    }
+}
+
 if (-not $Quiet) {
     Write-Host ""
     if ($directBoot) {
@@ -316,6 +379,12 @@ if (-not $Quiet) {
     Write-Host "  `$env:SL_LOOK_INVERT=1    invert GAMEPAD stick pitch (developer override; not the mouse)"
     Write-Host "  `$env:SL_FPS=30           pace to something other than 60"
     Write-Host ""
+    Write-Host "  TEXTURES                 OPTIONS > SETTINGS > DISPLAY, or the watch's"
+    Write-Host "                           SIGHTLINE > GRAPHICS: ORIGINAL / COMMUNITY HD /"
+    Write-Host "                           XBLA. Pack root: $texpackShown ($texpackWhy)."
+    Write-Host "                           .\tools\windows\prepare-textures.ps1 builds one"
+    Write-Host "                           from your own sources; ORIGINAL needs none"
+    Write-Host ""
 }
 
 # Only the launch settings are set here; everything else the player put in the
@@ -327,6 +396,9 @@ $vars = @{
     SL_WINDOW_SIZE = $Size
     SL_EEPROM_RW   = $save
 }
+# Established here with everything else, so there is ONE place the child's
+# environment is set and nothing for a later run to reproduce by hand.
+if ($texpack) { $vars['SL_TEXPACK_ROOT'] = $texpack }
 # Only a NAMED level sets the direct-boot seam. Without it the binary leaves
 # g_StageNum at LEVELID_TITLE (boss.c:112) and boots the way the cartridge does.
 if ($directBoot) {
@@ -547,6 +619,7 @@ if ($MeasurementMode) {
     Write-Host "  window         SL_WINDOW=1, $Size"
     Write-Host "  boot           $(if ($directBoot) { "level $Level (stage $stage), difficulty $Difficulty" } else { 'front end (no SL_BOOT_LEVEL)' })"
     Write-Host "  eeprom         $mmSave (scratch)"
+    Write-Host "  texpack root   $texpackShown ($texpackWhy)"
     Write-Host "  stdout         $mmOut"
     Write-Host "  stderr         $mmErr"
     Write-Host "  console        Start-Process WITHOUT -NoNewWindow (child gets its own console - expected)"

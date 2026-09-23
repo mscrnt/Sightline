@@ -37,6 +37,21 @@ size) and runs sightline.exe from this folder. Running sightline.exe directly
 is not the supported path: without the launcher's environment it opens no
 window and finds no ROM.
 
+Optional: the Community HD textures
+-----------------------------------
+Double-click Get-Textures.cmd, once. It downloads the pinned official release
+of the Community HD project straight from its maintainers
+(https://github.com/GhostlyDark/GoldenEye-007-HD), checks it against the size
+and SHA-256 recorded in tools\community-source.json, and converts it into
+%LOCALAPPDATA%\sightline\assets\texpacks\community. Then pick OPTIONS >
+SETTINGS > DISPLAY > TEXTURES = COMMUNITY HD in the game (or the watch's
+SIGHTLINE > GRAPHICS page, in a mission). It needs nothing but the Windows
+PowerShell that ships with Windows, and re-running it costs one hash check.
+
+This package contains no texture and mirrors nothing: that download is
+between you and the pack's own maintainers. Sightline redistributes no part
+of it. The XBLA set is user-supplied and no tool here obtains it.
+
 Quitting
 --------
   {{QUIT}}
@@ -45,6 +60,11 @@ Where things are written
 ------------------------
   %LOCALAPPDATA%\sightline\eeprom.bin     the cartridge save (created on first run)
   %LOCALAPPDATA%\sightline\rom-path.txt   the ROM path, only if the launcher asked for it
+  %LOCALAPPDATA%\sightline\config.ini     your settings
+  %LOCALAPPDATA%\sightline\assets\texpacks\community\  the converted textures,
+                                          only if you ran Get-Textures.cmd
+  %LOCALAPPDATA%\sightline\cache\         the downloaded pack archive, kept so
+                                          a second run needs no network
 Nothing inside the extracted folder is written to.
 
 Verifying the download
