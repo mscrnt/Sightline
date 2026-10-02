@@ -1,0 +1,18 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "GoldenEye 007",
+  "wikidata": "Q369086",
+  "system": "N64",
+  "type": "port",
+  "original": {
+    "region": "USA",
+    "sha1": "abe01e4aeb033b6c0836819f549c791b26cfde83"
+  },
+  "project": "Sightline",
+  "status": "in-progress",
+  "targets": ["Windows"],
+  "toolchain": "GoldenEye 007 decompilation",
+  "approach": "Engine fork of the decomp: native Windows build, OpenGL renderer, assets extracted at runtime from your own ROM",
+  "maintainers": [{ "name": "mscrnt", "link": "https://github.com/mscrnt" }],
+  "notes": "Full single-player campaign playable on the native build. Next: squad AI, real-time lighting, and Nightwatch (1 infiltrator vs. up to 7 human guards)."
+}
