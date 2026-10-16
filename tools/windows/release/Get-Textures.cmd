@@ -6,7 +6,7 @@ rem straight from its maintainers (github.com/GhostlyDark/GoldenEye-007-HD) to
 rem THIS machine, checks it against the size and SHA-256 recorded in
 rem tools\community-source.json, and converts the textures into
 rem %LOCALAPPDATA%\sightline\assets\texpacks\community, which is where the
-rem game's TEXTURES = COMMUNITY HD setting reads them from.
+rem game's PRESENTATION = COMMUNITY HD setting reads them from.
 rem
 rem SIGHTLINE SHIPS NO TEXTURE AND MIRRORS NOTHING. This package carries no
 rem pack bytes; the download is between you and the pack's own maintainers,

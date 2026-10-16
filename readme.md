@@ -81,9 +81,9 @@ the controller you are holding, with that controller's own button labels.
   <img src="docs/images/watch-controllers-cycle.png" alt="The watch's controls tab with an Xbox controller, then a DualSense, each with its own button labels and bindings" width="800">
 </p>
 
-COMMUNITY HD and XBLA are features of the **current source tree**: the
-downloadable v0.2.0 package predates them. To set them up, see
-[docs/xbla-setup.md](docs/xbla-setup.md). The screenshots show the game's,
+PRESENTATION ships in **v0.3.0**. In the release package, `Get-Textures.cmd`
+fetches the Community HD pack from its maintainers; the XBLA set is prepared
+from a source checkout, see [docs/xbla-setup.md](docs/xbla-setup.md). The screenshots show the game's,
 the Community HD project's and the remaster's artwork, which belong to their
 rightsholders ([docs/images/README.md](docs/images/README.md)).
 
@@ -117,14 +117,14 @@ Honestly, and in one place:
   cartridge's own front end and plays the full single-player campaign.
   **v0.2.0 (QoL Phase 1)** adds semantic keyboard / mouse / controller
   controls with persistent remapping, native settings pages, widescreen
-  aspect ratios, FOV, resolution and window modes, and an in-game QUIT GAME;
-  see [Releases](#releases).
-- The **source tree** is ahead of v0.2.0 with the
-  [PRESENTATION](#presentation-original-community-hd-xbla) setting: the
+  aspect ratios, FOV, resolution and window modes, and an in-game QUIT GAME.
+  **v0.3.0 (Visual Fidelity)** adds the
+  [PRESENTATION](#presentation-original-community-hd-xbla) setting - the
   COMMUNITY HD texture pack, and the XBLA remaster's textures and world
   assets, prepared from user-supplied sources, across all 20 campaign
-  missions. Open items per stage are recorded in
-  [docs/backlog.md](docs/backlog.md). None of this is in a release yet.
+  missions - plus WORLD DETAIL, FRAME RATE above the game's own rate and a
+  SHOW FPS counter; see [Releases](#releases). Open items per stage are
+  recorded in [docs/backlog.md](docs/backlog.md).
 - The **determinism gate** is green: all 20 campaign levels replay
   byte-identically across 10 consecutive runs of the trace harness.
 - **Phase 1** (excising the RCP / severing `src/game` from libultra) is
@@ -162,10 +162,15 @@ The quickest way to play is a release package: no toolchain, no clone.
 4. Double-click `Sightline.cmd`.
 
 `README.txt` inside the package covers the ROM requirement, where the save is
-written (`%LOCALAPPDATA%\sightline`) and how to verify the download.
+written (`%LOCALAPPDATA%\sightline`), the optional Community HD textures
+(`Get-Textures.cmd`) and how to verify the download.
 
 ### Releases
 
+- **v0.3.0 - Visual Fidelity.** PRESENTATION (ORIGINAL / COMMUNITY HD /
+  XBLA), WORLD DETAIL, FRAME RATE and SHOW FPS, and the fix for the
+  model-code crashes when shooting guards (`Sightline-v0.3.0-win32.zip`).
+  Notes: [docs/releases/v0.3.0.md](docs/releases/v0.3.0.md).
 - **v0.2.0 - QoL Phase 1.** The first release with a downloadable Windows
   binary (`Sightline-v0.2.0-win32.zip`). Notes:
   [docs/releases/v0.2.0.md](docs/releases/v0.2.0.md).
@@ -381,21 +386,14 @@ docs/                 roadmap, divergences, backlog, decisions
 docs/brand/           project identity artwork (wordmark, mark, icon)
 ```
 
-## Public mirror
-
-The GitHub repository at https://github.com/mscrnt/Sightline is a
-generated, read-only source mirror: each release of the private canonical
-tree is exported, stripped of private infrastructure, and committed there
-as a single publication commit. The private development history is not
-published.
+## Issues, wiki and board
 
 GitHub [Issues](https://github.com/mscrnt/Sightline/issues), the
 [wiki](https://github.com/mscrnt/Sightline/wiki) and the
 [project board](https://github.com/users/mscrnt/projects/7) are live: file
 bug reports and questions as issues, follow development on the board, and
 read the wiki for setup, controls and feature documentation. Pull requests
-are not accepted — the mirror is a generated tree, so there is nothing for
-a pull request to merge into.
+are not accepted.
 
 ## Credits and acknowledgements
 
@@ -410,6 +408,14 @@ a pull request to merge into.
   The authoritative reference for formats, layouts, and byte order
   throughout this project; consulted before the code, per project rule.
 - **Rare** — for the original game.
+- **The GoldenEye 007 HD texture pack** — created by **intermissionfb**,
+  with font textures by **GhostlyDark**:
+  [github.com/GhostlyDark/GoldenEye-007-HD](https://github.com/GhostlyDark/GoldenEye-007-HD).
+  The COMMUNITY HD presentation draws their textures. Sightline does not
+  include or redistribute the pack: `Get-Textures.cmd` and
+  `prepare-textures.ps1` download the pinned release from that repository on
+  the player's machine and convert it there, and the textures remain their
+  work. No endorsement by the authors is implied.
 - **Controller models** — the watch's Xbox and DualSense controllers are
   based on "Xbox Controller" by [umkhero](https://sketchfab.com/umkhero)
   ([source](https://sketchfab.com/3d-models/xbox-controller-32d17951703b4e05abed11a1c65f5909))

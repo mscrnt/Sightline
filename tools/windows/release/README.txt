@@ -44,13 +44,18 @@ of the Community HD project straight from its maintainers
 (https://github.com/GhostlyDark/GoldenEye-007-HD), checks it against the size
 and SHA-256 recorded in tools\community-source.json, and converts it into
 %LOCALAPPDATA%\sightline\assets\texpacks\community. Then pick OPTIONS >
-SETTINGS > DISPLAY > TEXTURES = COMMUNITY HD in the game (or the watch's
+SETTINGS > DISPLAY > PRESENTATION = COMMUNITY HD in the game (or the watch's
 SIGHTLINE > GRAPHICS page, in a mission). It needs nothing but the Windows
 PowerShell that ships with Windows, and re-running it costs one hash check.
 
 This package contains no texture and mirrors nothing: that download is
 between you and the pack's own maintainers. Sightline redistributes no part
 of it. The XBLA set is user-supplied and no tool here obtains it.
+
+PRESENTATION = XBLA needs a texture pack and world assets prepared from your
+own copy of the remaster with a source checkout of Sightline; docs/xbla-setup.md
+in the public repository describes it. In a level, F5 (or View / Create on a
+controller) cycles ORIGINAL, COMMUNITY HD and XBLA.
 
 Quitting
 --------

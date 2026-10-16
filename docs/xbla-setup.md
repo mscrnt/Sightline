@@ -1,15 +1,19 @@
 # Setting up the COMMUNITY HD and XBLA presentations
 
-How to prepare the inputs the **PRESENTATION** setting draws from, on a
-Windows build of the current source tree. ORIGINAL needs nothing beyond the
-game ROM; COMMUNITY HD needs a texture pack; XBLA needs a texture pack **and**
-the world assets (backgrounds, skies, characters, props and first-person
-models).
+How to prepare the inputs the **PRESENTATION** setting draws from. ORIGINAL
+needs nothing beyond the game ROM; COMMUNITY HD needs a texture pack; XBLA
+needs a texture pack **and** the world assets (backgrounds, skies,
+characters, props and first-person models).
 
-> **Source checkout only.** The downloadable v0.2.0 package predates this
-> work: it has no PRESENTATION setting and reads no texture pack or world
-> asset. Everything here applies to a build of the current tree
-> (`.\tools\windows\build.ps1`, launched with `.\tools\windows\play.ps1`).
+> **Release package or source build.** The preparation below runs from a
+> source checkout. A build of the tree (`.\tools\windows\build.ps1`, launched
+> with `.\tools\windows\play.ps1`) reads the checkout's own `texpacks\` and
+> `worldassets\`. The v0.3.0 release package reads prepared sets from
+> `%LOCALAPPDATA%\sightline\assets\`: its `Get-Textures.cmd` fetches
+> COMMUNITY HD there on its own, and for XBLA pass
+> `-TexturesOut "$env:LOCALAPPDATA\sightline\assets\texpacks"` and
+> `-WorldOut "$env:LOCALAPPDATA\sightline\assets\worldassets"` to
+> `prepare-all.ps1`. The v0.2.0 package predates PRESENTATION.
 
 The runtime design is in [texture-packs.md](texture-packs.md) and
 [world-assets.md](world-assets.md); this page is the practical recipe.

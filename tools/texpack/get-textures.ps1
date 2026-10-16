@@ -16,7 +16,7 @@
     straight from its maintainers to YOUR disk, verifies size and SHA-256
     against the identities recorded in community-source.json, and converts the
     textures the mapping table names into <root>\community\<hex4>.sltx, which
-    is what the TEXTURES = COMMUNITY HD setting reads.
+    is what the PRESENTATION = COMMUNITY HD setting reads.
 
     SIGHTLINE DISTRIBUTES NO TEXTURE. Nothing is mirrored from Sightline
     infrastructure, no pack bytes are shipped in any package, and the download
@@ -451,7 +451,7 @@ Say ''
 Say ("  community  {0,4} of {1} mapped textures  ->  {2}" -f $r.Written, $r.Total, (Join-Path $Out 'community'))
 if ($r.Absent -gt 0) { Say ("             {0,4} are not in this copy of the pack; the game draws its own artwork there" -f $r.Absent) }
 Say ''
-Say '  Start the game and choose OPTIONS > SETTINGS > DISPLAY > TEXTURES = COMMUNITY HD'
+Say '  Start the game and choose OPTIONS > SETTINGS > DISPLAY > PRESENTATION = COMMUNITY HD'
 Say '  (or the watch''s SIGHTLINE > GRAPHICS page, in a mission).'
 Say ''
 Say '  The XBLA set is not obtained by this tool: it is user-supplied, and'
