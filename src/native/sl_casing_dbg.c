@@ -1,7 +1,7 @@
 /**
  * Ejected-casing witness, native side. Inert unless SL_CASING_DBG is set.
  *
- * WHAT THIS IS FOR. "RC-P90 shell ejection looks weird" (owner, Jungle) is a
+ * WHAT THIS IS FOR. "RC-P90 shell ejection looks weird" (playtest, Jungle) is a
  * claim about g_Casings (gun.c:46): where a casing is spawned, how fast it
  * leaves, how it spins, how long it lives. A screenshot shows a brass speck;
  * this prints the record the game integrates (gunfire.c:5557

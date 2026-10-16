@@ -18,8 +18,9 @@ of phase boundaries**, plus decisions deliberately postponed.
 ## Rules
 
 1. An entry records what was observed and where. It does not schedule the work.
-2. Note the phase that owns it. If that is unclear, say so — an entry with an
-   uncertain owner is still worth more than a lost observation.
+2. Note the area it belongs to — the subsystem or track — in the `Area` field.
+   If that is unclear, say so — an entry with an uncertain area is still worth
+   more than a lost observation.
 3. Entries move out of this file when the owning phase starts, not before.
 4. If something is blocking the *current* phase, it does not belong here. Fix it.
 
@@ -29,12 +30,12 @@ of phase boundaries**, plus decisions deliberately postponed.
 ### B-000 — one-line summary
 
 - **Found:**  YYYY-MM-DD, during <what you were actually doing>
-- **Owner:**  Phase N (or: unclear — best guess and why)
+- **Area:**   subsystem or track (or: unclear — best guess and why)
 - **Where:**  file:line, or subsystem
 - **Blocks:** <what this will make harder or impossible if left> (or: nothing yet)
 
-<What was observed, concretely enough that someone arriving in Phase N can find
-it again without rediscovering it from scratch.>
+<What was observed, concretely enough that whoever picks the work up later can
+find it again without rediscovering it from scratch.>
 ```
 
 ---
@@ -45,7 +46,7 @@ it again without rediscovering it from scratch.>
 
 - **Found:**  2026-09-06, wiring the native menu pointer (the harness had to be
   rebuilt because the round changed `sl_input_live_click`'s signature)
-- **Owner:**  the native input track, as its own re-baseline commit
+- **Area:**   Native input
 - **Where:**  `tools/native/inputtest.c:406-423` and `:454-461`
 - **Blocks:** nothing shipping. It makes `tools/windows/inputtest.ps1` exit 1 on
   a clean tree, so the harness cannot be used as a gate until it is settled.
@@ -70,7 +71,7 @@ harness pins:
 mouse-look sections; the 20 checks covering menu navigation, the wheel, the
 buttons, the grab lifecycle and the new pointer/click path pass.
 
-Deliberately NOT fixed here. Both readings are owner-validated by hand on real
+Deliberately NOT fixed here. Both readings are validated by manual play on real
 hardware, and making the assertions match today's output is a re-baseline of an
 accepted measurement - project rule 1 says that is its own commit
 touching nothing else, not a side effect of an unrelated round. The correct fix
@@ -84,8 +85,10 @@ output.
 ### B-001 — `make personal` build target
 
 - **Found:**  2026-08-18, reading the updated ROADMAP distribution section
-- **Owner:**  Phase 3 (stated as the daily driver "from Phase 3 onward")
+- **Area:**   Build targets
 - **Blocks:** nothing yet
+
+ROADMAP schedules it as the daily driver "from Phase 3 onward".
 
 Build-time asset embedding, producing `sightline-personal`. ROADMAP is specific
 about the guards: build-time flag never a separate code path, distinct output
@@ -95,9 +98,11 @@ gitignored, never built in CI.
 ### B-002 — runtime first-run ROM conversion
 
 - **Found:**  2026-08-18, reading the updated ROADMAP first-run flow
-- **Owner:**  unclear — belongs with whichever phase produces a shippable binary
 - **Where:**  logic already exists in `tools/sightline/verify_rom.sh`
 - **Blocks:** nothing yet
+
+Which work this belongs with was unclear when it was recorded: whichever
+work produces a shippable binary.
 
 The dev-side gate already detects all three byte orders (`80371240` / `37804012`
 / `40123780`), checks region, and verifies the NTSC-US SHA-1. The runtime flow
@@ -107,7 +112,6 @@ difference: a build gate must never silently rewrite the user's ROM.
 ### B-003 — ROM-dependent CI jobs (RESOLVED, now scheduled work)
 
 - **Found:**  2026-08-18, reconciling CI with the updated ROADMAP
-- **Owner:**  Phase 0
 - **Blocks:** nothing — unblocked 2026-08-18
 
 Originally blocked: ROADMAP said no ROM may exist on any runner, which would
@@ -126,7 +130,6 @@ mupen64plus and Xvfb, none of which exist in a stock CI image.
 ### B-005 — replay is intermittently nondeterministic (BLOCKS PHASE 0)
 
 - **Found:**  2026-08-18, verifying the trace harness
-- **Owner:**  Phase 0 — this is the gate
 - **Blocks:** everything; the gate is "byte-identical across 10 consecutive runs"
 
 Roughly one replay in four reproduces. Same ROM, same input stream, same
@@ -164,7 +167,7 @@ produced a green result that a larger sample contradicted.
 ### B-011 — native replay parity is ~13%, not "parity to tick 292"
 
 - **Found:**  2026-08-24, starting the guard-parity investigation
-- **Owner:**  Phase 1 (native track)
+- **Area:**   Native track
 - **Where:** `tools/trace/nativediff.py`
 - **Blocks:** `trace-verify --backend native` meaning anything
 
@@ -292,7 +295,7 @@ construction. Two constraints found while scoping it - neither is guesswork-safe
    archives - the span is 9284 bytes, exactly 211 * 0x2C.
 
 **CORRECTION — the premise above is false.** Both constraints were solved
-before I looked, and the "root cause" was a search that was too narrow. The
+before this investigation looked, and the "root cause" was a search that was too narrow. The
 native setup swap does NOT live only in `sl_swap_setup.c`; the section walk is
 in `prop.c` (~1200-1400) and it already covers all ten sections:
 
@@ -303,7 +306,7 @@ in `prop.c` (~1200-1400) and it already covers all ten sections:
     offs[4] patrolpaths     offs[8/9] pad name arrays
 
 `sl_su_next(offs, off)` already bounds each array by the following section -
-the same derivation I proposed as novel. The intro walk even carries a comment
+the same derivation proposed above as novel. The intro walk even carries a comment
 about not blanket-swapping, because that would clobber the waygroup ID arrays
 sharing the gap.
 
@@ -332,7 +335,7 @@ the open question - and the earlier "boot alignment falsified" note was weak
 evidence, since identical chr SETS show only that the level loaded, not that
 both sides are at the same point in it.
 
-**RESOLVED — the spawn is correct on both sides. I was comparing the wrong
+**RESOLVED — the spawn is correct on both sides. The comparison used the wrong
 field.**
 
     field                    emulator                    native
@@ -443,7 +446,6 @@ anyone wires them up later.
 
 
 - **Found:**  2026-08-19, porting the record path off mupen64plus
-- **Owner:**  Phase 0
 - **Blocks:** nothing; it is a recording-ergonomics problem, not a correctness one
 
 `trace.py record` carries `--state` / `--save-state` from the mupen64plus era.
@@ -472,7 +474,7 @@ difficulty. Numbers kept only so nobody cites them; redo once someone wants
 the comparison.
 
 - **Found:**  2026-08-20, testing whether Agent recordings replay usefully at 00 Agent
-- **Owner:**  Phase 1 (AI regression cover), not Phase 0
+- **Area:**   AI regression cover, outside the Phase 0 gate criterion
 - **Blocks:** nothing
 
 Replaying an Agent recording on a 00 Agent build works, and the input does not
@@ -505,7 +507,6 @@ played, not from difficulty.
 ### B-010 — the layering check counts direct includes only
 
 - **Found:**  2026-08-24, fixing the four new violations from the native skeleton
-- **Owner:**  Phase 1
 - **Where:** `tools/sightline/check_layering.py`, `docs/layering-baseline.txt`
 - **Blocks:** the Phase 1 exit criterion as written could be met while
   `src/game` still cannot build headless
@@ -544,7 +545,6 @@ Two things worth deciding together:
 ### B-007 — is the libretro trace fingerprint environment-sensitive?
 
 - **Found:**  2026-08-19, auditing what the libretro port inherited from mupen64plus
-- **Owner:**  Phase 0
 - **Blocks:** nothing today; would let CI and host traces be compared directly
 
 Under mupen64plus the host and the CI container produced different state hashes
@@ -567,12 +567,11 @@ artifact as a bug in the game - the failure this harness exists to prevent.
 container, with `SL_ENV` forced to the same value on both so the fingerprint
 does not block the comparison, and diff. Identical means `env=` can come out.
 Needs the ROM mounted read-only into the container, which is permitted on this
-hardware but is a container the developer starts, not the agent.
+hardware but is a container the developer starts, not the automated tooling.
 
 ### B-006 — port the harness to libretro/parallel_n64
 
 - **Found:**  2026-08-18, after B-005 proved mupen64plus intermittently nondeterministic
-- **Owner:**  Phase 0
 - **Blocks:** nothing — this is the path forward
 
 All preconditions verified by measurement:
@@ -637,8 +636,10 @@ message naming the remedy, and two unit tests hold that guard in place.
 ### B-004 — WSL2 ships no joystick drivers
 
 - **Found:**  2026-08-18, attempting controller passthrough for trace recording
-- **Owner:**  Phase 0 (recording), and anyone who tries this again
+- **Area:**   Recording
 - **Blocks:** recording input traces inside WSL
+
+Recorded for any later attempt at controller passthrough under WSL2.
 
 Confirmed empirically, not assumed. `usbipd` attaches the controller and the
 kernel enumerates it (`045e:0b12`), but all three interfaces report
@@ -1095,7 +1096,7 @@ Do not re-add a "DLs stay in cartridge byte order" comment. They do not.
 ### B-012 — a depth-1 `G_DL` resolves into 22,610 words of zeroed memory
 
 - **Found:**  2026-08-25, measuring why the DL interpreter called 97.6% of commands unknown
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Where:** `src/gfx/sl_gfx_dl.c`, `seg_resolve` / the `OP_DL` arm
 - **Blocks:** textures, and any confidence that what is drawn is what the game asked for
 
@@ -1123,7 +1124,7 @@ a top-level overrun. Suspect the depth-1 segment base.
 ### B-013 — `textWrap` faults in the objectives menu, but only under `SL_TRACE_OUT`
 
 - **Found:**  2026-08-25, replaying the recorded Facility playthrough natively
-- **Owner:**  Phase 1 (trace harness)
+- **Area:**   Trace harness
 - **Where:** `src/game/textrelated.c:777` via `print_objectives_and_status_to_menu` (`src/game/front.c:6645`) via `lvlRender`
 - **Blocks:** native trace capture of any run that opens the objectives menu. NOT the demo.
 
@@ -1146,7 +1147,7 @@ guess in the first place — measure it.
 ### B-014 — six campaign levels do not boot natively
 
 - **Found:**  2026-08-25, first sweep of all twenty campaign levels on the native build
-- **Owner:**  Phase 2 (native bring-up)
+- **Area:**   Native bring-up
 - **Where:** varies; see the table
 - **Blocks:** the full game as shipping scope. Facility and thirteen others were fine, so this was invisible from the vertical slice.
 - **Status:** RESOLVED 2026-08-25. All 6 fixed; bootsweep is 20/20 OK.
@@ -1206,7 +1207,7 @@ may be a shared chokepoint rather than bunker1-specific.
 ### B-015 — live input samples state rather than latching events, so a very short press can be missed
 
 - **Found:**  2026-08-25, verifying that firing works in the native demo
-- **Owner:**  Phase 2 (platform)
+- **Area:**   Platform
 - **Where:** `src/platform/sl_input.c`, sampled once per presented frame from `sdl_poll`
 - **Blocks:** nothing today. A human click is ~80-100ms and samples fine.
 
@@ -1230,7 +1231,7 @@ begins and ends between two samples still registers once.
 ### B-016 — egypt: the propdef walk strides on a type byte its own swapper destroyed — RESOLVED
 
 - **Found:**  2026-08-25, native boot sweep (B-014); root cause proven the same day
-- **Owner:**  Phase 2 (native bring-up)
+- **Area:**   Native bring-up
 - **Where:** `src/native/sl_swap_setup.c`, the `sl_propdefs_swap` walk
 - **Blocks:** nothing. Fixed 2026-08-25; all 20 campaign levels boot.
 
@@ -1356,7 +1357,7 @@ custom setup is loaded natively, where the assumption does not hold.
 ### B-017 — the render is wrong: black spiky shards, near-black scene
 
 - **Found:**  2026-08-25, the first time anyone actually saw this renderer (`SL_SHOT`)
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Where:** `src/gfx/sl_gfx_dl.c`, vertex decode and/or colour path
 - **Blocks:** the demo looking like GoldenEye. It runs, it does not look right.
 
@@ -1431,7 +1432,7 @@ detail on its structure and regresses nowhere.
 ### B-018 — textures decode to rainbow swirls — FIXED 2026-08-25
 
 - **Found:**  2026-08-25, while fixing B-017; a genuinely separate defect
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Fixed:**  2026-08-25 — the palette address, not its contents or order
 - **Where:** `src/gfx/sl_gfx_dl.c` texture path and/or `sl_gfx_tex.c`, CI/TLUT
 - **Blocks:** the demo looking like GoldenEye. Geometry is right; surfaces are not.
@@ -1504,7 +1505,7 @@ source, which it did not before.
 ### B-019 — room geometry has never rendered natively — RESOLVED 2026-08-25
 
 - **Found:**  2026-08-25, looking for a *rendering* cause and not finding one
-- **Owner:**  Phase 2, but the defect is upstream of `src/gfx/`
+- **Area:**   Native port; the defect is upstream of `src/gfx/`
 - **Where:** `OS_K0_TO_PHYSICAL` (`include/PR/os.h`) and the `G_DL`/`G_VTX`
   operand resolution in `src/gfx/sl_gfx_dl.c`. See the resolution note at the
   end of this entry — the title above is the corrected one; the original was
@@ -1562,7 +1563,7 @@ says nothing about whether the triangle covers a pixel; `sl_tri` says it
 directly.
 
 
-**Narrowed further 2026-08-25 (owner session), two hypotheses killed by measurement:**
+**Narrowed further 2026-08-25, two hypotheses killed by measurement:**
 
 - **Not missing text banks.** `langGet` was the obvious suspect: it returns NULL
   natively for an unloaded bank by design and B-013 already involved it. Broke on
@@ -1685,7 +1686,7 @@ Two notes for whoever is next in this area:
 ### B-020 — font glyphs decode corrupted; text layout is correct — FIXED 2026-08-25
 
 - **Found:**  2026-08-25, first playtest after room geometry started rendering
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Fixed:**  2026-08-25 — the odd-row swizzle, applied where it does not belong
 - **Where:** font glyph decode / sampling — `src/gfx/sl_gfx_dl.c` call site, or the font asset path
 - **Blocks:** reading any menu. The player cannot navigate what they cannot read.
@@ -1766,7 +1767,7 @@ still 20/20.
 ### B-021 — character models deform: limbs scatter, the matrix stack is never used
 
 - **Found:**  2026-08-25, visual survey; re-diagnosed the same day after looking closely
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Where:** `src/gfx/sl_gfx_dl.c` — matrix flag decode and the `BD popmatrix` filter
 - **Blocks:** every character in the game looking right. Guards are the most visible thing in a level after the level itself.
 
@@ -1802,7 +1803,7 @@ Two specific suspects, both introduced with the matrix work in `b6a6910b`:
    were real, the stack can never pop.
 2. **The push bit may be misread.** The same commit established from
    `ucode05.txt` that bit0 = projection, bit1 = load, bit2 = push — overruling a
-   brief that used gbi.h's `F3DEX_GBI_2` values. If push is still being read
+   task specification that used gbi.h's `F3DEX_GBI_2` values. If push is still being read
    from the wrong bit, no command ever looks like a push.
 
 `mul` is 0 or 2 depending on the frame, which is also low for a scene with
@@ -1861,7 +1862,7 @@ and dam captures unchanged in character against the survey below.
 ### B-022 — native audio: the mixer is RSP microcode, and nothing executes an ACMD list
 
 - **Found:**  2026-08-25, wiring the SDL audio seam and un-excluding `src/audi.c`
-- **Owner:**  the T6 "port the synthesis library" work the `#ifndef __sgi`
+- **Area:**   Audio: the T6 "port the synthesis library" work the `#ifndef __sgi`
   guards in `src/snd.c` and `src/music.c` already name
 - **Where:**  `src/audi.c:522` (the seam), `src/libultra/audio/synthesizer.c:143`
   (`alAudioFrame`), `src/music.c:652`, `src/snd.c:118`
@@ -1885,7 +1886,7 @@ Three walls sit behind it, in the order they must fall:
    predictor codebook, polyphase resample with 16-tap state, envelope mixing,
    aux bus, interleave.
 
-   **Whether that is in scope is the owner's call, not this entry's.** The project
+   **Whether that is in scope is a project decision, not this entry's.** The project
    rules list "RCP emulation or static recompilation" under *Explicitly out of scope*,
    and an ACMD interpreter is RSP microcode work by any plain reading. The
    argument on the other side is that `src/gfx/sl_gfx_dl.c` already interprets
@@ -1895,7 +1896,7 @@ Three walls sit behind it, in the order they must fall:
    itself a departure that happened to be useful. That distinction has never
    been written down, and it should be settled deliberately rather than by
    precedent accumulated in a backlog entry. **Do not start this work without
-   the owner deciding.**
+   a project decision.**
 2. **The banks are big-endian and nothing swaps them.** `alBnkfNew`
    (`src/music.c:676`) relocates ROM offsets but does not byte-swap;
    `grep -rn "ALBankFile|ALWaveTable" src/ --include=*.c` outside libultra finds
@@ -2002,7 +2003,7 @@ immediately followed by `POLEF` (25/25), so in a zero-voice frame they load
 **pole-filter coefficients, not voice codebooks**. And `RESAMPLE` is
 **output-chain, not voice**: the 5 per frame share one state address, run at
 `UNITY_PITCH` (`abi.h:262`) with +-1 for drift, and are the rate correction
-`audi.c:529` negotiates. An earlier plan of mine put `RESAMPLE` in the voice
+`audi.c:529` negotiates. An earlier plan put `RESAMPLE` in the voice
 stage, contradicting the census that measured it in 435/435 frames; that was
 wrong and the 118 zero-voice frames cannot execute without it.
 
@@ -2099,7 +2100,7 @@ table carries `r^1..r^8`. The input path holds TWO Q14 factors and the state
 path ONE, so `>>28` and `>>14` respectively. Implemented as derived:
 **78012 differing bytes, RMS 324.62**, against scalar 78010 / 324.63 and
 identity **75450 / 318.42**. Algebraically equivalent forms measure equivalent,
-so **my hypothesis that per-block truncation explained the residual is
+so **the hypothesis that per-block truncation explained the residual is
 REFUTED.** Axes swept independently: 64-bit accumulator IS load-bearing
 (78012 vs 84201 at 32-bit); truncation point is NOT (77985 vs 78012, 27 bytes
 in 78000). POLEF confirmed in-place (`in==out==320`).
@@ -2418,7 +2419,7 @@ investigated, because that assessment was conditioned on MIXER being exact.
 `src/platform/` untouched. `make matching` MATCH!, `trace-verify LEVEL=facility`
 IDENTICAL over 15869 ticks.
 
-**RETRACTED: the MIXER "falsification" was a provenance bug of mine —
+**RETRACTED: the MIXER "falsification" was a provenance bug in the analysis —
 2026-08-28. This capture cannot isolate MIXER at command-node level.**
 
 The previous entry claimed the isolated data falsified `dst += (src*gain)>>15`.
@@ -2532,7 +2533,7 @@ LEVEL=facility` IDENTICAL over 15869 ticks.
 **Class accounting reconciled — 2026-08-28. The DAG tool was leaking taint;
 the 11469 resolved chains are the ENTIRE MIXER-only changed population.**
 
-An accounting contradiction exposed a real bug of mine. The validated taint
+An accounting contradiction exposed a real bug in the analysis. The validated taint
 matrix expects 42084 R/P-contaminated changed S16 samples; the DAG tool reported
 26120, and 42084 - 26120 = **15964**, exactly its "unresolvable" population.
 Cause: at a MIXER whose operands failed to resolve symbolically, the builder did
@@ -2693,13 +2694,13 @@ binary, ROM-derived dump or disassembly is committed. What follows is derived
 semantics.
 
 *The earlier "handler not in the image" conclusion was WRONG, and the cause was
-mine.* `rspboot` does not use `ucode_size` at all - it is never assigned for the
+in the analysis.* `rspboot` does not use `ucode_size` at all - it is never assigned for the
 audio task anyway (only the graphics task templates in `src/game/rsp.c` set it,
 and the audio heap is zero-filled before `alHeapInit`, so the field is 0). The
 loader instead hardcodes a **3968-byte (0xF80)** DMA from `task->ucode`, writes
 `SP_MEM_ADDR = 0x1080` - **bit 12 set selects IMEM, so the destination is IMEM
 offset 0x080** - and jumps there. **Blob offset X therefore maps to IMEM
-0x080 + X, not to X.** My earlier analysis assumed identity, which put every
+0x080 + X, not to X.** The earlier analysis assumed identity, which put every
 handler 0x80 out and made opcode 12's target look like it fell past the end. It
 did not: MIXER is at blob offset 0xd48, comfortably inside the static image.
 Two known-positive controls confirm the corrected mapping - SETBUFF and MIXER
@@ -2833,10 +2834,10 @@ element 3 = **0xC0** (table base). The coefficient addresses are therefore
 Q15, each summing to approximately 32768 (unity)**, over a 512-byte span - i.e.
 64 phases of 4 taps.
 
-**RETRACTED, a hypothesis of mine from this same session:** the eight `LQV`
+**RETRACTED, a hypothesis from this same session:** the eight `LQV`
 loads at DMEM 0x40 are NOT a resample coefficient LUT. That region is the
 microcode's generic constant pool - arithmetic ramps, all-ones, powers of two,
-unit selectors, sign patterns - used for the address arithmetic. I proposed it
+unit selectors, sign patterns - used for the address arithmetic. It was proposed
 as the tap table and the data refuted it immediately.
 
 **NOT yet derived, and therefore NOT scored:** the exact phase-accumulator
@@ -2898,7 +2899,7 @@ data. POLEF had no such problem - its coefficients arrive via LOADADPCM, DMA'd
 by the game from its own banks. Implementing RESAMPLE natively therefore needs
 those 256 coefficients extracted from the microcode data segment of the user's
 own ROM at runtime, which is a NEW class of ROM-derived runtime dependency and a
-design decision for the owner rather than something to settle here. Validation
+design decision for the project rather than something to settle here. Validation
 above used a local-only table under /tmp.
 
 MIXER-only and MIXER+POLEF remain exact (0 differing, RMS 0.0000).
@@ -4565,7 +4566,7 @@ report: `origin/sightline/session-0-bootstrap` exists at `ac2bc38f`, that
 commit IS the merge-base and an ancestor of HEAD (fast-forward only),
 `git branch -r --contains HEAD` is empty, and none of the 56 commits after it
 appears on any other local branch or tag. Local and unpushed, so rewriting
-needed no owner decision.
+needed no project decision.
 
 **A third violation was found at HEAD that pattern-scanning had missed**: the
 J/JAL note's disassembler example carried the encoded instruction word next to
@@ -5343,7 +5344,7 @@ quietly.
 carry HIGH half; the predicate is the complement of the carry LOW bit OR'd with
 the extension bit, and the high half is deliberately excluded.
 
-**The degeneracy claim, corrected.** I previously wrote that the literal
+**The degeneracy claim, corrected.** An earlier version stated that the literal
 compare equals signed maximum under EVERY flag state, called it "a proof about
 the operation", and used it to retire a precondition. What was actually in the
 tree was a prose argument plus **six sampled flag states**. Six samples do not
@@ -5392,7 +5393,7 @@ Constructed controls over flag states the game never reaches:
 ```
 
 The clip agrees with B inside the precondition and diverges outside it in every
-case; the compare is degenerate-equal throughout, as proved above. **My first
+case; the compare is degenerate-equal throughout, as proved above. **The first
 version of these controls failed** - it expected the compare and the clip to
 behave alike with respect to the carry high half, when only the clip consults
 it. The expectations were wrong, not the transcription; corrected rather than
@@ -5565,7 +5566,7 @@ by 16:
                   input pointer and input pointer + 8
 ```
 
-**Four bytes were unaccounted for and I had missed them:** 8+2+2+16 covers 28
+**Four bytes were unaccounted for and had been missed:** 8+2+2+16 covers 28
 of a 32-byte DMA, leaving +0x0C..+0x0F with no described provenance. They are
 not padding, and the DMA writes all 32, so whatever they hold is semantically
 observable - exactly the class the old oracle could not see.
@@ -5663,8 +5664,8 @@ the 32-byte read. That the continuation prediction moved means the model is
 wrongly carrying task-start material into it - a real defect in the oracle
 itself, found by the control rather than by inspection.
 
-**The two-sided control, resolved - and my diagnosis was wrong twice.** I first
-guessed the control was mis-specified because it corrupted per-task. Corrupting
+**The two-sided control, resolved - and the diagnosis was wrong twice.** The first
+guess was that the control was mis-specified because it corrupted per-task. Corrupting
 per-command still moved the continuation figure, so that was wrong too. The
 actual cause: an init does NOT reload the scratch and writes it to memory, where
 a later continuation legitimately reads it back, so corrupting before *any*
@@ -5676,7 +5677,7 @@ dependence is nil, which is the required side.
 change the init prediction" cannot be tested. The control is therefore half
 vacuous and is recorded as such.
 
-**My bias hypothesis is REFUTED by measurement.** I suggested the observable set
+**The bias hypothesis is REFUTED by measurement.** It suggested the observable set
 might be skewed toward unity-ratio commands. It is not a property of the
 capture at all:
 
@@ -5787,7 +5788,7 @@ because A_INIT is exact"** - the two paths reach that loop with different phase
 and state chronology, so the init result narrows the search without clearing the
 loop.
 
-Splitting all three populations settles it, and the answer is not the one I gave:
+Splitting all three populations settles it, and the answer is not the one given earlier:
 
 ```
   neither voice opcode   118 tasks   differing      119
@@ -5926,7 +5927,7 @@ decoded PCM**, which remains ungrounded.
 **ADPCM's own state is exact** over 30368 owned bytes, a non-vacuous population,
 which removes it as a suspect **for its state writeback only**. Its decoded
 DMEM output has never been compared against the cartridge - the three-way
-cross-check scored it against my own evaluators. So the decoder's output remains
+cross-check scored it against the investigation's own evaluators. So the decoder's output remains
 a live candidate for the mixed-population corruption, and **both roots are
 preserved** rather than collapsed to one.
 
@@ -6014,7 +6015,7 @@ downstream saved bytes are cartridge-exact.* Each population below is non-empty:
 
 **SAVEBUFF's 949204 mixed-task mismatches went to zero without touching
 SAVEBUFF.** That settles the cascade question by measurement rather than by the
-inference I had withdrawn: those saves did depend on the mixer, and the mixer
+inference that had been withdrawn: those saves did depend on the mixer, and the mixer
 was their upstream cause.
 
 **Narrowed:** all remaining mismatches lie in RESAMPLE-owned state ranges, and
@@ -6051,7 +6052,7 @@ is unproven, not validated.
 
 **WITHDRAWN: "nothing is reseeded from the cartridge once a chain begins."**
 `acmdenv3.c:145` does `memcpy(dram,bef,dsz)` **inside the per-task loop**, so the
-state chain is cut at **every task boundary**. My header comment asserted both
+state chain is cut at **every task boundary**. The header comment asserted both
 things in adjacent sentences and the second is false.
 
 **WITHDRAWN: "three-world chronology."** `acmdenv3.c:134` is `for(W=0;W<2;W++)` -
@@ -6215,14 +6216,14 @@ inspected and **is not present in this tree at all** - only call sites, with
 therefore unknown, and no inference is drawn from the absence of a caller-side
 clear.
 
-**WITHDRAWN ENTIRELY: the upstream-lifecycle claim.** I cited a comment at
+**WITHDRAWN ENTIRELY: the upstream-lifecycle claim.** It cited a comment at
 `drvrNew.c:266` as the original authors documenting this object's lifecycle. It
 does not describe this object. That line sits inside
 `alResampleNew(ALResampler *r, ALHeap *hp)`, which begins at line 250 - a
 different function on a **different type**. The envmixer allocation is in
 `alEnvmixerNew(ALEnvMixer *e, ALHeap *hp)` at line 199. The surrounding fields
-printed at the time were `r->` members, which should have stopped me: I read a
-nearby comment from another subsystem and promoted it to provenance for this
+printed at the time were `r->` members, which should have stopped it: a
+nearby comment from another subsystem was read and promoted to provenance for this
 one. It is no evidence about the mixer state at all.
 
 **The docs tree had never been searched.** Now done, excluding the ROM-hack
@@ -6303,9 +6304,9 @@ explicit caller-side initialisation follows the allocation; allocator behaviour
 is unresolved* and the initial bytes stay ungrounded. Whether the init semantics
 make them dead has to be proved separately.
 
-#### Escape graph completed - "no alias escape" was false as I stated it
+#### Escape graph completed - "no alias escape" was false as stated
 
-Two address-of sites were in my own printed output and I claimed no escape
+Two address-of sites were in the investigation's own printed output and no escape was claimed
 anyway: `alAuxBusParam(..., &pv->envmixer)` and
 `pv->channelKnob = (ALFilter *)&pv->envmixer` (`synthesizer.c:117,119`). Both
 take `ALFilter *` onto the mixer's **first member**. Followed to termination:
@@ -6349,7 +6350,7 @@ the lifecycle event causing each is still to be classified.*
 writer*, *no other opcode writes any mixer state range*, and *grounded 1103 of
 1103*. The instrument counted a byte as written only when its value differed,
 so **a store writing the same value back was invisible** - precisely the writer
-class the audit exists to exclude. I described it as "actual rather than
+class the audit exists to exclude. It was described as "actual rather than
 nominal" while it lacked exactly that property.
 
 Replaced by a **write-event hook in the interpreter** (`SL_ACMD_WRLOG`,
@@ -6369,7 +6370,7 @@ save whose destination already holds exactly the bytes it will write:
 
 The event is recorded although the value never changed, and disappears when the
 store is removed while the final bytes still read the same. Events are not value
-diffs. My first attempt at this control was itself wrong - it used different
+diffs. The first attempt at this control was itself wrong - it used different
 buffer offsets for the load and the save, so the value did change and the gate
 correctly refused to proceed.
 
@@ -6515,7 +6516,7 @@ parameter source, the state load and writeback, or reset:
 carrying its own state through every boundary rather than being reseeded.
 
 **One limit stated plainly:** these are independent *implementations* with
-independent storage, not independent *derivations* - both were written by me
+independent storage, not independent *derivations* - both were written by one author
 from the same reading of the microcode. That satisfies the no-shared-answer
 requirement and would catch a coding error in either, but it would not catch a
 shared misreading of the hardware. Only the cartridge comparison and the
@@ -6654,7 +6655,7 @@ every stage-3 world enters that consumer with **24 of 80 bytes** differing.
 
 **So the three-way agreement is not evidence of correctness.** The stage-2 and
 stage-3 evaluators agree with each other and all three disagree with the
-cartridge. This is precisely the shared-misreading case my own stated limit
+cartridge. This is precisely the shared-misreading case the stated limit above
 named - independent implementations, not independent derivations - and it is
 what the direct oracle was demanded to catch.
 
@@ -6680,7 +6681,7 @@ other.**
 
 #### Missing-state made genuinely fatal, and the localisation MEASURED
 
-**The self-repair was still there and I had reported it removed.** The counter
+**The self-repair was still there and had been reported removed.** The counter
 incremented and then execution fell through into the initialisation path
 anyway, failing only at the end of the run - so a continuation still silently
 became an init during execution. Now an invalid continuation is an **immediate
@@ -7300,7 +7301,7 @@ The layering gate fails, and **not because of this work**:
 the cartridge what the crosshair is on"), which is an ancestor of this series'
 first commit and 123 commits behind HEAD. No commit in this series touches
 `src/game/` at all. **Not added to the baseline** - the project rules forbid growing it
-- and flagged for the owner as a pre-existing gate failure that blocks the full
+- and flagged for review as a pre-existing gate failure that blocks the full
 gate set.
 
 #### Tree comparison
@@ -7395,7 +7396,7 @@ one output tap genuinely reads history - all 7,803 do, which is a different
 population from the writeback quad's 2-of-31,636 and is not in tension with it.
 No control is applied to an A_INIT and then described as carried history.
 
-**Caught: my first attempt to split the tap semantics produced two controls that
+**Caught: the first attempt to split the tap semantics produced two controls that
 were the same mutation.** Reversing the coefficients and reversing the
 sample-to-tap mapping scored *identically* at 30,812,258, which is not a
 coincidence - `sum tp[k]*x[p(k)]` and `sum tp[s(k)]*x[k]` are the same family
@@ -7493,7 +7494,7 @@ than smoothed over:
 - **`+0x0C..0F`, 200 bytes.** Written by neither path, preserved from DRAM on a
   continuation and holding whatever the DMEM scratch had on an init. **Explicitly
   ungrounded**, not counted as coverage.
-- **`+0x10..11`, 468 bytes - my assumption, and it is wrong.** I took the quad
+- **`+0x10..11`, 468 bytes - an assumption, and it is wrong.** The model took the quad
   source `s1` to be the scalar expression `in + 2*(fa-4)`. It is not: `s1` comes
   from `lh s1,0(s5)` (`0x918`, `0x9d0`), a halfword of the vector-computed `v21`
   spilled to scratch at `s5 = s7+32`. The scalar form agrees for ~97% of
@@ -7580,7 +7581,7 @@ The constant vectors were **read out of the data image rather than assumed**:
   v25 = 2,4,6,8,10,12,14,16      <-- 2*(lane+1), NOT 2*lane
 ```
 
-So `v21[i] = t0 + 2*high(phase + (i+1)*step)`. **My scalar model used `2*lane`.**
+So `v21[i] = t0 + 2*high(phase + (i+1)*step)`. **The scalar model used `2*lane`.**
 
 #### Two derived hypotheses, both tested and both refuted
 
@@ -7665,8 +7666,8 @@ and the cartridge's expected halfword is searched for inside it:
 shift** - in the overwhelming majority of cases. So the cartridge's `+0x10..11`
 is `dmem[row-1], dmem[row]`, while we store `dmem[row], dmem[row+1]`.
 
-That is important because it rules out the whole family of explanations I had
-been pursuing: every one of them moved `row` by whole SAMPLES. A one-byte
+That is important because it rules out the whole family of explanations that had
+been pursued: every one of them moved `row` by whole SAMPLES. A one-byte
 displacement cannot come from any sample-index correction, and `+0x12..1F` being
 exact means the block as a whole is NOT shifted - only its first halfword is
 sourced one byte earlier. The remaining work is to derive that from the load
@@ -7725,7 +7726,7 @@ single hit**, so it is never reassigned. It is the **same scratch base the mixer
 uses**, which is why the untouched bytes carry mixer state.
 
 First measurement said all 424 gap-byte instances were task-start DMEM. **That
-was wrong, and the cause was my own instrument:** `env_exec` writes the mixer's
+was wrong, and the cause was the instrument itself:** `env_exec` writes the mixer's
 80-byte state to DMEM `0xF90` with `p16` directly, bypassing the write-event
 hook, so those writes were invisible. With them logged:
 
@@ -7794,7 +7795,7 @@ earlier, and the block-shift search above rules out the whole family directly.
 address behaviour of `LDV`/`SQV`, and **no authoritative RSP vector load/store
 semantics exists in any of the three trees**: a search over `*.md`, `*.txt`,
 `*.h`, `*.c` and `*.py` across `sightline/` and `goldeneye_docs/` for the
-mnemonics returns only files I wrote myself, and `tools/armips` is a binary with
+mnemonics returns only files written during this investigation, and `tools/armips` is a binary with
 no inspectable rules. Deriving it from memory is precisely the failure mode this
 project has already paid for repeatedly.
 
@@ -8302,7 +8303,7 @@ identifies a proven-sensitive subset.
   against the offline-validated PCM. Matching means transparent; differing means
   the sink is wrong. **No listening test grounds anything** - audible output is a
   demonstration, never an acceptance criterion.
-- **Paired PCM.** The finish line the owner set: native PCM validated
+- **Paired PCM.** The finish line set by project decision: native PCM validated
   numerically against the cartridge oracle.
 
 #### The audio manager: what actually blocks it, measured
@@ -8353,12 +8354,12 @@ result into a self-consistent one does not arise.
 
 #### RETRACTED: "the manager is not disabled by an early return"
 
-I said that, the coordinator accepted it and noted they had been relaying the
-opposite framing all session. **My correction was too broad and I was partly
+That was stated and accepted, replacing the opposite framing that had been in
+use all session. **The correction was too broad and partly
 wrong.** What is true:
 
 - `audi.c:537` does call `alAudioFrame` unconditionally - the per-frame command
-  BUILDER is not gated, which is the part I got right;
+  BUILDER is not gated, which is the part that was right;
 - but **`musicSeqPlayerInit` (`src/music.c:627`) has a native `#ifndef __sgi`
   early return**, so the sequence players are never initialised. That is an
   early return in the audio path, and it is the actual blocker.
@@ -8372,7 +8373,7 @@ calls `alCSPSetSeq(g_musicXTrack1SeqPlayer, ...)` with no NULL guard, and
 what currently absorb that**, so removing them without making init run converts
 a stubbed no-op into a null dereference.
 
-**So the link must NOT be done on its own**, and I have not done it.
+**So the link must NOT be done on its own**, and it has not been done.
 
 One half of that build-script rationale is now **stale**, though: it also says
 "linking the library on its own buys no audio, because nothing executes the ACMD
@@ -8396,7 +8397,7 @@ mechanism, no generated audio data, nothing committed.** That shim already
 carries a NULL-`dram` guard whose comment names this very case.
 
 **Three changes are coupled, not two.** Beyond the early return and the link
-there is a third gate I had not found: `snd.c` overrides Rare's sound bootswitch
+there is a third gate that had not been found: `snd.c` overrides Rare's sound bootswitch
 natively -
 
 ```
@@ -8505,7 +8506,7 @@ this tree on 2026-08-28. Boundaries `0x2EBDE0 / 0x2F19A0 / 0x3B4450 / 0x3B87F0`,
 ending on `0x419790`, the music table. Sizes: **23,488 / 797,360 / 17,312 /
 397,216**.
 
-**Three-way comparison, and my hypothesis is REFUTED.** The measured heap grants
+**Three-way comparison, and the hypothesis is REFUTED.** The measured heap grants
 settle it without needing the symbol table:
 
 ```
@@ -8611,7 +8612,7 @@ mismatches are all still unmeasured. That comparison is the next work.
 
 #### WITHDRAWN: `2dcc70c4` landed a build that crashes at frame 501
 
-**My acceptance test was too short.** The 60-frame headless run I used to
+**The acceptance test was too short.** The 60-frame headless run used to
 declare that commit healthy never reached music playback. At 900 frames - the
 frame count the cartridge capture itself uses - the committed build faults:
 
@@ -8632,7 +8633,7 @@ but init disabled, the real `alCSPSetVol` runs instead of the stub and the
 original null-seqp fault returns. The link and the init are coupled in BOTH
 directions, exactly as `build.sh` always said. So the link is withdrawn too.
 
-**And my first restore put the early return in the wrong place**, later than the
+**And the first restore put the early return in the wrong place**, later than the
 original, so bank loading ran before it. The stub count caught it: 58 against
 the original 56, with `alBnkfNew` newly referenced. Returned to the original
 position - before any allocation or bank load - and the count is 56 again.
@@ -8683,13 +8684,13 @@ Failure comes from the **process**, not from reassuring text: exit status,
 frames reached and crash count must all be right, so a timeout or signal fails
 even if a "survived" line was printed first.
 
-**Two bugs in my own gate, both caught by its controls rather than by reading
+**Two bugs in the gate itself, both caught by its controls rather than by reading
 it:**
 
 1. `grep -c` PRINTS `0` and EXITS 1 when there are no matches, so `|| echo 0`
    appended a second zero and the comparison silently failed - the canonical
    run reported `FAIL 0 crash report(s)`.
-2. **My first negative control was invalid**: it replaced the binary and then
+2. **The first negative control was invalid**: it replaced the binary and then
    ran `make native-health`, whose `native-skeleton` dependency rebuilt over the
    fake. It proved nothing. Re-run against the script directly.
 
@@ -8708,14 +8709,14 @@ text occurs three times, once per track, and the script required one) and the
 second on a Python syntax error - **neither wrote anything**, which is why the
 tree was never left half-patched. The third applied cleanly and produced output.
 
-I believe that third run was genuine: `SEQPLAY` lines cannot be printed by the
+That third run was probably genuine: `SEQPLAY` lines cannot be printed by the
 reporter in `sl_main.c` alone, since nothing calls it without the `music.c`
 instrumentation. **But the tree has since been reverted, the result is not
-currently reproducible, and I will not defend an unreproduced measurement.** The
+currently reproducible, and an unreproduced measurement is not defended here.** The
 claim is withdrawn and will be re-derived - under a better oracle than the one
-I used.
+used then.
 
-**The buffer comparison is the right test and I should have reached for it
+**The buffer comparison is the right test and should have been reached for
 first.** Comparing the complete uncompressed sequence buffer against the
 cartridge's, immediately before the parser - length, mismatching bytes, first
 mismatch, hash per side - settles whether the parser is implicated at all, which
@@ -8814,7 +8815,7 @@ Both verified from the built artefact. `native-health` 900/900 exit 0 zero
 crashes; matching **MATCH!**, trace **IDENTICAL 15,869**, layering clean, native
 built.
 
-**Correction to my own record:** "only the trace-guarded reporters remain" was
+**Correction to this entry's own record:** "only the trace-guarded reporters remain" was
 wrong twice over - none of them was guarded, and the flag could not have guarded
 them where they lived.
 
@@ -8837,13 +8838,13 @@ tested, 2 rejected. It re-applies the detection predicate at frame±1 around
 every accepted invocation and requires rejection - written before the capture,
 not after, because the health gate's first control passed while testing nothing.
 
-**Two errors in my own tool, both caught by the instrument rather than by
+**Two errors in the tool itself, both caught by the instrument rather than by
 reading it:**
 
 1. The first run detected **zero** invocations, and the control **correctly
    reported itself VACUOUS** and exited non-zero rather than printing a pass on
    an empty population. A control that can only pass is not a control.
-2. The cause: `g_musicXTrack1CurrentTrackNum` is **`s32`** (`music.c:88`) and I
+2. The cause: `g_musicXTrack1CurrentTrackNum` is **`s32`** (`music.c:88`) and the tool
    read it as `u16`, taking the HIGH half of a big-endian 32-bit value, which is
    zero for any small track number. **The same defect class this whole
    investigation is about, in the tool built to investigate it.** The diagnostic
@@ -9026,7 +9027,7 @@ fix.
 
 #### WITHDRAWN: the cadence ratio, which was the seam error one level up
 
-I wrote "435 tasks over 900 frames, roughly one task per two pumped frames".
+An earlier version said "435 tasks over 900 frames, roughly one task per two pumped frames".
 **That divides a cartridge-domain count by a native-domain count** - the exact
 mistake the seam work exists to prevent, committed one level up, in the same
 pass that proved cartridge frame 313 and native pumped frame 501 are the same
@@ -9224,7 +9225,7 @@ slot taken at the pre-advance counter value and the completion identified by the
 condition: it acts only when the handler's own notify loop queued a message, so
 the cadence comes from live state.
 
-#### The poll proof failed first, and the failure was my metric
+#### The poll proof failed first, and the failure was the metric
 
 ```
   POLLBALANCE retraces=899 joyPoll=949   *** IMBALANCED ***
@@ -9836,7 +9837,7 @@ produced or compared, and no ACMD parity is claimed.
 
 #### What byte-identical command-word parity would require of the arena - MEASURED
 
-Asked because an arena decision is with the owner. The answer changed while
+Asked because an arena decision was pending. The answer changed while
 being measured, so it is given as three separate facts.
 
 **(1) There is no segment base to hide behind. Measured, both sides:**
@@ -9902,7 +9903,7 @@ in (2) - the 4-byte coefficient-table displacement and the 64-byte stride
 difference were both found by it. It is implemented as the ARENA-RELATIVE
 section of `acmdparity.py`.
 
-**Recommendation, for the owner's decision and not acted on:** the arena is
+**Recommendation, for decision and not acted on:** the arena is
 worth deciding on its own merits - it is what makes the interpreter able to
 address anything at all - but it should not be justified by command-word
 parity, because on its own it would move 33.6% of operands into agreement and
@@ -9913,7 +9914,7 @@ Nothing here is acted on and no arena work is started.
 
 #### THE TARGET ARENA LAYOUT, derived - reported before anything is allocated
 
-Owner decision: build the low 24-bit-addressable arena mirroring the
+Decision: build the low 24-bit-addressable arena mirroring the
 cartridge's segment layout, with byte-identical command-word parity kept as the
 oracle. Derived rather than chosen, from three independent sources that agree.
 
@@ -10117,7 +10118,7 @@ and RESAMPLE were displaced by the same struct and are now exact.
 
 #### WITHDRAWN: "the native per-element stride is 64 bytes smaller"
 
-I derived that from the first four deltas, which step by `0x40` each. **The full
+That was derived from the first four deltas, which step by `0x40` each. **The full
 family does not.** Printing every delta rather than the top four:
 
 ```
@@ -10149,7 +10150,7 @@ attributed, and command construction untouched.
 #### WITHDRAWN AGAIN: defect 2 is not a layout defect at all
 
 The eleven deltas were the third plausible-but-wrong pattern in this thread,
-and the partition the coordinator asked for is what dissolved it. Comparing the
+and partitioning the addresses is what dissolved it. Comparing the
 address COLLECTIONS instead of pairing operands positionally:
 
 ```
@@ -10301,7 +10302,7 @@ exactly the large values took three bytes. There is no runaway read and no
 short read.
 
 **The values are well-formed, not garbage.** Printing the durations themselves
-rather than counting against a threshold I picked - which was doing far too much
+rather than counting against an arbitrarily picked threshold - which was doing far too much
 of the work - the distribution is:
 
 ```
@@ -10343,7 +10344,7 @@ measurement, not asserted**; nothing here measures allocation or stealing.
 touched, and the threshold that produced the misleading "over1536ticks" count
 has been replaced by printing the distribution.
 
-#### Voice stealing REFUTED - my own named next candidate, measured and wrong
+#### Voice stealing REFUTED - the previously named next candidate, measured and wrong
 
 The previous entry named voice stealing as the likely mechanism: the cartridge
 using 10 physical voices against the native build's 16 suggested a pool under
@@ -10474,7 +10475,7 @@ game never asks it to play.
 
 #### WITHDRAWN: "one cause, three signatures" - the cartridge fires NO effects either
 
-Inverting to the cartridge, as instructed, refutes the premise the inversion was
+Inverting to the cartridge refutes the premise the inversion was
 built on. Polled per video frame over the same recorded 900-frame facility
 input:
 
@@ -10677,7 +10678,7 @@ statement in the list above.
 
 #### The ungrounded counters: units DERIVED, and "branches" was wrong
 
-I called them branches. Nobody had established what one increment counts. Read
+They were called branches. Nobody had established what one increment counts. Read
 at the increment sites, each counts something different, and none of them is a
 command:
 
@@ -10705,8 +10706,8 @@ neither is a task.** With the ADPCM gate as it had drifted (on):
   resampleInit   hits=45     commands=45     tasks=24
 ```
 
-Worth recording that the measurement corrected an assumption I had written into
-the instrument itself: I expected one command to produce many state hits, and
+Worth recording that the measurement corrected an assumption written into
+the instrument itself: one command was expected to produce many state hits, and
 `hits == commands` for both counters, so it is one hit per command in practice.
 
 #### The ADPCM acceptance hole was a DRIFT from the accepted design, now closed
@@ -10752,9 +10753,9 @@ state and rsinit totals fall (12730 -> 1264) only because tasks now abort before
 reaching later RESAMPLEs - **that is a consequence of aborting earlier, not an
 improvement**, and no run is accepted while either is nonzero.
 
-#### The counters are INTERFACE, and my artefact check was mis-specified
+#### The counters are INTERFACE, and the artefact check was mis-specified
 
-The four new counters appeared in the production binary and my artefact grep
+The four new counters appeared in the production binary and the artefact grep
 flagged them. The right resolution is not to widen the grep until it passes.
 `sl_acmd.h` already documents the three `sl_acmd_ungrounded_*` counters as
 "part of the interface, not debug scaffolding... a nonzero value means
@@ -10769,8 +10770,8 @@ scaffolding only, which is 0.
 
 #### Storage recon: the facility already exists, and so does its control
 
-Searched before inventing any storage, as instructed. `src/game/sl_romdbg.h`
-is an owner-maintained ROM-debug mailbox, built by `SIGHTLINE_ROM_DEBUG` via
+Searched before inventing any storage. `src/game/sl_romdbg.h`
+is a separately maintained ROM-debug mailbox, built by `SIGHTLINE_ROM_DEBUG` via
 `make trace-debug` / `ROM_DEBUG=1` (`Makefile:536-547`), under an explicit rule:
 *"The normal matching ROM stays byte-identical. The debug ROM is knowingly
 non-matching and exists solely as an oracle. Normal ROM proves behaviour. Debug
@@ -10787,7 +10788,7 @@ It already carries the two things this work needs:
 
 It is versioned (`SL_ROMDBG_VERSION 4`), host-driven through a seq/cmd/ack
 protocol, and read by `tools/native/rominspect.py`. **Not modified**: it is
-owner-maintained with a stated contract, and extending it is a change to that
+separately maintained with a stated contract, and extending it is a change to that
 contract rather than an addition beside it. The event-logger design should
 reuse this mailbox and its two controls rather than allocate new storage.
 
@@ -10853,7 +10854,7 @@ question it is being built to answer is an absence.
 right one to reuse, but it has **no spare space**: `SlRomDbg` is densely packed
 from `magic` at 0x00 through `sight_mp_menu` at 0xf4 and then ends with
 `SlDbgHit hits[10]` at 0xf8, closing at 0x238. There is no reserved or padding
-region to borrow, and the struct is owner-maintained under a versioned host
+region to borrow, and the struct is separately maintained under a versioned host
 protocol (`SL_ROMDBG_VERSION 4`, seq/cmd/ack), so growing it is a change to that
 contract rather than an addition beside it. **Not modified.**
 
@@ -10939,7 +10940,7 @@ about the matching ROM changes.
 
 With this, the storage question for the event logger is settled: reuse
 `SIGHTLINE_ROM_DEBUG`'s build path and its two existing controls, and place the
-ring at 0x00400000 rather than growing the owner's mailbox struct or adding a
+ring at 0x00400000 rather than growing the existing mailbox struct or adding a
 static that shifts layout.
 
 #### The attribution key, controlled - and the two arms disagree, which is the point
@@ -11039,7 +11040,7 @@ in both builds:
 ```
 
 Physical **0x00500000** and **0x00600000**, each with a 0x40000 length - squarely
-inside the region I had called empty. **Neither table is referenced**: tree-wide
+inside the region earlier called empty. **Neither table is referenced**: tree-wide
 `grep -rn dword_D_80036FD8 dword_D_80036FE8 src/` returns only the two
 definitions. So nothing consumes them on this path, but the addresses are
 evidence the region was used by some build, and calling it "nothing" was wrong.
@@ -11047,7 +11048,7 @@ evidence the region was used by some build, and calling it "nothing" was wrong.
 **A third fixed buffer, below the region but correcting an earlier claim.**
 `RZIPBUFADDR 0x80300000` (`init.c:37`), used at `init.c:126` as the
 decompression target for the code segment. Physical **0x00300000** sits inside
-0x002f6000..0x003b5000, which I characterised as "stacks". That range is stacks
+0x002f6000..0x003b5000, which was characterised as "stacks". That range is stacks
 **plus at least this fixed buffer**; the earlier tiling was too coarse. It is
 below 0x00400000 and does not affect the candidate region, but the
 characterisation is corrected.
@@ -11084,7 +11085,7 @@ unreferenced.
 
 #### The control's contract, read before implementing - and it changes the deliverable
 
-Instructed to trace the debug and size-control defines rather than trust the
+The debug and size-control defines were traced rather than trusting the
 Makefile comment. Doing so found a result this project has **already measured**
 that constrains the whole event-logger plan, so it is surfaced before any logger
 is written.
@@ -11157,8 +11158,8 @@ effort is spent.
 
 #### Seed characterisation: the music path IS seed-independent, and the first attempt was vacuous
 
-Instructed not to treat "narrower deliverable" as a conclusion but to measure
-how narrow. Done on the **native** side, where the seed is a parameter
+"Narrower deliverable" is not treated as a conclusion; how narrow was
+measured. Done on the **native** side, where the seed is a parameter
 (`SL_RNG_SEED`) and the sequence-player instrumentation already exists - no ROM
 build needed to answer the scope question.
 
@@ -11267,7 +11268,7 @@ compared to each other.
 Still native-side only. The reference's own note-on population is what the ROM
 logger is for, and nothing here measures it.
 
-#### The event log, written - and the matching gate caught three of my mistakes
+#### The event log, written - and the matching gate caught three mistakes
 
 The logger is in, guarded by `SIGHTLINE_AUDIO_EVENTS` and inert without it.
 Header `src/game/sl_audioev.h`; five sites: the frame-counter writer (the
@@ -11283,10 +11284,10 @@ the exact error the instrument exists to avoid; no formatting in the ROM, fixed
 never raw addresses, because those move between arms.
 
 **Three separate failures, each caught by `make matching`, each a wrong
-assumption of mine.** Recording them because the pattern is more useful than the
+assumption.** Recording them because the pattern is more useful than the
 fix.
 
-1. **Include paths are not uniform.** I checked `Makefile:206` -
+1. **Include paths are not uniform.** The check read `Makefile:206` -
    `-I . -I include -I include/PR -I src -I src/game ...` - and concluded both
    builds share it. `src/libultrare/Makefile.libultrare` compiles the audio
    library with a **narrower** set: `-I . -I include -I include/PR
@@ -11296,7 +11297,7 @@ fix.
    include directory to a byte-matching build can change which header a name
    resolves to.
 
-2. **IDO is C89 and gcc is not.** My block went in at the top of
+2. **IDO is C89 and gcc is not.** The new block went in at the top of
    `musicTrack1Play`, above its declarations. The native build accepted it
    silently; IDO rejected it, pointing at `u32 t3;`. Moved below the
    declarations.
@@ -11305,7 +11306,7 @@ fix.
    matters.** With both of those fixed the ROM compiled and **the checksum still
    failed**: `SL_AEV` expanding to `do { } while (0)` inside a block with an
    `extern` declaration was enough to change IDO's output even though it emits
-   no code. The project's own facility states the correct discipline and I had
+   no code. The project's own facility states the correct discipline and the change had
    departed from it - `sl_romdbg.h`: *"every line the flag adds is inside an
    #ifdef, so the preprocessor deletes all of it from the matching build."*
    Every call site and every `#include` is now inside `#ifdef
@@ -11313,7 +11314,7 @@ fix.
 
 **That third one is why the gate is load-bearing rather than ceremonial.** A
 no-op macro is the intuitive way to write optional instrumentation, it is
-correct on every compiler I would have tested it on, and it silently broke the
+correct on every compiler it would plausibly have been tested on, and it silently broke the
 oracle this whole project is measured against. Nothing but the byte comparison
 would have found it.
 
@@ -11407,7 +11408,7 @@ different link, and its symbols move: `g_AudioFrameCount` is `0x800230f4` in the
 matching build and `0x80023594` in the `.aev` image; `g_sndPlayerPtr` moves
 `0x800243f0` -> `0x80024890`. Every earlier read used matching-build addresses
 against the instrumented image, which is exactly the mistake of comparing raw
-addresses across arms whose layouts differ - committed by me, against my own
+addresses across arms whose layouts differ - committed against this investigation's own
 notes, one entry after writing them down.
 
 **With addresses taken from the instrumented map, the control finally
@@ -11569,7 +11570,7 @@ is sitting.
 **So the log is empty because the game crashes at boot.** Not because the audio
 manager failed to start, and not because the logger failed.
 
-**Two retractions, both mine, both from this morning.**
+**Two retractions, both from this morning.**
 
 1. *"other audio-related init state such as `g_sndPlayerPtr` is non-null, so
    some audio initialization happened"* is **wrong**. `snd.c:107` is
@@ -11720,14 +11721,14 @@ main thread STOPPED, `crashMain` spinning, every audio checkpoint zero,
 bound any future linked design, but it does not explain this fault, and the
 repair is what separates the two.
 
-**A retraction of my own reading from earlier in this same entry.** The first
+**A retraction of a reading from earlier in this same entry.** The first
 build's fault reported `pc = 0x7f000bd4 (image_entries_load+0x4)` and
 `badvaddr = 0x00000005`. The repaired build faults with the identical thread,
 state and register file - `v0`/`v1` holding `&g_tlbmanageMappingTableEnd`, `a0`
 = 1, `t0` holding the correct computed base - but reports `pc = 0x00000000` and
 `badvaddr = 0x00000000`. **Those two fields are not stable across builds, so
-neither is evidence of a faulting instruction.** I read a precise site off them
-and should not have; a nested exception taken with `EXL` already set does not
+neither is evidence of a faulting instruction.** A precise site was read off them
+and should not have been; a nested exception taken with `EXL` already set does not
 update `EPC`. What IS stable, and what the two builds agree on, is the thread,
 its stopped state, and a register file still holding `tlbmanage` locals - i.e.
 the fault is at the boot position immediately after
@@ -11802,8 +11803,8 @@ Gates on the delivered tree:
 
 One incidental note for whoever runs the gates next: **the project rules document
 the native build as `make sightline`, and no such target exists** - it is
-`native-skeleton`, and `native-health` builds it itself. Not fixed here;
-the rules document is owner-maintained.
+`native-skeleton`, and `native-health` builds it itself. Not fixed here:
+the rules document is outside this change's scope.
 
 
 #### The control ran, and it names the mechanism: this image cannot tolerate ANY `.code` growth. 2026-08-31
@@ -11906,9 +11907,11 @@ Gates on the delivered tree, with the control compiled in and flag-off:
 ### B-057 — the direct-boot image does not survive ANY growth of the `.code` segment
 
 - **Found:**  2026-08-31, running the control for the retired audio event log
-- **Owner:**  unclear - boot/loader, not audio. Whoever owns `direct-boot`.
+- **Area:**   Boot/loader (the `direct-boot` image), not audio
 - **Where:** `src/init.c` boot path, `tools/data_compress.sh`, `ge007.ld`
 - **Blocks:** every future ROM-side instrument that touches a file in `.code`
+
+Which work picks this up was unclear when it was recorded.
 
 Adding 80 bytes of never-executed `.text` to `audi.c` produces an image that
 faults during boot at the first entry into the TLB-mapped `.game` segment, with
@@ -11962,13 +11965,13 @@ Every mismatching command shares the same shape: `a0 == 0`, `in == 0x846`, and
 aligns **relative to `in`** is misaligned in ABSOLUTE DMEM, which is exactly
 where RSP vector-load row semantics would bite.
 
-**A hypothesis of mine, tested and refuted.** These commands sit in the task
+**A hypothesis, tested and refuted.** These commands sit in the task
 range where ADPCM appears, so the obvious reading was that the interpreter's
 DMEM is missing bytes an unexecuted ADPCM would have written. Measured over the
 sampled mismatching frames: **10 of 10 contain no ADPCM at all.** They are among
 the 131 tasks that execute to completion. So the residue is a genuine RESAMPLE
 semantics gap on clean DMEM, not a downstream ADPCM artifact - the opposite of
-what I expected, and worth recording because the wrong reading would have
+what was expected, and worth recording because the wrong reading would have
 deferred a solvable question behind a much larger one.
 
 **The state chain is confirmed sound, which is what makes the residue
@@ -11993,7 +11996,7 @@ vector'` both return nothing, and `doc-routing.json` already carries the
 `audio microcode / ACMD command set` not_covered entry), so only measurement
 can settle it.
 
-#### The ordering in the brief is inverted by measurement
+#### The prescribed order is inverted by measurement
 
 The plan was RESAMPLE first, then ADPCM. The capture says the dependency runs
 the other way. Grounding more RESAMPLE state means comparing more
@@ -12018,7 +12021,7 @@ so it is not an artifact of that choice. There is no more RESAMPLE state to
 ground until ADPCM executes.
 
 So the residue above is the whole of what this oracle can currently see, and
-the next work is ADPCM - which is both the brief's next item and the gate on
+the next work is ADPCM - which is both the next item in the prescribed order and the gate on
 1482 further RESAMPLE comparisons.
 
 **Tooling.** `tools/native/acmdrslow.c` gains an `RS_DUMP=1` diagnostic that
@@ -12283,7 +12286,7 @@ frame 30 and its last at 898 - 435 tasks over 868 video frames, exactly
 of 899 retraces, also every other one. **The cadence is identical; the onset is
 not.** Native starts audio at video frame ~2, the cartridge at 30.
 
-**A hypothesis of mine, derived and then refuted.** If audio-frame N means a
+**A hypothesis, derived and then refuted.** If audio-frame N means a
 different game moment on each side, cartridge N should match native N+14
 (28 video frames / 2). Tested by shifting the alignment 0..20:
 
@@ -12305,13 +12308,13 @@ The "same cmd-count" column is noise (14..42 everywhere) and must not be read
 as a signal; only the byte-identical column separates the shifts. Recording
 that because the count column looks like evidence and is not.
 
-**One correction, mine, caught by disagreement with the existing tool.** The
+**One correction, caught by disagreement with the existing tool.** The
 first run of this scan reported 0 byte-identical at *every* shift including 0,
 which contradicted `acmdparity.py`'s "first difference at audioFrame=3". The
-cause was my reader: the native capture's command words are **host order,
-little-endian** on this -m32 build, and I read them big-endian, byte-swapping
+cause was the scan's reader: the native capture's command words are **host order,
+little-endian** on this -m32 build, and the reader took them as big-endian, byte-swapping
 every native word so nothing could ever match. `acmdparity.py` documents this
-in `load_native` and I had not followed it. The disagreement with an existing
+in `load_native` and the reader had not followed it. The disagreement with an existing
 tool is what surfaced it.
 
 **So the divergence is real content divergence, not an alignment artifact.**
@@ -12755,7 +12758,7 @@ against the independently traced frame sizes:
 > holds for **448 of 448** submits, with no exceptions.
 
 That also explains the count: 448 submits against 449 tasks, because the first
-task's `lastInfo` is NULL. The coordinator's caution against assuming a save
+task's `lastInfo` is NULL. The standing caution against assuming a save
 length equals a submit length is answered here by derivation rather than
 assertion - the submit length is the *previous* task's frame size, not the
 current one's, and the ordinal is offset by one from the task.
@@ -12858,7 +12861,7 @@ RESAMPLE.
 
 #### RETRACTION: "27-28 frames" subtracted across two frame domains. 2026-08-31
 
-I wrote that native's first audio task falls at retrace 2-3, the cartridge's at
+An earlier version stated that native's first audio task falls at retrace 2-3, the cartridge's at
 video frame 30, and called the difference 27-28 frames. **That subtraction is
 invalid and is withdrawn.**
 
@@ -12867,7 +12870,7 @@ native pumped frames have **no derived mapping**, and a single event pair -
 cartridge frame 313 = native pumped frame 501 - is the only correspondence ever
 established. An earlier pass in this same sprint withdrew a claim for exactly
 this error ("435 tasks over 900 frames, roughly one task per two pumped
-frames"). I repeated it.
+frames"). It was repeated here.
 
 The honest form is two statements, each in its own domain, with no arithmetic
 between them:
@@ -12884,7 +12887,7 @@ never depended on the interval's size: both sides label their first task 1, so
 native's surplus appears strictly at the tail (ordinals 436-449) rather than as
 a shift.
 
-#### Where the cartridge's own 30 frames actually go - and it is not where I assumed
+#### Where the cartridge's own 30 frames actually go - and it is not where it was assumed
 
 Asked strictly inside the cartridge's domain, `tools/native/audioonset.py`
 samples each audio-init milestone per video frame:
@@ -12912,7 +12915,7 @@ So the function does **not** spend the preceding frames: it completes inside
 one. The frames before it belong to the boot work that runs *earlier* -
 `bossInitMainthreadData` and `rspAllocateBuffers` - not to audio init at all.
 
-That matters because it kills the natural assumption, which was mine implicitly:
+That matters because it kills the natural assumption, which had been made implicitly:
 that the cartridge's audio starts late because ROM bank loading is slow and
 native's `romCopy` is a fast memcpy. **It is not the bank loading.** Whatever
 accounts for the cartridge's pre-audio frames is upstream of
@@ -12936,7 +12939,7 @@ Of the 517 differing state bytes, 49 sit at `+0x0C..0F`. That range is written
 only by an `A_INIT` - a continuation preserves it - and the production model
 sources it from the shared DMEM scratch at `0xF90+0x0C`.
 
-**A classification error of mine, caught by the first result.** Bucketing the
+**A classification error, caught by the first result.** Bucketing the
 mismatches by the *last RESAMPLE* writing the block gave "41 CONTINUE, 8 A_INIT",
 which reads as "continuations are failing to preserve". That attribution is
 wrong: **for a preserved field the last writer is not the value's origin.** A
@@ -13009,7 +13012,7 @@ the cartridge's behaviour is consistent with the mixer not occupying that range
 there.** Our model of the mixer's *scratch footprint* looks wider than the
 hardware's by those four bytes.
 
-**Scope, and a boundary I am not crossing.** This is not a claim about
+**Scope, and a boundary not crossed here.** This is not a claim about
 ENVMIXER's output, which is accepted, nor about its persistent state, which is
 closed, and nothing here re-derives either. It is a question about which DMEM
 bytes of the shared scratch a mixer command leaves behind - and it must be
@@ -13027,15 +13030,15 @@ blocked at step one by the recorded RSP ISA silence.
 
 #### Two corrections to the entries immediately above. 2026-08-31
 
-**1. "The tree ships no RSP vector ISA reference" is FALSE, and I should have
+**1. "The tree ships no RSP vector ISA reference" is FALSE, and should have been
 checked before writing it.** Commit `9f8948c1` indexed the SGI RSP Programmer's
 Guide as the `rsp-vector-isa` **area** in `docs/doc-routing.json`, with
-mnemonic-to-page tables and a per-question answer map. My `gedocs search` and my
+mnemonic-to-page tables and a per-question answer map. The `gedocs search` and the
 `grep` for vector mnemonics both missed it because the guide is a routing AREA
 and a gitignored PDF under `reference/` - neither is a note in the corpus nor a
 string in the sources. Searching two places that structurally cannot hold it and
 concluding absence is the same error the project's own absence rule exists to
-prevent, and the blanket `not_covered` entry I added on that basis is narrowed.
+prevent, and the blanket `not_covered` entry added on that basis is narrowed.
 
 What is actually established, and must not be re-derived: the element field is a
 **byte** element (p180/p207); `LDV`/`SDV` are plain 64-bit transfers with no
@@ -13064,7 +13067,7 @@ The 45 and the 4 stay separate populations until something explains each; they
 are not to be forced under one rule.
 
 
-#### Objective A: the physical scratch writer map, derived from the microcode - and it refutes my own lead. 2026-08-31
+#### Objective A: the physical scratch writer map, derived from the microcode - and it refutes the earlier lead. 2026-08-31
 
 Decoded from `bin/aspboot.text.bin` (ROM-derived, gitignored, never committed)
 by decoding the SWC2/LWC2 encoding directly rather than trusting the transcribed
@@ -13116,7 +13119,7 @@ the scratch holds. The A_INIT path instead zeroes the head:
 The destination `0xF90` is 16-byte aligned, so by `SQV` p219 no truncation
 applies and each store transfers its full 16 bytes.
 
-**So the mixer's physical footprint DOES cover `0xF9C..0xF9F`.** The lead I
+**So the mixer's physical footprint DOES cover `0xF9C..0xF9F`.** The lead
 recorded - "our model of the mixer's scratch footprint is four bytes wider than
 the hardware's" - is **refuted by its own derivation**. The footprint is not too
 wide; the model reads those bytes from a range the mixer genuinely writes.
@@ -13172,11 +13175,11 @@ that refutes it was in the very next commit.
 
 The dispatch-table match validated **handler selection**, not the vector
 decoder, so the decoder was cross-checked against the in-tree Rabbitizer RSP
-support - an independent implementation, not another one of mine - on the four
+support - an independent implementation, not another local one - on the four
 words the physical-store conclusions rest on:
 
 ```
-  word        mine                      Rabbitizer
+  word        local                     Rabbitizer
   eaf42000    SQV v20[0],  0(s7)  16B   sqv $v20[0], 0x0($23)
   eaf52001    SQV v21[0], 16(s7)  16B   sqv $v21[0], 0x10($23)
   eaf01800    SDV v16[0],  0(s7)   8B   sdv $v16[0], 0x0($23)
@@ -13254,9 +13257,9 @@ the 45 same-value writes - they remain separate populations. That the mixer's
 accepted results are in question; nothing here tests them.
 
 
-#### Two more narrowings, both of my own wording. 2026-08-31
+#### Two more narrowings, both of this entry's own wording. 2026-08-31
 
-**1. "Writer identity eliminated" is not established.** What I actually checked
+**1. "Writer identity eliminated" is not established.** What was actually checked
 is that our evaluator places the same array at the same byte offsets as the
 microcode's store - a statement about **our implementation**, not about what
 physically wrote those bytes last during the run. The chronological last writer
@@ -13266,7 +13269,7 @@ before the resampler's init consumption **has not been measured**. Correct form:
 > scratch, but the exact last-writer and value lineage at consumption remain
 > unresolved.
 
-**2. "Lanes 6-7" assumes a mapping I inferred from the interpreter's array
+**2. "Lanes 6-7" assumes a mapping inferred from the interpreter's array
 layout** - the implementation validating itself again, in the same breath as the
 previous point. Until the byte-element-to-lane mapping is established
 independently, the range is **byte elements 12..15** and nothing more.
@@ -13323,7 +13326,7 @@ identity, which is what the previous entry's narrowing said was missing.
 
 #### The control-flow check, finished with the independent decoder
 
-Re-run over the whole handler with Rabbitizer rather than my decoder:
+Re-run over the whole handler with Rabbitizer rather than the local decoder:
 
 ```
   19 control transfers total, all DIRECT
@@ -13332,7 +13335,7 @@ Re-run over the whole handler with Rabbitizer rather than my decoder:
   the only exit (0x0d40 -> blob 0x0098) is past the store
 ```
 
-Four transfers my earlier grep appeared to miss were Rabbitizer printing the
+Four transfers the earlier grep appeared to miss were Rabbitizer printing the
 `beqz`/`bnez` pseudo-mnemonics; their decoded targets (0x0b04, 0x0b0c, 0x0c48,
 0x0d34) match the hand decode exactly. **Zero indirect transfers is what makes
 the graph complete** - with them, no static claim would have been safe.
@@ -13439,7 +13442,7 @@ range, not about what the mixer computes.
 
 **Wording first.** The accepted form of the previous result is: *every one of the
 49 differing bytes has the mixer as its final recorded physical-writer opcode in
-the validated replay.* And one sentence of mine is narrowed - not "no
+the validated replay.* And one earlier sentence is narrowed - not "no
 carried-state population exists" but **no carried-state population exists among
 the 49 differing bytes**. The separate **68-byte no-writer population is exact**
 and is kept as a negative control: whatever explains the 49 must not disturb it.
@@ -13490,7 +13493,7 @@ definition of "which command is writing" now feeds both. After the repair, over
 **Zero differences in every provenance field**, so the command-at-a-time run is
 the oracle and the per-byte attribution stands at command identity.
 
-#### The integration fixtures - and a bug I nearly invented
+#### The integration fixtures - and a bug nearly invented
 
 Re-run because a direct self-test proves recorder semantics while only the real
 call sites prove the interpreter feeds it correctly:
@@ -13502,13 +13505,13 @@ call sites prove the interpreter feeds it correctly:
   state-DMA same-value: expected DMA writer, 28 writes, unchanged   PASS
 ```
 
-The state-DMA gate initially FAILED, and I checked whether it was pre-existing
+The state-DMA gate initially FAILED, and whether it was pre-existing was checked
 by reverting to HEAD - where it also failed, which looked like confirmation of a
-latent defect. **It was neither: I had built without `SL_ACMD_WRLOG`, so the
-DRAM write log the gate reads was compiled out - and I reproduced the same wrong
-flags at HEAD.** With the flag set, all four pass and the run exits 0. A
-comparison against HEAD controls for *my changes*; it does not control for my
-build invocation, and I nearly recorded a bug that does not exist.
+latent defect. **It was neither: the build was made without `SL_ACMD_WRLOG`, so the
+DRAM write log the gate reads was compiled out - and the same wrong flags were reproduced
+at HEAD.** With the flag set, all four pass and the run exits 0. A
+comparison against HEAD controls for *the changes*; it does not control for the
+build invocation, and a bug that does not exist was nearly recorded.
 
 **Not claimed.** A cause for the 49. That the 45 and the 4 share a mechanism.
 That the mixer's accepted output or closed persistent state is in question.
@@ -13597,7 +13600,7 @@ mixer's accepted output or closed persistent state is in question.
 **1. "28 of 32, PASS" does not explain itself, and now it does.** The gate's
 acceptance predicate is `same && wrote > 0` - it never tests 32. The "expected
 writer = DMA for 32 bytes" in its message is **printed text, not an assertion**,
-and I reported the PASS without reading the predicate.
+and the PASS was reported without reading the predicate.
 
 Why 28: the interpreter's DRAM write log for the RESAMPLE writeback is
 `WRLOG(state, 12)` plus `WRLOG(state + 16, 16)` = **28 bytes**, skipping
@@ -13622,7 +13625,7 @@ and needs its own derivation and gates.
 write log at `0xF9C..0xF9F`, a different log and a different address space.
 
 **2. WITHDRAWN: "a lane whose clip decision differs need not change what the
-validated output path consumes."** That was speculation and it was mine. `v20`
+validated output path consumes."** That was speculation. `v20`
 feeds `vmulf $v16, $v20, $v24[6]` at 0x0c88 and `vmulf $v15, $v20, $v24[7]` at
 0x0c90 - immediately around the disputed store. **Any element of `v20` that a
 derived correction changes is consumed by those multiplies**, so the comfortable
@@ -14216,7 +14219,7 @@ absent from the delivered binary.
 ```
 
 
-#### Paired numeric comparison at the measured alignment, and the audible check is owner-gated. 2026-08-31
+#### Paired numeric comparison at the measured alignment, and the audible check is playtest-gated. 2026-08-31
 
 The envelope correlation gave an alignment key; this is what a **sample-level**
 comparison at that key actually yields, against the cartridge's own DAC capture:
@@ -14259,7 +14262,7 @@ The device path was exercised end to end and every seam conserves bytes:
 **Audibility itself was not confirmed, and no proxy is offered as if it were.**
 This host has no sound hardware - `aplay -l` reports "no soundcards found" - so
 the device SDL opens here cannot make a sound whatever the bytes are. The check
-needs the owner's machine:
+needs the reference play machine:
 
 ```
   SL_ROM=baserom.u.z64 tools/native/play.sh          # facility, windowed, paced
@@ -14276,7 +14279,7 @@ not 1.0. That the input-phase offset is the only remaining cause of that gap.
 
 #### THE THREE MINUTES WERE THE HOST AUDIO QUEUE. The VI retrace ran at 112 Hz. 2026-08-31
 
-The owner reported music playing normally on the paced interactive path and
+A playtest reported music playing normally on the paced interactive path and
 action effects arriving **minutes** late but eventually arriving. The
 discrimination that decides this - is the effect late reaching PCM, or is it
 sitting behind a backlog - is a numeric one, and it came back unambiguous.
@@ -14371,7 +14374,7 @@ a window, so the canonical fixture is bit-for-bit what it was: 449 tasks, 448
 submits, 1 317 184 bytes, peak 13217, rms 2090.72, 98.572% nonzero. Pacing only
 sleeps; it never alters state.
 
-**Not claimed.** That effects are now timely - that needs the owner's paced run
+**Not claimed.** That effects are now timely - that needs a paced playtest run
 with a weapon fired, and there is no native input-replay mechanism to make it a
 deterministic in-repo witness (tree-wide: no `SL_REPLAY`, no input-stream reader
 in `src/platform/`). That the four retrace-level underruns are related. That the
@@ -14392,15 +14395,15 @@ absent from the delivered binary.
 
 #### THE SIMULATION CLOCK RAN AT HALF RATE: `sl_ticks_next` returned a constant 1 VI per frame. 2026-08-31
 
-The owner reported the effects delay much improved after the pacing fix but the
+A playtest reported the effects delay much improved after the pacing fix but the
 whole game feeling about half speed. That is a claim about the **simulation
 clock**, which is a different quantity from the retrace rate and from the
 presentation rate, and it is settled here against the cartridge rather than
 against feel.
 
-#### A correction to my own wording, first
+#### A correction to this entry's earlier wording, first
 
-I wrote that the game "had been running at roughly double speed". **That claimed
+An earlier version stated that the game "had been running at roughly double speed". **That claimed
 more than was measured** and is narrowed to:
 
 > The old paced path ran the **retrace, and the retrace-driven audio
@@ -14507,7 +14510,7 @@ it is recorded here rather than pursued.
 **Not claimed.** That presentation cadence matches - it does not, and the gap is
 named above. That the cartridge's raw 995 is console behaviour - it is not, and
 the stall boundaries are excluded explicitly. That effects are now timely: that
-still needs the owner's paced run with a weapon fired.
+still needs a paced playtest run with a weapon fired.
 
 ```
   matching MATCH! | trace IDENTICAL | layering OK (baseline 282, no new)
@@ -14517,7 +14520,7 @@ still needs the owner's paced run with a weapon fired.
 
 #### FACILITY AUDIO: functionally closed. The closure measurement, and what it does and does not prove. 2026-08-31
 
-Owner acceptance on the interactive paced path: music audible and correct,
+Playtest acceptance on the interactive paced path: music audible and correct,
 gunshots, screams and explosions in effectively the right temporal position, no
 apparent lag in normal gameplay. This entry records the objective closure pass
 taken alongside that, and the debt left behind.
@@ -14637,7 +14640,7 @@ is why the next probe is the heaviest voice load rather than another validator.
 ### B-023 — the perimeter treeline decodes to black/white static on surface and surface2
 
 - **Found:**  2026-08-25, full 20-level visual survey
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Where:** texture decode call site, `src/gfx/sl_gfx_dl.c`
 - **Blocks:** two campaign levels looking right. Everything else about them renders correctly.
 - **Status:** RESOLVED 2026-08-25. The tile was paired with the wrong image;
@@ -14739,7 +14742,7 @@ Facility has one such texture. Its capture is unchanged and its census is 0 of
   translucent panel with the pedestal's stone grain reading through it, and the
   black slab overhanging the pedestal's front edge is gone. Nothing
   egypt-specific was needed; no glass-specific path exists.
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Where:** unknown — likely the transparency/blend path, `src/gfx/sl_gfx_dl.c`
 - **Blocks:** one level looking right. Everything else in egypt renders correctly.
 
@@ -14806,7 +14809,7 @@ WANTED: one control (stage 23) capture of the large wall screen. Until then
 this is inference from a shared root cause, not a confirmed fix.
 
 - **Found:**  2026-08-25, full 20-level visual survey
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Where:** the monitor draw path — a monitor renders from its own `cmdlist`
 - **Blocks:** control, and any level with screens. The rest of those levels renders correctly.
 
@@ -14872,7 +14875,7 @@ promoting to a host pointer.
 - **RESOLVED:** 2026-08-25. B9 is now decoded into a persistent render-mode
   register and mapped to GL state per draw. Subsumed [[B-024]]; did NOT subsume
   [[B-025]] — see the measurement recorded there.
-- **Owner:**  Phase 2 (renderer)
+- **Area:**   Renderer
 - **Where:** `src/gfx/sl_gfx_dl.c`, the triangle draw path vs `B9 setothermode_l`
 - **Blocks:** shadows, glass and screens everywhere. Probably subsumes [[B-024]] and [[B-025]].
 
@@ -14998,13 +15001,13 @@ looking.
 ### B-026 / B-024 — confirmed resolved by independent capture, 2026-08-25
 
 Re-captured and looked at each symptom level after `d5b21e1f`, independently of
-the agent that fixed it:
+the work that fixed it:
 
 - **aztec** — the floor decal is one continuous yellow marking lying flat on the
   diamond plating, and an entire layer of wall signage that had been black slabs
   is now visible: bay lettering, a keep-clear legend, hazard striping, a roundel,
   dashed floor lines. The horizontal streaking is gone, confirming it was the
-  same defect rather than the tile-clamp fault I had guessed.
+  same defect rather than the tile-clamp fault guessed earlier.
 - **train** — the guards' solid black rectangles are gone; they stand on the
   plank floor cleanly, and a wall marking that was previously invisible has
   appeared.
@@ -15023,8 +15026,8 @@ which is a tile-extent problem, not a blend one. That also disproves the
 
 ### B-027 — the crosshair draws as an untextured white square — RESOLVED 2026-08-25
 
-- **Found:**  2026-08-25, chasing the owner's "no crosshair" report
-- **Owner:**  Phase 2 (renderer)
+- **Found:**  2026-08-25, chasing a playtest "no crosshair" report
+- **Area:**   Renderer
 - **Where:** `gunDrawSight` (`gunfire.c:6204`) -> `texSelect(crosshairimage)` -> `display_image_at_position`
 - **Blocks:** aiming usefully.
 
@@ -15157,7 +15160,7 @@ and segfaulted, which is how it was caught.
 4. `make trace-verify` — facility IDENTICAL, 15869 ticks, schema v13; full
    20-level set clean.
 
-**Not proven headlessly.** No frame was rendered — the owner had the display.
+**Not proven headlessly.** No frame was rendered — the display was in use for playtesting.
 Everything above is command-stream and memory measurement, which settles that
 a correct 32x32 RGBA32 texture is now bound to the rect, but not that the
 crosshair ART is the right pixels the right way up. The one capture that would
@@ -15176,8 +15179,8 @@ corrected in place.
 
 ### B-028 — no arm, no gun; enemies' weapons and hats missing — RESOLVED 2026-08-25
 
-- **Found:**  2026-08-25, chasing the owner's "no arm, no gun" report
-- **Owner:**  Phase 2 (renderer)
+- **Found:**  2026-08-25, chasing a playtest "no arm, no gun" report
+- **Area:**   Renderer
 - **Where:** `subdraw()` as called from `gunRenderFirstPersonGunModels` (`gunfire.c:1580`)
 - **Blocks:** Bond's arm and gun. Probably enemies' held weapons and hats too - all attached child models.
 
@@ -15331,8 +15334,8 @@ the lower right of the frame is empty wall; after, the PP7 and the hand are
 there, in the same frames, at both a wall and a corridor view. That one is
 confirmed by eye.
 
-The GroupSimple fix is confirmed by the transform measurement only. The owner
-returned to the display partway through, so no frame was captured after it. The
+The GroupSimple fix is confirmed by the transform measurement only. The display
+went back to playtesting partway through, so no frame was captured after it. The
 capture that would close it: **streets, `SL_PROBE_ROUTINE=look`, every 20
 frames — the guard standing in the alley around f-00080.** The matching
 before-image is on disk at `/tmp/after-streets/f-00080.png` (viewmodel fixed,
@@ -15365,7 +15368,7 @@ rather than changed, because touching them buys nothing today and each edit is
 its own chance to introduce the bug it is preventing.
 
 - **Found:**  2026-08-25, out of B-028 cause 1
-- **Owner:**  Phase 2, but the hazard is tree-wide
+- **Area:**   Native port; the hazard is tree-wide
 - **Where:** anywhere the decomp reads more bytes from `&sym` than `sym` holds
 
 The decomp faithfully reproduces reads that run off the end of one symbol into
@@ -15476,7 +15479,9 @@ Searches run (all tree-wide over `src/`, all `--include=*.c`):
 - `explosion.c:1501`, `setguscale.c:5` — `(Mtx *)&dword_CODE_bss_8007A100`.
   Symbol is 64 bytes, `Mtx` is 64. Exact fit.
 - `vtxstore.c:285`, `:290` — `((s16 *)&dword_CODE_bss_8007A0D4)[1]` reads bytes
-  2..3 of a 4-byte symbol. In bounds.
+  2..3 of a 4-byte symbol. In bounds. (Later: in bounds, but on a little-endian host
+  bytes 2..3 are the HIGH half - the block limit read as zero. Fixed
+  2026-10-02, "A destroyed tank vanishes" under B-FACXBG.)
 
 **Already fixed before this sweep** (found and guarded during earlier native
 work; recorded here so the class has one complete inventory):
@@ -15504,16 +15509,16 @@ Two adjacent hazards found while sweeping, filed here rather than chased:
 
 ### B-030 — the ammo HUD is drawn 240 times and never appears
 
-- **Found:**  2026-08-25, owner reported "missing HUD" while playing
-- **Owner:**  Phase 2 (renderer)
+- **Found:**  2026-08-25, playtest report: "missing HUD" while playing
+- **Area:**   Renderer
 - **Where:** `gunDrawHudInteger`/`gunDrawHudString` (`gunfire.c:5877`, `:5932`), called from `:6025` and `:6035`
 - **Blocks:** knowing how much ammo you have.
 
-**I filed this wrong the first time and the correction matters.** When the owner
-first said "no HUD", I measured `bondviewRenderGaugeBars` at ZERO calls and
-reported that as correct behaviour, because the health/armour bars are gated on
+**This was filed wrong the first time and the correction matters.** When the playtest
+first reported "no HUD", `bondviewRenderGaugeBars` measured at ZERO calls and that was
+reported as correct behaviour, because the health/armour bars are gated on
 `bondviewGetIfCurrentPlayerHealthShowTime()` and only appear when damaged. That
-much is true. But it is not the whole HUD, and the owner was describing the
+much is true. But it is not the whole HUD, and the report was describing the
 whole thing.
 
 `gunDrawHudInteger` runs **240 times** in a gameplay run. The ammo readout is
@@ -15566,8 +15571,8 @@ visible.
 
 **RESOLVED 2026-08-25. Root cause: `sprintf` returns an empty string natively.**
 
-Correcting the entry below before anyone acts on it - I decoded the two mux
-words against the table in `ucode05_old.txt` and they CLEAR the renderer:
+Correcting the entry below before anyone acts on it - decoded against the table
+in `ucode05_old.txt`, the two mux words CLEAR the renderer:
 
 ```
 MUX A (fcffffff fffdf6fb)  RGB = prim              ALPHA = prim
@@ -15664,7 +15669,7 @@ no draw - but that is a guess and has not been tested.
 
 ### B-031 — Bond's arm missing from the watch on pause
 
-Reported twice by the owner: pausing shows the watch but not the wrist/arm it
+Reported twice in playtest: pausing shows the watch but not the wrist/arm it
 should be attached to.
 
 **Two plausible causes ruled out by measurement, so nobody re-checks them:**
@@ -15695,7 +15700,7 @@ SWITCH-node selection: if a switch index is read in the wrong byte order the
 model would still draw while consistently picking the wrong branch. That is the
 project's most frequent bug class and it fits "everything renders except this
 one part". Confirming it needs one paused capture, which cannot be taken while
-the owner is using the display.
+the display is in use for playtesting.
 
 **THE HARNESS CAN NOW RAISE THE WATCH, and the first measurement KILLS the
 switch-node hypothesis.**
@@ -15802,7 +15807,7 @@ blind to. Bootsweep and gdb measurement are the checks that apply.
 
 ### B-032 — decals: what was ruled out, and the one real divergence found
 
-The owner reported "decals aren't showing up" and "no bullet decals". After a
+A playtest reported "decals aren't showing up" and "no bullet decals". After a
 full pass this is **still not demonstrated to be broken**, and the reason the
 earlier measurement was inconclusive is now understood.
 
@@ -15894,7 +15899,7 @@ on its own.
 **Do not read the zero as "firing is broken".** It is equally consistent with
 the button never reaching the game, with the active control style mapping fire
 elsewhere (direct boot forces CONTROLLER_CONFIG_HONEY at player.c:502), or with
-Bond not being controllable at that point. I tried to distinguish these by
+Bond not being controllable at that point. These were to be distinguished by
 breaking on `osContGetReadData` and printing what the game receives, and that
 measurement was WRONG: a `finish` inside a breakpoint command list fights the
 `continue`, so it counted one read and established nothing. Recorded so nobody
@@ -16001,9 +16006,9 @@ files.txt` (stan format), `.../tile roving.txt` (tile traversal),
 `.../Global Visibility Microcode/global visibility types.txt` (how rooms are
 determined visible).
 
-**Two corrections to earlier entries in this section, both mine.** First, I
+**Two corrections to earlier entries in this section.** First, an earlier entry
 recorded "the guard at chrprop.c:1131 is never reached" - that reading was
-invalid, because my own `#ifdef` insertion at chrprop.c:1127 shifted every line
+invalid, because the investigation's own `#ifdef` insertion at chrprop.c:1127 shifted every line
 below it and the breakpoint landed inside a comment block. Break on symbols, or
 re-check line numbers after editing the file. Second, `gunCreateBeamForHand` is
 the VISUAL tracer only and early-returns when `getPlayerCount() < 2`; the 100
@@ -16122,12 +16127,14 @@ the only open part of B-032.
 
 ### B-033 — keycards open nothing: KeyRecord's lock-bit word was never swapped — RESOLVED 2026-08-25
 
-- **Found:**  2026-08-25, owner report: "keycards don't seem to be working, I
+- **Found:**  2026-08-25, playtest report: "keycards don't seem to be working, I
   can't enter the first security room in facility to open the locked door"
-- **Owner:**  Phase 1 (native build), fixed in place — it blocks playing at all
+- **Area:**   Native build
 - **Where:**  `src/native/sl_swap_setup.c` `sl_swap_KeyRecord`;
   `src/game/propobj.c` `check_if_entry_is_collectable`
 - **Blocks:** was blocking every keycard-locked door in the game
+
+Fixed in place rather than deferred: it blocks playing at all.
 
 The ninth instance of this project's dominant bug class, and the first where the
 wrong bytes came from a **union** rather than from a positional read.
@@ -16234,7 +16241,7 @@ For most of a day this file recorded that renderer bugs could not be measured
 headlessly, because `sl_gfx_frame_dl` returns early unless `sl_gfx_active()`.
 That was true and the conclusion drawn from it was wrong: **`xvfb-run` supplies
 a virtual display, the renderer runs in full, and nothing appears on the
-owner's screen.**
+physical screen.**
 
     xvfb-run -a --server-args="-screen 0 640x480x24" \
       env SL_ROM=baserom.u.z64 SL_BOOT_LEVEL=34 SL_WINDOW=1 \
@@ -16244,15 +16251,15 @@ Verified: the full `sl_dl:` / `sl_tex:` report block appears, and SL_SHOT
 captures real frames (8 distinct of 9). The Makefile has done this all along -
 `XVFB` at Makefile:461, used for trace capture whenever DISPLAY is empty.
 
-The cost of the error was several rounds of asking the owner for captures that
-could have been taken here. The rule that actually mattered was "do not steal
-the owner's display", and Xvfb satisfies it. Say NO REAL DISPLAY to an agent,
-not "no windows", and point at xvfb-run.
+The cost of the error was several rounds of requesting manual captures that
+could have been taken here. The rule that actually mattered was "do not take
+the physical display while it is in use", and Xvfb satisfies it. When delegating
+capture work, say NO REAL DISPLAY, not "no windows", and point at xvfb-run.
 
 **First thing it settled, immediately:** a captured frame with the watch raised
 shows the watch-menu ring in FULL COLOUR - red/orange/yellow left arc, blue
-right arc, exactly matching the owner's reference. So B-035 is NOT the ring
-the owner is reporting. `bondviewRenderGaugeBars`' own comment says it: it
+right arc, exactly matching the reported reference. So B-035 is NOT the ring
+in the playtest report. `bondviewRenderGaugeBars`' own comment says it: it
 renders the IN-GAME gauges, and "the watch menu gauges are handled by
 trigger_solo_watch_menu()". Two paths, and only the in-game one - the one that
 sets the shade-only combiner and needs Bond to actually take damage - is
@@ -16261,7 +16268,7 @@ data, which the watch path demonstrably renders correctly.
 
 **Also settled:** the recorded facility playthrough does NOT reproduce the
 crash. A full 17000-frame run through the real render path under Xvfb exits 0,
-"survived 17000 pumped frames", no SIGSEGV. So the owner's crash needs
+"survived 17000 pumped frames", no SIGSEGV. So the playtest crash needs
 something that recording never does - very likely walking further into the
 level than it goes. A repro input is the next thing needed, not another audit.
 
@@ -16275,8 +16282,8 @@ while (*pointnums >= 0) { point = &points[*pointnums]; point->dist = -1; ... }
 ```
 
 `*pointnums` goes out of range natively, so `point` lands outside the waypoint
-array and the write corrupts whatever is there. Caught by running the owner's
-own play session under gdb:
+array and the write corrupts whatever is there. Caught by running a recorded
+play session under gdb:
 
 ```
 Thread 1 received signal SIGSEGV
@@ -16329,7 +16336,7 @@ which of these it is.
 
 ### B-038 — ASan build with arena annotations (prototype, working)
 
-The owner asked for crash coverage that will not need replacing later and does
+The requirement was crash coverage that will not need replacing later and does
 not cost performance. This is the answer to the half that matters: catching the
 WRITE, not the crash.
 
@@ -16387,7 +16394,7 @@ each site has to be taught to ASan individually:
 - At least one more site remains, still faulting at boot.
 
 So this is a WORKING PROTOTYPE that has already paid for itself by finding the
-initactorpropstuff overrun, but it is not yet a tool the owner can just run.
+initactorpropstuff overrun, but it is not yet a tool that can just be run.
 Whoever picks it up: expect several more of these, each one a place where the
 game reaches into an arena outside an allocation. That is inherent to
 annotating a custom allocator and it converges - but it is an afternoon, not a
@@ -16414,7 +16421,7 @@ them was a crash.
 **Core dumps do not work on this box, measured not assumed.** `core_pattern`
 pipes to WSL's own handler; nothing lands in `/var/lib/systemd/coredump` or
 `/var/crash`, and changing it needs root. So "just enable cores" - which is
-what I recommended first - is not available. The process has to report on
+what was recommended first - is not available. The process has to report on
 itself.
 
 **The single most valuable line is the ptrace one.** With `ptrace_scope=1`
@@ -16445,7 +16452,7 @@ zero cost.
   wrong lines silently.
 - `SL_SELFTEST=crash|hang` exercises both paths on demand.
 
-**The selftest immediately earned its place by catching a bug in my own
+**The selftest immediately earned its place by catching a bug in the new
 watchdog.** `sl_frame` is `static` in the shim, so `extern unsigned sl_frame`
 in sl_main.c bound to an unrelated FUNCTION symbol of the same name, with no
 linker complaint - the watchdog was comparing against a constant code address
@@ -16467,7 +16474,7 @@ class waiting.
 
 ### B-040 — standing bug list after the first full level completion
 
-2026-08-25: the owner played facility end to end, all objectives triggering,
+2026-08-25: facility was played end to end in playtest, all objectives triggering,
 no crash and no hang. That is the port working. Four defects remain from that
 session:
 
@@ -16490,14 +16497,14 @@ revert is the important part of this entry.**
 
 Enabling culling does fix the face-in-head - the artifact is definitionally a
 back-face one, and the game's display lists do set cull bits the RSP honours.
-But it DESTROYS CHARACTER MODELS, and I shipped it before finding that out.
+But it DESTROYS CHARACTER MODELS, and it shipped before that was found.
 
-The verification was the failure. I compared captures with culling on and off
-and found them visually identical, so I called the risk measured rather than
+The verification was the failure. Captures with culling on and off were compared
+and found visually identical, so the risk was called measured rather than
 feared. Those captures were the intro flythrough - ROOM geometry, which is
-genuinely unaffected. Character models are a different path and I never looked
-at one. The owner did, immediately, and reported gaps in Bond's head; I then
-compounded it by accepting the suggestion that the bug was pre-existing instead
+genuinely unaffected. Character models are a different path and none was looked
+at. The first playtest did, immediately, and reported gaps in Bond's head; the error was then
+compounded by accepting the suggestion that the bug was pre-existing instead
 of checking, when the data to check was already on disk.
 
 Measured properly afterwards, on the level-start head close-up - frame 22 of a
@@ -16508,7 +16515,7 @@ Measured properly afterwards, on the level-start head close-up - frame 22 of a
                 triangles, the door visible straight through it
 
 So the winding this renderer computes for CHARACTER triangles disagrees with
-the cull bits. The telemetry already hinted at it and I read past it:
+the cull bits. The telemetry already hinted at it and it was read past:
 `winding under cull ccw=896(meanz=0.966) cw=658(meanz=0.962)` - a consistently
 wound model should not split near-evenly like that.
 
@@ -16559,12 +16566,12 @@ character - while the right-hand door is black in the same image, so for room
 geometry the same set is correctly discarded. Two paths, opposite senses, one
 frame.
 
-**A flaw in my earlier verification, worth recording separately.** I took
+**A flaw in the earlier verification, worth recording separately.** It took
 "rooms look identical with culling on and off" as evidence rooms were handled
 correctly. It is not evidence of anything: culling back faces inside a closed
 room removes surfaces already hidden by depth, so that comparison CANNOT fail
-regardless of whether the sense is right. The test I ran was incapable of
-detecting the bug I was checking for.
+regardless of whether the sense is right. The test that was run was incapable of
+detecting the bug it was checking for.
 
 **The remaining mechanism, and why this is not a quick fix.** Winding is
 computed from eye-space positions, and `vtx_transform` transforms each vertex
@@ -16588,7 +16595,7 @@ mistake this entry already records.
 **Lesson, and it is a repeat.** "Measured, not feared" is only worth anything if
 the measurement covers the thing being changed. Room geometry and character
 geometry are different paths in this renderer - B-028, B-027 and B-032 all
-turned on exactly that kind of distinction - and I verified the one that was
+turned on exactly that kind of distinction - and the verification covered the one that was
 convenient to capture.
 
 
@@ -16611,8 +16618,8 @@ Verified: bootsweep 20/20, 0 levels failed to reach a running sim.
 
 Worth noting how this was settled - `xvfb-run` plus `SL_SHOT`, comparing two
 captures frame-by-frame with an RMSE metric to find where the setting actually
-changes the picture. That question sat open for a day only because I believed
-the renderer could not be exercised without the owner's display.
+changes the picture. That question sat open for a day only because of a belief that
+the renderer could not be exercised without the physical display.
 
 ### B-041 — ammo type icon drew as a flat magenta bar — FIXED
 
@@ -16649,7 +16656,7 @@ sound.
 
 REPRODUCED AND ISOLATED, not yet fixed.
 
-The owner: "ammo has a red tint over it." Captured under xvfb with the recorded
+Playtest report: "ammo has a red tint over it." Captured under xvfb with the recorded
 facility playthrough - in gameplay the readout reads `7 | 74` with a solid
 magenta/pink vertical bar where the ammo TYPE ICON belongs, between magazine
 and reserve counts. Reproduction:
@@ -16851,7 +16858,7 @@ blocker for that one.
 
 ### B-042 — hang in chrCreateBloodStain: PointUsage contents never swapped — FIXED
 
-Caught by the frame watchdog in the owner's own session, which named it
+Caught by the frame watchdog in a play session, which named it
 outright:
 
 ```
@@ -16897,7 +16904,7 @@ so the strong evidence is the value measurement rather than the clean run.
 
 ### B-043 — face visible inside Bond's head: FIXED — the renderer discarded ENV alpha
 
-**The owner supplied the mechanism by watching the original:** Bond's model
+**The mechanism came from watching the original:** Bond's model
 FADES AWAY as the level-start camera enters the back of his head. That is how
 Rare hid it - not culling. Recording this because it redirected the whole
 investigation: B-040 spent a day on back-face culling, which was the wrong
@@ -17022,7 +17029,7 @@ That comparison is the next step and it is decisive: it says whether our timing
 is wrong or the fade genuinely completes on hardware with a different count.
 
 **Earlier measurement corrected.** An initial sample showed `fadealpha` pinned
-at 255 and I read that as "the fade never runs". It samples every 200 draws and
+at 255 and that was read as "the fade never runs". It samples every 200 draws and
 simply missed the window; the fade runs and is reverted.
 
 ---
@@ -17194,7 +17201,7 @@ is what the original does too.
 ### What this cost, and the lesson worth keeping
 
 Three wrong fixes came out of this bug before, and a fourth was avoided only
-because the brief said to find the flaw before patching. The flaw was that
+because the task specification required finding the flaw before patching. The flaw was that
 **the sample that established "PropType=7 always" never covered the window
 where the bug happens.** A measurement taken outside the event proves nothing
 about the event, and it is indistinguishable from a good measurement from the
@@ -17216,7 +17223,7 @@ frames and is written up at the end.
 
 ### The claim under test
 
-The brief for this session recorded, from the owner's own recorded session
+The task specification recorded, from a recorded play session
 (`/tmp/session.input`):
 
 ```
@@ -17249,7 +17256,7 @@ parse time. Every field decodes to a round number: `1638400 / 65536 = 25.0`
 ticks on all nine active entries, offsets `(0, 594.9, -40)` down to
 `(10, 0, -25)`, scale `49152 / 65536 = 0.75`, terminator flag `1` on record 11.
 **Nothing is byte-swapped wrong and no record stride is off**; `prop.c:1319`'s
-8-word swap for `INTROTYPE_SWIRL` is right. Lead 1 of the brief is closed.
+8-word swap for `INTROTYPE_SWIRL` is right. Lead 1 of the investigation scope is closed.
 
 Total swirl length: 9 x 25 = **225 ticks**.
 
@@ -17257,11 +17264,11 @@ Total swirl length: 9 x 25 = **225 ticks**.
 
 `sp30` (bondview2.c:1373-1378) is the time REMAINING in the swirl. It arms the
 fade at `sp30` crossing 30 and it is derived from the same entry durations that
-schedule the camera. Per-tick probe, owner's session, Facility:
+schedule the camera. Per-tick probe, recorded play session, Facility:
 
 ```
 SWIRL t=1067 idx=7 sp30=29  d=27.90  fa=255   <- fade arms here
-SWIRL t=1081 idx=8 sp30=22  d=25.68  fa=195   <- the brief's "tick 540"
+SWIRL t=1081 idx=8 sp30=22  d=25.68  fa=195   <- the specification's "tick 540"
 SWIRL t=1105 idx=8 sp30=10  d=12.13  fa= 93
 SWIRL t=1107 idx=8 sp30= 9  d=10.70  fa= 84   <- camera reaches head-sized range
 SWIRL t=1125 idx=8 sp30= 0  d= 0.000 fa=  8   <- camera AT the head origin
@@ -17269,7 +17276,7 @@ SWIRL t=1125 idx=8 sp30= 0  d= 0.000 fa=  8   <- camera AT the head origin
 
 (`d` = distance from the camera to `g_CurrentPlayer->field_3C4/8/C`, the point
 the swirl converges on. `t` is `sl_frames_completed()`, which advances 2 per sim
-tick; the brief's tick numbers map onto the `sp30` column exactly — its 533 is
+tick; the task specification's tick numbers map onto the `sp30` column exactly — its 533 is
 `sp30=29`, its 562 is `sp30=0`.)
 
 The camera reaches `d = 0.000` at exactly `sp30 = 0.000`, the same tick the fade
@@ -17279,9 +17286,9 @@ no frame-rate or delta-semantics difference can separate them. Lead 3 is closed
 too, and closed for a stronger reason than "delta is 1.0": even if delta were
 2.5, as it would be on hardware at 24fps, both sides step by the same 2.5.
 
-### Measurement 3 — the brief's premise is false: at fade-tick 7 the camera is 25.7 units from the head, outside it
+### Measurement 3 — the task specification's premise is false: at fade-tick 7 the camera is 25.7 units from the head, outside it
 
-The brief's "tick 540, camera is INSIDE THE HEAD, alpha still 195" is `sp30=22`,
+The task specification's "tick 540, camera is INSIDE THE HEAD, alpha still 195" is `sp30=22`,
 `d=25.68`. The captured frame at that instant shows the head from OUTSIDE,
 frontally, filling roughly a third of the screen. The camera first gets within
 head-sized range (`d ~ 11`) at `sp30 = 9` — that is **21 of the 30 ticks into
@@ -17305,8 +17312,8 @@ technique that made this session cheap:
 | 141+ | — | — | **nothing. No face, no head, no body.** |
 
 After the swirl ends the player model is not drawn at all, so the "face at level
-start" is not persisting past the intro. The ramp behaves exactly as the owner
-described the original behaving: the model fades away as the camera converges
+start" is not persisting past the intro. The ramp behaves exactly as the original
+was observed to behave: the model fades away as the camera converges
 into the head.
 
 ### Verdict
@@ -17413,9 +17420,9 @@ previous session had these the other way round; that reading is retracted.
 
 ### Candidate 1 - depth writes - is a DEAD END, and it is dead by measurement
 
-The brief's first candidate was that the game asks for depth writes on the
+The task specification's first candidate was that the game asks for depth writes on the
 faded character and `rm_apply` drops them. It does not. Probe `SL_FADE_DBG=1`,
-owner's session, Facility, the reported frame:
+recorded play session, Facility, the reported frame:
 
 ```
 sl_fade: frame 533 tris=730  om=c41049d8  zcmp=1 zupd=0 zmode=2 forcebl=1
@@ -17440,7 +17447,7 @@ cull[none,front,back,front+back] = 2,0,728,0     geom_seen=00002205
 **728 of the 730 triangles are emitted with `G_CULL_BACK` set.** The bits are
 `G_CULL_BACK 0x2000` from `include/PR/gbi.h:360`, and `0x2205` is
 `G_ZBUFFER|G_SHADE|G_SHADING_SMOOTH|G_CULL_BACK`. So the mechanism is exactly
-what the brief's candidate 3 supposed - and while the model is opaque the depth
+what the task specification's candidate 3 supposed - and while the model is opaque the depth
 buffer hides the far side anyway, which is why the artifact appears on the one
 tick the game stops writing depth and not before.
 
@@ -17524,17 +17531,17 @@ mode 4 does not touch it.
 
 ### Verification - what was actually run
 
-**The frame that was asked for.** Owner's session, `SL_INPUT=/tmp/session.input
+**The frame that was asked for.** Recorded play session, `SL_INPUT=/tmp/session.input
 SL_BOOT_LEVEL=34 SL_FRAMES=1160 SL_SHOT_EVERY=2` under `xvfb-run`, identical
 runs before and after. Shot 267, the reported frame, same camera angle:
 
 - Before: eyes, nose and mouth drawn on top of the hair.
 - After: a clean black silhouette. **The face no longer shows through.** Shot
   272 shows the head translucent and coherent as the camera converges, with no
-  face-on-hair artifact, which is the behaviour the owner described the
-  original having.
+  face-on-hair artifact, which is the behaviour observed in the
+  original.
 
-**Blast radius, measured not argued.** All 290 shots of the owner's session,
+**Blast radius, measured not argued.** All 290 shots of the recorded play session,
 per-frame `compare -metric RMSE`, final binary vs pre-fix:
 
 ```
@@ -17677,7 +17684,7 @@ recorded because the first is the cheap one and the second is the honest one:
    6 and 7 of a 3000-frame capture have him hit, tracer in flight, ring up.
    That is the capture in the record - no forcing anywhere in it.
 
-**What the owner's own recording does NOT contain.** `/tmp/session.input`
+**What the recorded play session does NOT contain.** `/tmp/session.input`
 (2901 reads) never damages Bond: 0 hits on `bondviewRenderGaugeBars` over 4000
 frames at `SL_BOOT_LEVEL=34`. It does raise the watch, which is why the watch
 ring was the one available capture. Do not go looking for combat in it again.
@@ -17755,7 +17762,7 @@ separate change.
 
 ### B-035 — health/armour ring renders greyscale; the DATA is correct
 
-Owner, with a reference screenshot of the intended look: the left arc should run
+Playtest report, with a reference screenshot of the intended look: the left arc should run
 red-orange-yellow (health) and the right arc blue (armour). Both render
 greyscale.
 
@@ -17803,7 +17810,7 @@ the bg path (fixed in B-032) and is still unguarded at propobj.c:8601 and 8722.
 Here the ring's SHAPE is correct, so the address evidently resolves - but it is
 the same latent construct and should be checked rather than assumed.
 
-### B-034 — colour/texture symptoms: what the owner's captured logs settled
+### B-034 — colour/texture symptoms: what the playtest's captured logs settled
 
 **First real renderer telemetry from a windowed session (2026-08-25).** Worth
 recording that the counters are PRISTINE and prove nothing:
@@ -17817,7 +17824,7 @@ Zero failures, zero rejects in every bucket. This is the file's own refrain
 holding again: counters measure that commands were CONSUMED, not that they were
 interpreted correctly.
 
-**Two of my leads died on contact with the evidence. Both recorded so they are
+**Two earlier leads died on contact with the evidence. Both recorded so they are
 not re-run:**
 
 1. *"The viewmodel's tiles are CI (fmt=2) but the decoder resolved them to
@@ -17827,7 +17834,7 @@ not re-run:**
    CI8_IA16 with a real 53-entry palette. There is no mismatch.
 
 2. *"The dumped textures show horizontal banding, so the odd-row interleave is
-   not being undone."* WRONG, and the mistake was mine at the point of asking:
+   not being undone."* WRONG, and the mistake was made at the point of asking:
    the capture was requested with `SL_TEX_ROWSWAP=0`, which FORCES the swap
    off, and every dumped texture reports `dxt=0` - exactly the case B-020's
    rule says SHOULD be swapped. The banding was the forced setting, not a
@@ -17850,11 +17857,11 @@ SAMPLES, not zero disagreements - that check never ran and is not evidence.
 
 ### B-034 — four "wrong colour / weird texture" symptoms: NOT one cause, and the renderer cannot be measured headless
 
-- **Found:** 2026-08-25, owner report against the running native build — "bullet
+- **Found:** 2026-08-25, playtest report against the running native build — "bullet
   and bullet tracers are weird colors", "the health bar doesn't have the proper
   colors", "the arm is present, but the textures are weird", "the hand holding
   the gun is textured weird"
-- **Owner:** Phase 2 (renderer)
+- **Area:** Renderer
 - **Where:** `src/gfx/sl_gfx_dl.c` (3D draw path), `src/gfx/sl_gfx_tex.c` (CI decode)
 - **Status:** OPEN — diagnosis only, no code changed. Three of the four symptoms
   are unfalsifiable under the no-window constraint; see "the capture that is
@@ -17990,11 +17997,12 @@ any walked frame; no `rect_colour` call from `emit_tri`.
 
 ### B-036 — subcalcmatrices SIGSEGV on a garbage `anim2`: what is ruled out by measurement, and the one path never exercised
 
-- **Found:**  2026-08-25, investigating the owner's captured SIGSEGV (`/tmp/run4.log`) after moving into facility's second section
-- **Owner:**  Phase 1 — it is a crash, so it is not deferrable; this entry records an
-  investigation that did not land, so the next attempt does not redo it
+- **Found:**  2026-08-25, investigating a playtest-captured SIGSEGV (`/tmp/run4.log`) after moving into facility's second section
 - **Where:** `src/game/model.c:2336`, reached from `src/game/chr.c:2572` (`chrTick` → `subcalcmatrices`)
 - **Blocks:** playing facility past the first section on the native build
+
+A crash is not deferrable; this entry records an investigation that did not
+land, so the next attempt does not redo it.
 
 **NOT ROOT-CAUSED. Not reproduced.** Everything below is a measurement or a
 tree-wide grep. No fix was written and none is claimed.
@@ -18082,11 +18090,11 @@ slot for an out-of-table `anim`/`anim2` fired **zero** times.
 
 #### The one path never exercised — and the recommended next step
 
-The owner's crash run was **windowed**; every run above was headless. Headless,
+The playtest crash run was **windowed**; every run above was headless. Headless,
 `sl_gfx_select()` returns the null backend, so `sl_gfx_dl.c:3084` returns before
 the GL display-list walker runs at all, RSP task dispatch is gated
 (`if (sl_gfx_active()) sl_gfx_task(task)`, `sl_ultra_shim.c:363`), and audio
-defaults off. The entire GL walk/texture path that fills the owner's log
+defaults off. The entire GL walk/texture path that fills the playtest log
 (`sl_dl:`/`sl_tex:`/`sl_walk:`/`sl_2d:` lines) appears in **no** headless run.
 
 That gap is not safe to wave away: forcing audio on headless
@@ -18095,11 +18103,11 @@ subsystems do change sim behaviour. And `sl_gfx_dl_swap`
 (`src/native/sl_swap_model.c:360`) rewrites display lists **in place** — a
 write path, of exactly the shape this bug needs.
 
-Next step is to run the owner's configuration on a **virtual** display rather
+Next step is to run the playtest configuration on a **virtual** display rather
 than a real one. The Makefile already does this for trace capture
 (`XVFB := xvfb-run -a --server-args=-screen 0 640x480x24`, Makefile:462, with
-hashes verified identical either way), so nothing appears on the owner's
-screen. This was not attempted here because the brief for this task said
+hashes verified identical either way), so nothing appears on the physical
+screen. This was not attempted here because the scope of this task was
 headless only; it needs an explicit go-ahead.
 
 #### Worth knowing before the next attempt
@@ -18128,7 +18136,7 @@ tree is clean; `sl_dyn_check` in particular should not be left in a hot path.
 
 ### B-044 — watch equipment list briefly duplicates the LAST item
 
-Owner-reported, with the trigger narrowed by them:
+Reported in playtest, with the trigger narrowed in play:
 
 - It happens ONLY when moving off **unarmed** onto the FIRST item in the list.
 - The list momentarily shows several copies of the SAME item - and it is the
@@ -18190,7 +18198,7 @@ a large VALID rectangle - 144 pixels tall - and with `dtdy = 1024` over a ~10px
 glyph the texture tiled about fourteen times down it. The repeated word is the
 list's bottom line because the bottom line is the one that clips, and the
 bottom line is DETONATOR because the detonator sorts last. Every element of the
-owner's report falls out of that one command.
+playtest report falls out of that one command.
 
 **The fix** is in the renderer, not the game: reject a texrect whose Y ordering
 disagrees with its X ordering, which is what an inverted rectangle is.
@@ -18208,7 +18216,7 @@ that clips at all and it CLAMPS `xl`/`yl` to 0, the correct way to do what
 
 **Reproducing it.** `tools/trace/mkinput.py watch` (added here) raises the
 watch, steps RIGHT onto the equipment page and scrolls the list down. Facility
-gives the owner's exact inventory with no gdb and no scripted pickups -
+gives the reported exact inventory with no gdb and no scripted pickups -
 `unarmed | pp7 (silenced) | remote mine | detonator`, four items, detonator
 last:
 
@@ -18250,7 +18258,7 @@ the correct list, versus the correct list alone with the highlight moving from
 UNARMED to PP7 (SILENCED). (Frames are ROM-derived pixels and stay out of the
 repo per rule 2.)
 
-**The owner sees it only on the move off unarmed, but it also fires on the
+**It is visible in play only on the move off unarmed, but it also fires on the
 page opening** (vi 2485-2489, the initial scroll settle). Same command, same
 cause; the opening one is shorter and lands while the page is still zooming in,
 which is presumably why it went unreported.
@@ -18287,7 +18295,7 @@ moved; both were run anyway rather than argued from.
 
 ### B-045 — gas does not fill the room correctly after the facility tank explosion
 
-Owner-reported: blowing the gas tanks at the end of facility should fill the
+Reported in playtest: blowing the gas tanks at the end of facility should fill the
 room with gas, and it does not look right - described as the volume not
 behaving.
 
@@ -18296,7 +18304,7 @@ never existed.** The N64 has no volumetric rendering. Whatever this effect is,
 it is built from ordinary primitives - almost certainly layered sprites or
 particles, and/or the RDP's fog. So the question is never "why is the volume
 wrong" but "which primitives are missing, mispositioned, or mis-blended". The
-same applies to the owner's wording in any similar report.
+same applies to the wording of any similar playtest report.
 
 **Likely related to the explosion defect in the 2D/greyscale cluster** - the
 gas and the explosion plausibly come from the same particle/sprite machinery
@@ -18365,7 +18373,7 @@ sl_fog: f301 fill=428442 fogcol=408040ff fm=12800 fo=-12544 cmds=5
 
 So the flat green layer is a **hard far-plane clip against the green backdrop
 fill**, with the fade that should have hidden it entirely absent. That is the
-owner's report term for term, and it is a missing primitive, not a wrong
+playtest report term for term, and it is a missing primitive, not a wrong
 volume. Captured before/after: `scratchpad/gas/ab3.png`.
 
 #### The fog band is narrow, which is why nobody had noticed
@@ -18391,7 +18399,7 @@ first has evidence:
 1. Fog is what the gas is made of - **established**, above.
 2. This fog implementation is safe as a global default - **NOT established**.
 
-The owner built the working tree while (2) was still unverified and played
+A playtest build of the working tree, made while (2) was still unverified, played
 facility. The gas itself read correctly - "when i blew up the tanks at the
 end, it seems like it was more volumetric like the rest of the explosions" -
 and the global change did not: "big regression. most textures and such are
@@ -18435,7 +18443,7 @@ Status of the three defects after a second measurement pass:
   colours that are BLACK at high alpha (its own worked examples show
   `SetFogColor(0,0,0,38)`) - measured alphas on that frame were
   `00 x2352, 39 x192, c1 x192, d3 x192, fe x192`, and `0xfe` paints a prop
-  essentially solid. The owner's build predates the `SL_FOG_PRIM` gating.
+  essentially solid. The playtest build predates the `SL_FOG_PRIM` gating.
 
 - **Floating geometry - the sighting is RETRACTED.** The only observation was
   a "pale wedge across the snow" on a `surface` A/B, and that A/B was one of
@@ -18444,8 +18452,8 @@ Status of the three defects after a second measurement pass:
   dark->bright, and those are near-black fragments lifted toward a pale fog
   colour rather than new geometry. Structurally fog cannot add geometry - it
   recolours fragments that already rasterised. No floating geometry has been
-  reproduced on the delivered tree. Still worth the owner re-checking, since
-  their report was from live play.
+  reproduced on the delivered tree. Still worth re-checking in playtest, since
+  the report was from live play.
 
 #### The far plane is faithful to Rare - do not "fix" it (rule 5)
 
@@ -18465,7 +18473,7 @@ fill a region that has no geometry in it. That expanse is Rare's design: the
 gas reduces the visible world to 1000 units and paints everything beyond it
 green. The N64 showed the same thing.
 
-**This means implementing fog does NOT, by itself, resolve the owner's
+**This means implementing fog does NOT, by itself, resolve the playtest's
 reported symptom.** On the gassed facility frame fog changes only **4291 of
 307200 pixels (1.4%)**, confined to the receding floor at y 298-430. What fog
 removes is the hard high-contrast EDGE where lit near geometry met the green
@@ -18487,7 +18495,7 @@ frame it is `1076,102,450,505,313,477,536,49,0,0`, spread across buckets 1-7
 with nothing saturating, and `fm`/`fo` are the game's own values. So the
 saturation appears between the vertex value and the pixel. Unexplained. This
 is the one defect that should block the default flip, and it is the mechanism
-behind the owner's "textures go black / flat" report.
+behind the playtest "textures go black / flat" report.
 
 #### Recommendation: DO NOT flip the default yet
 
@@ -18496,7 +18504,7 @@ for flipping is otherwise favourable - the delivered default is inert (18/18),
 the gates all pass, flicker is not the batch breaks, the black surfaces were
 the gated model path, and the floating geometry does not reproduce - but the
 B-048 standard is not met while 63-96% of affected pixels pin to one colour,
-because that is precisely what the owner complained about. Fog is also worth
+because that is precisely what the playtest report described. Fog is also worth
 less than expected on the reported scene (1.4%), so there is no urgency.
 
 The A_FOG path (`SL_FOG_PRIM`) is a separate question - a per-object distance
@@ -18653,7 +18661,7 @@ Tooling for all of the above is in the session scratchpad (`abfog.py`,
 `build/native/skeleton` was rebuilt only because it predated the in-tree
 `SL_FOG_DUMP` probe and lacked its format string.
 
-#### RETRACTED: direct-boot capture is deterministic. The fault was mine.
+#### RETRACTED: direct-boot capture is deterministic. The fault was in the earlier claim.
 
 An earlier revision of this entry claimed direct-boot frame capture was
 nondeterministic (13 of 20 frames differing between two runs of the same
@@ -18666,11 +18674,11 @@ Re-measured cleanly, with no competing job on the machine:
 DIRECT BOOT, same binary, two clean runs, 5 levels: compared=20 differing=0
 ```
 
-The original 13/20 was taken while a twenty-level capture job of my own was
+The original 13/20 was taken while a concurrent twenty-level capture job was
 saturating the CPU. B-047 already established that the render path is
 load-bearing for game logic in this port, so heavy contention moves frame
 pacing and the shot numbers land on different scenes - the same "different
-frame counts, different SCENES" trap the task brief warns about, arrived at
+frame counts, different SCENES" trap the task specification warns about, arrived at
 from the other direction. The measurement was real; the conclusion drawn from
 it was not.
 
@@ -18759,13 +18767,15 @@ The blender mux slots are `ucode05_old.txt` "FC rdp_setcombine" as before.
 
 ### B-051 — the backdrop fill shows through where distant geometry is not drawn
 
-- **Found:** 2026-08-26, while measuring B-045. Owner-reported independently:
+- **Found:** 2026-08-26, while measuring B-045. Reported independently in playtest:
   green seen in the facility intro flythrough, through the glass at the first
   security door, and in the scientist labs "tinted green at certain angles" -
   all with **no gas anywhere**.
-- **Owner:** Phase 2 (renderer) or bg visibility. NOT B-045, and not fixed.
+- **Area:** Renderer or bg visibility
 - **Where:** unknown. `sky.c:326` draws the fill; what fails to cover it is
   the open question.
+
+NOT B-045, and not fixed.
 
 **This is a separate defect from B-045 and probably the larger one.** B-045's
 green is the gas ALT row and is real; this is the SAME fillrect showing
@@ -18785,7 +18795,7 @@ Measured on pre-gas facility, replay path, no gas triggered:
 Masking those pixels magenta places them in a **rectangular region beyond the
 upper railing opening** - looking THROUGH a gap into a space that should hold
 far geometry, and getting the backdrop instead. That is exactly the shape of
-the owner's sightings, all four of which are look-through views.
+the playtest sightings, all four of which are look-through views.
 
 Why it went unnoticed: at (16,33,16) the band is nearly black on a CRT. The
 gas makes the same hole bright green and much larger, because the ALT row also
@@ -18800,7 +18810,7 @@ a per-level bytecode, and it IS implemented (`bg.c` VISOP_* opcodes,
 
 #### MEASURED 2026-08-26: the room path is LOSSLESS. There is no LOD drop.
 
-The owner's fresh report - windows opaque at distance and transparent up
+The fresh playtest report - windows opaque at distance and transparent up
 close, lab tables popping in - reads as distance-based detail selection, and
 the test was whether room geometry the visibility pass marks VISIBLE is being
 skipped at distance. **It is not.** `bg.c` instrumented `#ifndef __sgi` behind
@@ -18861,7 +18871,7 @@ it is consistent with the want/drew counters, which are also last frame's.
 
 #### LEAD 1 (prop distance cull) - MEASURED, and it is a DEAD END for the tables
 
-The owner's popping lab tables pointed at `posIsOnScreen` (`propobj.c:13426`)
+The reported popping lab tables pointed at `posIsOnScreen` (`propobj.c:13426`)
 gating every prop on `fogPositionIsVisibleThroughFog` against
 `g_ScaledFarFogIntensity`. Probed `#ifndef __sgi` behind `SL_CULL_DBG` on the
 facility replay, 1293 calls:
@@ -18870,7 +18880,7 @@ facility replay, 1293 calls:
   the full 5000 plus each prop's own `range` argument. Not a scale error, not
   a byte-order error. The value is what it should be with no gas.
 - **Nothing is culled.** `culled=0` on all 1293 calls. The cull never fires in
-  this scene, so it cannot be removing the owner's tables.
+  this scene, so it cannot be removing the reported tables.
 
 **But the value being compared is not a distance.** The probe also logs the
 raw offset, so the true straight-line distance is recoverable:
@@ -18904,7 +18914,7 @@ is not an output coordinate at all.
 
 **Direction matters, and it clears this lead.** A value that is mostly
 negative makes `ff > threshold` almost never true, so the cull is far too
-PERMISSIVE - it keeps props Rare would have dropped. The owner's symptom is
+PERMISSIVE - it keeps props Rare would have dropped. The reported symptom is
 props MISSING at distance, which needs the opposite error. So this is not the
 tables, and chasing it further will not fix them.
 
@@ -18982,7 +18992,7 @@ to draw there. That STRENGTHENS the rule 5 verdict on B-045: the void is
 Rare's, and at the normal fill colour (16,33,16) the N64 showed the same
 near-black band.
 
-**It does not settle the owner's cases.** Their sightings are the science lab
+**It does not settle the reported cases.** The sightings are the science lab
 and the first security door glass, which are different cameras with different
 portals. A recording that reaches the lab is what closes this, and the same
 `SL_ROOM_DBG` / `SL_PORT_DBG` probes answer it there without modification.
@@ -19032,7 +19042,7 @@ distance mechanism, there is no unimplemented distance opcode to find, and the
 with what was measured independently - the portal rejections are cone/direction
 based, not distance based.
 
-#### LEAD 1 is DEAD, now measured in the OWNER'S OWN PLAYTHROUGHS
+#### LEAD 1 is DEAD, now measured in the RECORDED PLAYTEST RUNS
 
 Two live facility recordings, no `SL_TOUGH`, replayed with the probes
 (`~/.sightline/runs/20260826-143314-lvl34/input`, 21073 reads, and
@@ -19044,7 +19054,7 @@ Two live facility recordings, no `SL_TOUGH`, replayed with the probes
 ```
 
 **The prop distance cull fires ZERO times in ~25000 frames of each run** - the
-very runs in which the owner sees the tables pop. Whatever pops those tables,
+very runs in which the tables are seen to pop. Whatever pops those tables,
 it is not `posIsOnScreen` / `fogPositionIsVisibleThroughFog`. The earlier
 bottling-room result generalises, and the caveat attached to it is discharged.
 
@@ -19114,13 +19124,13 @@ Replayed without `SL_TOUGH`, exactly as recorded, the run aborts at read
 ```
 
 which is **B-049**, the post-death stall, exactly. So in replay Bond DIES at
-read ~12161, while the owner's live run continued to 16547 - they did not die.
+read ~12161, while the live playtest run continued to 16547 - Bond did not die there.
 The replay therefore diverges from live play before that point, which is the
 same class of thing B-048 suspected when it noted that firing and throwing run
 on the render path. Only **marks 1 and 2 replay faithfully**.
 
-`SL_TOUGH=1000` gets the run to the end, but what it reaches is not what the
-owner saw: captured at marks 6-9 it shows a crowd of guards stacked and
+`SL_TOUGH=1000` gets the run to the end, but what it reaches is not what was
+seen in play: captured at marks 6-9 it shows a crowd of guards stacked and
 interpenetrating in the tiled bathroom, which is what a diverged run
 accumulates when Bond survives a death the recording did not. **Those frames
 were not used as evidence.**
@@ -19128,20 +19138,20 @@ were not used as evidence.**
 **The run does NOT reach the tanks - determined from the replay, not a log
 grep.** The gassed backdrop fill `428442` appears zero times in BOTH the
 faithful run and the `SL_TOUGH` run that consumes the whole stream. So the
-coordinator's sampling caveat is discharged in the safe direction: it
-genuinely misses them, and B-045's scene still needs `SL_GAS` until the owner
+earlier sampling caveat is discharged in the safe direction: it
+genuinely misses them, and B-045's scene still needs `SL_GAS` until a playtest
 marks the tank room specifically.
 
 **Room assignments - and the limit on them.** Mark 1 (read 321) is room 67,
 the ~5-second test press, as predicted. **Mark 2 (read 10259) is room 10**,
-the tiled bathroom area; its own frames show the owner shooting, explosion
+the tiled bathroom area; its own frames show the player shooting, explosion
 smoke against tile, rather than a window. Both are before the divergence, so
 both are established.
 
 Marks 3-9 also report room 10, but that reading comes from the `SL_TOUGH` run
-in which Bond survived a death the owner never had. It describes a
-COUNTERFACTUAL playthrough, not where the owner was standing, and must not be
-quoted as their location. Room 10 is established **for mark 2 only**; marks
+in which Bond survived a death the live run never had. It describes a
+COUNTERFACTUAL playthrough, not where the player was standing, and must not be
+quoted as the player's location. Room 10 is established **for mark 2 only**; marks
 3-9 have no trustworthy room assignment until replay is faithful.
 
 **Prop cull: zero events again**, now a third independent confirmation on the
@@ -19192,7 +19202,7 @@ frame, so a per-read recording cannot line up with a per-retrace replay.
 Counting both directly (`SL_RATE_DBG`):
 
 ```
-replay of the owner's stream : reads=3999 vi_advances=3999 ratio=1.000000
+replay of the live stream    : reads=3999 vi_advances=3999 ratio=1.000000
 live-shaped run, no stream   : reads=3999 vi_advances=3999 ratio=1.000000
 ```
 
@@ -19209,7 +19219,7 @@ of `{2: 1499}`, every one of 1499 frames exactly 2.0 - while a windowed session
 on a real display drops frames under load and holds no fixed ratio. Feed a
 stream captured at a varying ratio to a replay running at a fixed one and the
 input lines up early and slides later. That is precisely the observed failure:
-faithful through mark 2, Bond dead at read ~12161 where the owner walked
+faithful through mark 2, Bond dead at read ~12161 where the live run walked
 through unharmed.
 
 **The machinery already existed and was never wired to live capture.** `SL_VIS`
@@ -19245,18 +19255,18 @@ The round-trip is exact at a one-record shift, which is the emit phase, not a
 defect: the recorder emits after the advance, so it writes records 1..N of the
 stream it replayed.
 
-**THE LIMIT, and it is not fixable.** The owner's existing recording still
+**THE LIMIT, and it is not fixable.** The existing playtest recording still
 cannot be replayed faithfully, and Bond still dies in it. The correspondence
 was never captured in that file and NOTHING reconstructs it after the fact for
 a native session - the ratio it was played at is simply not in the data. The
-end-to-end test "replay the owner's stream and Bond must not die" is therefore
+end-to-end test "replay the playtest stream and Bond must not die" is therefore
 not achievable on a stream recorded before this fix, and was deliberately not
 forced: special-casing that file would have passed the test by construction and
 proved nothing. **A fresh marks run is needed**, which will now write
 `input.vis` automatically. That new recording is the real end-to-end test.
 
 **Which prior results are at risk.** Drift only affects replays of a LIVE
-recorded stream, i.e. only the owner's runs of 2026-08-25/26, and only far
+recorded stream, i.e. only the playtest runs of 2026-08-25/26, and only far
 enough in for the slide to matter:
 
 - SAFE - `bootsweep` and the twenty-level B-048 evidence: driven by direct boot
@@ -19265,7 +19275,7 @@ enough in for the slide to matter:
   carry their own `.vis` and go through the target-driven poll path.
 - SAFE - anything measured in the first seconds of a replay, including mark 1,
   mark 2 and the bottling-room captures: the slide is cumulative.
-- AT RISK - late measurements on the owner's stream. The room assignments for
+- AT RISK - late measurements on the playtest stream. The room assignments for
   marks 3-9 (already retracted above). The `SL_TOUGH` frames at marks 6-9.
   Note the cull=0 result is NOT at risk despite being taken there: it was
   confirmed on three independent runs, two of them stream-free.
@@ -19283,12 +19293,14 @@ traversal from the decomp.
 
 ### B-046 — the greyscale cluster is THREE causes, not one; two are fixed, two remain
 
-- **Found:**  2026-08-26, investigating an owner report of five defects
-- **Owner:**  Phase 2 (renderer). The two fixed parts are in the working tree,
-  uncommitted; the two remaining parts are the deferred work this entry records.
+- **Found:**  2026-08-26, investigating a playtest report of five defects
+- **Area:**   Renderer
 - **Where:** `src/gfx/sl_gfx_dl.c` throughout
 - **Blocks:** explosions and the boot logos stay wrong until the two remaining
   causes are done. Nothing else.
+
+When recorded, the two fixed parts were in the working tree, uncommitted; the
+two remaining parts are the deferred work this entry records.
 
 The report was: (1) explosions greyscale, (2) the death blood-drip overlay
 greyscale, (3) the boot logos in "weird tones", (4) the gunbarrel intro
@@ -19424,7 +19436,7 @@ per frame.
 | run | toggled | frames | differing |
 |---|---|---|---|
 | statue, idle stream, to the death | `SL_CC_TINT` | 450 | **13** — frames 393-405, exactly the blood-overlay window |
-| facility, the owner's `/tmp/session.input` | `SL_CC_TINT` | 125 | **0** |
+| facility, the playtest `/tmp/session.input` | `SL_CC_TINT` | 125 | **0** |
 | boot, no input | both | 92 | **0** |
 | boot, repeated START | both | 117 | **2** — the Rare-logo fade-in, which is the fix working |
 | facility, `pause` stream | both | 50 | 49 — the viewport moves every 3D pixel by design |
@@ -19442,15 +19454,17 @@ texture unit and the tile shift decoding it needed.
 
 ### B-047 — thrown items launch with zero aimed velocity: a callee's 12-byte write lands on `base_velocity` — FIXED 2026-08-26
 
-- **Found:**  2026-08-26, owner report: "Remote mines aren't thrown in an arch or
+- **Found:**  2026-08-26, playtest report: "Remote mines aren't thrown in an arch or
   stick to surfaces nicely", and it was "hard to stick them to their objective tanks"
-- **Owner:**  native port defect, fixed in place (not a later-phase item)
+- **Area:**   Native port
 - **Where:**  `src/game/gun.c:1810`, `:1914`, `:2017` — the `s32 sp94` local in
   `generate_player_thrown_grenade`, `generate_player_thrown_knife` and
   `generate_player_thrown_object`
 - **Blocks:** was blocking every thrown weapon in the native build — all mine
   types, plastique, bombcase, bug, microcamera, the GoldenEye key, hand grenades
   and throwing knives
+
+A native port defect, fixed in place rather than deferred.
 
 **Both reported symptoms are one cause, and it is not a collision or attachment
 defect at all.** The stick logic is intact; the mine simply never travelled far
@@ -19544,7 +19558,7 @@ with `SL_WINDOW=1` under xvfb. Any weapon investigation must use xvfb, and no
 headless trace exercises weapons at all. That is also a real sim/render coupling
 for Phase 2 to sever. `maybe_mp_interface` additionally returns early while
 `g_CurrentPlayer->cameramode == 1`, so the intro camera must be past before the
-gun path runs — the owner's `/tmp/session.input` gets there; a bare direct boot
+gun path runs — the playtest `/tmp/session.input` gets there; a bare direct boot
 does not.
 
 **This class of bug cannot be probed in place.** The first attempt printed
@@ -19592,12 +19606,14 @@ change to timer-at-`-1` detonation. A `not_covered` entry has been added.
 
 - **Found:**  2026-08-26, as B-046 cause C. Filed separately there because it
   needs a second texture unit, which is a real change to the texture path.
-- **Owner:**  Phase 2 (renderer). Uncommitted, in the working tree.
+- **Area:**   Renderer
 - **Where:** `src/gfx/sl_gfx_dl.c` — `tile1_texture` / `tex1_apply` and the
   `F5 settile` and `FC setcombine` cases. `src/game` is untouched, so no trace
   re-baseline is owed.
 - **Blocks:** nothing else. This closes B-046 item (1); B-046 causes A and B
   are already committed (1844e6e8) and cause D (RSP lighting) stays open.
+
+When recorded: uncommitted, in the working tree.
 
 **Every explosion in the game drew as a pure white smokeball because the
 renderer bound ONE texture and ignored the second.** All fifteen explosion
@@ -19692,8 +19708,8 @@ frames (`cmp`, not a metric — these are deterministic replays).
 |---|---|---|
 | twenty campaign levels, direct boot, 700 frames, every 100 | 80 | **0** |
 | the boot sequence (logos, classification screen, front end), every 20 | 30 | **0** |
-| the owner's facility session, first 3000 frames, every 100 | 15 | **0** |
-| the owner's facility session, VI 5900-6600, every 5 | 70 | **50** — frames 11-60, exactly the explosion window; the 20 outside it are identical |
+| the playtest facility session, first 3000 frames, every 100 | 15 | **0** |
+| the playtest facility session, VI 5900-6600, every 5 | 70 | **50** — frames 11-60, exactly the explosion window; the 20 outside it are identical |
 
 The 125 frames in the first three rows cover, and are byte-identical across:
 room geometry on all twenty levels, **character models** (Bond in the statue
@@ -19709,14 +19725,14 @@ alone and destroyed every character model.
 `make check-layering` → 282/282 baseline, no new violations.
 `src/gfx/sl_gfx_tex.c` is untouched, so its self-test is not implicated.
 
-Captured, before and after, from the owner's own recorded session (not a
+Captured, before and after, from a recorded playtest session (not a
 synthesised stream): `/tmp/x/sess_ab.png` — white smokeball above, coloured
 fire below, with the HUD ring, the viewmodel and the pickup caption visibly
 identical between the two rows.
 
 #### Reproduction
 
-The owner's session contains real explosions:
+The playtest session contains real explosions:
 `tools/trace/sessions/facility-full-2026-08-26.input`. Find the window first
 (the explosion combiner is its own signature), then capture it densely:
 
@@ -19749,7 +19765,7 @@ moves to a post-level screen (measured: the render target changes to 440x330),
 and the frame pump then stalls at VI frame `0x1f54` with `ra` in
 `fileGetHighestStageDifficultyCompletedForFolder`. That stall is **pre-existing
 and not caused by this change** — the identical frame, pc and ra chain appear
-with `SL_CC_TEX1=0`. Either the replay diverges from the owner's live session
+with `SL_CC_TEX1=0`. Either the replay diverges from the live playtest session
 (B-047 already established that firing and throwing run on the RENDER path, so
 frame pacing is load-bearing for weapons) or the session ends differently than
 expected. Either way the gas-filled room was never reached, so nothing about
@@ -19772,7 +19788,7 @@ the corpus). Two things it does NOT settle, both now recorded in
 
 ### B-049 — the game stalls after Bond dies
 
-Found while replaying the owner's full facility session (B-048), and confirmed
+Found while replaying the full playtest facility session (B-048), and confirmed
 PRE-EXISTING - it reproduces identically with the explosion fix disabled, so it
 is not caused by any recent renderer work.
 
@@ -19788,7 +19804,7 @@ when the control-style persistence was fixed). A post-level routine that reads
 saved progress is therefore reaching a path nothing else on this build touches.
 
 **This blocks replaying any session past a death**, which is why B-045's gas
-could not be observed from the owner's own recording even though the recording
+could not be observed from the playtest recording even though the recording
 reaches the tanks.
 
 The hang watchdog should catch it and produce a report - if it does not, that is
@@ -19800,8 +19816,8 @@ itself worth knowing, since the watchdog exists for exactly this shape.
 
 `SL_INPUT_RECORD` existed but had to be remembered, so it was never on when it
 was wanted - the same failure `SL_HANG_SECONDS` had before it was defaulted on.
-The owner asked for the playthrough to always reach disk while the log stays out
-of their way. Both now happen by default (`src/platform/sl_main.c`,
+The requirement: the playthrough always reaches disk while the log stays out
+of the player's way. Both now happen by default (`src/platform/sl_main.c`,
 `sl_run_open`, native build only - the file is not in the matching build).
 
 Each launch creates `$HOME/.sightline/runs/<stamp>-lvl<n>/`:
@@ -19824,7 +19840,7 @@ took a diff to identify for exactly that reason.
 **A replay gets no directory at all**, and the first version of this was wrong
 about that. It merely declined to RE-RECORD a replay, which still let every
 automated run consume a rotation slot - and within minutes of shipping, four
-agent replays evicted the owner's own facility playthrough. A replay is
+automated replays evicted a manual facility playthrough. A replay is
 reproducible from the input stream it was handed; a human playthrough is not.
 The rotation exists to hold the irreplaceable kind, so `SL_INPUT` being set now
 skips capture entirely. `SL_RUN=1` forces it anyway, `SL_RUN=0` disables the
@@ -19833,7 +19849,7 @@ lot, and `SL_RUN_DIR` / `SL_RUN_KEEP` override location and depth.
 **stderr is taken only when it is a terminal.** The first version took it
 unconditionally, so any script capturing stderr through a pipe got an empty file
 and no error - it silently blanked a measurement pipeline for five runs before
-anyone noticed. Keeping the owner's terminal quiet was always the goal, and a
+anyone noticed. Keeping the player's terminal quiet was always the goal, and a
 script's redirect is not a terminal.
 
 Worth knowing when reading captures: **`xvfb-run` merges the command's stderr
@@ -19883,10 +19899,10 @@ xvfb-run -a --server-args="-screen 0 640x480x24" env SL_ROM=baserom.u.z64 \
 #### The oracle: the live `log` is a per-frame fingerprint nobody had used
 
 `sl_dl: frame N cmds=.. vtx=.. tris=.. bounds x[..] y[..] z[..]` is written
-every 60 frames BY DEFAULT, so the owner's own session carries 238 evenly
+every 60 frames BY DEFAULT, so the live playtest session carries 238 evenly
 spaced fingerprints of what the game actually drew, frames 1 to 14221. Replay
 with the same (default) settings and the two are directly comparable. This is
-the frame-for-frame comparator the coordinator asked for, and it did not need
+the frame-for-frame comparator that was needed, and it did not need
 to be built - live capture already had it.
 
 | replay | common sampled frames | differing |
@@ -19905,7 +19921,7 @@ amplifying chaotically is what an off-by-one in the analog sample window looks
 like; it is not a gross input error, which is why every counter-based check
 passed while the run was already wrong.
 
-#### Cross-checked on the coordinator's own instrument
+#### Cross-checked on an independent instrument
 
 One binary, identical settings, only `SL_VIS_LAG` differing, `sl_watch_frame`
 writing `<run>/events`:
@@ -19926,7 +19942,7 @@ SL_VIS_LAG=2 : exit 0; events = 1873 lines,
   that marker. A threshold on a slow lerp is not a presence test; the
   TRANSITION at 24857 is. The instrument was right and the marker was too
   strict for this stream.
-- `level-restart: 0` over the whole session independently confirms the owner
+- `level-restart: 0` over the whole session independently confirms the player
   never died and never reloaded - which is what makes "Bond dies in replay" a
   divergence rather than a faithful reproduction.
 
@@ -19956,8 +19972,8 @@ gain. The phase error is on the RECORDING side.
 **The principled fix, not taken here, and why.** `sl_vis_record_frame()` should
 write the boundary count from BEFORE the frame's advances, which makes new
 recordings replay correctly at LAG=0. It is a two-line change in
-`sl_ultra_shim.c`. It is not delivered because that file belongs to the main
-session and was committed under this work twice while it was in flight, and
+`sl_ultra_shim.c`. It is not delivered because that file belongs to concurrent
+work and was committed under this work twice while it was in flight, and
 because making it now splits native recordings into two incompatible vintages -
 this recording, the only one with 17 marks on it, would then need LAG=2 while
 new ones need 0, with nothing in the file to say which. Whoever takes it should
@@ -20008,7 +20024,7 @@ repeated for every 2-second window of the run, all seven identical.
   hardware gives 60/s. Self-consistent between this recorder and this replayer,
   and 2x denser per second of game time than a libretro stream.
 
-**The owner's 113.1 is fully reconciled**, and the residual is not drift:
+**The reported 113.1 is fully reconciled**, and the residual is not drift:
 14239 frames / 60 = 237.3 s of gameplay; 28479 reads / 237.3 s = **120.00
 reads/s**; the directory-to-last-write wall clock of 252 s includes 14.7 s of
 boot and level load before the level started, and 28479 / 252 = **113.01**.
@@ -20085,7 +20101,7 @@ fit.
 
 **`want == drew` at every one of the 17 marks, and `not-loaded` and
 `budget-exhausted` are 0 across all 14299 frames.** The room path is lossless
-everywhere the owner pointed, not just in the one camera the earlier
+everywhere the playtest marks pointed, not just in the one camera the earlier
 measurement covered. That result generalises now.
 
 **Room identities, established at last and on faithful data:**
@@ -20107,7 +20123,7 @@ facility sky, on the 640x480 frame):
 | 9 / 10 | **36854** (12% of the screen) | **0** |
 
 Three independent far/near pairs, and in every one the backdrop hole collapses
-to exactly zero on approach. That is the owner's report reproduced under
+to exactly zero on approach. That is the playtest report reproduced under
 measurement.
 
 Marks 14-17 carry the gassed palette instead - `(20,40,20)`, `(33,66,33)`,
@@ -20171,7 +20187,7 @@ Rare's behaviour or ours. Two readings, and the frames do not yet separate them:
    be visible opening.
 2. **Ours.** The door prop that should FILL the opening while shut is not being
    drawn, so instead of a closed shutter the player sees straight through to
-   the backdrop. This fits the owner's words far better - "doesn't show what's
+   the backdrop. This fits the playtest report's words far better - "doesn't show what's
    on the other side and is not transparent at all" is precisely a closed
    shutter rendered as a void - and it makes the defect a missing PROP, not a
    visibility bug at all.
@@ -20189,7 +20205,7 @@ is enough for a fast door to open and close unseen.**
 all' is a BLEND problem, not missing geometry" was measured on the bottling-room
 camera and does not describe the lab. At mark 9 the far side is genuinely absent
 from the visible set. Both can be true of different windows; the lab window is
-the one the owner reported and it is a visibility problem, not a blend problem.
+the one in the playtest report and it is a visibility problem, not a blend problem.
 
 ---
 
@@ -20206,7 +20222,7 @@ unmistakable and continuous:
   live log's over the whole 238 samples**.
 
 **The gassed `428442` still never appears, and now the reason is known rather
-than suspected: the owner stopped playing ~25 seconds after blowing the tanks
+than suspected: the playtest stopped ~25 seconds after blowing the tanks
 and the lerp is slower than that.** It is 42% of the way from 5000 to 1000 when
 the recording ends. So every previous "the gassed fill appears zero times"
 measurement was reading a true fact about a stream that ends mid-lerp - not a
@@ -20214,11 +20230,11 @@ replay failure, and not the tanks being unreached.
 
 **What this does to the rule 5 verdict: nothing yet, and it should not be
 closed on this recording.** The far plane never gets near 1000 here, so the
-"large flat green expanse" the owner describes is NOT in these frames at the
-distances they played at. Marks 14-17 show the ALT palette arriving, not the
+"large flat green expanse" the playtest report describes is NOT in these frames at the
+distances played at. Marks 14-17 show the ALT palette arriving, not the
 gas at full strength. **The provisional verdict stays provisional**, and what
 would settle it is a recording that stays in the tank room for another minute
-after the tanks blow. That is a specific thing to ask the owner for.
+after the tanks blow. That is a specific playtest recording to request.
 
 `SL_FOG` and `SL_FOG_PRIM` remain OFF and untouched. The saturation defect is
 not addressed here and still blocks the default flip.
@@ -20233,8 +20249,8 @@ established independently by the matrix dump, which fires on every call - so
 this is a live path reading zero, not a probe reading zero, which is the
 standard the earlier artifacts imposed.
 
-Lead 1 was already dead three times over; it is now dead on the owner's own
-faithful playthrough, including at both frames of all three far/near pairs.
+Lead 1 was already dead three times over; it is now dead on the faithful
+playtest playthrough, including at both frames of all three far/near pairs.
 **The lab tables popping in are not `posIsOnScreen`.** Given B-051's finding,
 the tables are worth re-examining as the same mechanism - a prop that is not
 drawn while something in the room's state says it should not be - rather than
@@ -20255,7 +20271,7 @@ as a distance cull.
 - `src/platform/sl_ultra_shim.c` - added `sl_tick_rate_report()` and one call
   at the frame boundary. Platform-only, reads `currentFrameCounter`, writes
   nothing, inert unless `SL_TICK_DBG` is set. *(Note: an in-flight edit of this
-  file was swept into commit 22a0b3a2 by the main session while this work was
+  file was swept into commit 22a0b3a2 by concurrent work while this work was
   running; it was not committed by this task.)*
 - `src/game/bg.c` - `sl_input_read_index()` -> `sl_record_index()` (repairs the
   dead probe), and a new `sl_disabled` identity print. Both `#ifndef __sgi`,
@@ -20269,15 +20285,15 @@ Measured on the stamped 19-mark recording `20260826-210319-lvl34`, replayed at
 DEFAULT settings (no `SL_VIS_LAG` anywhere) and independently confirmed
 faithful first: **227 common `sl_dl` samples, 0 differing**, exit 0.
 
-#### RETRACTION, mine, from the previous report
+#### RETRACTION, from the previous report
 
-I wrote that portal 81's `PORTALFLAG_DISABLED` flag was "a DOOR flag" and that
-"all three live callers are doors". **That is wrong.** I had the three call
-sites in front of me and mis-summarised them: `propobj.c:1005` and
+The previous report said that portal 81's `PORTALFLAG_DISABLED` flag was "a DOOR flag" and that
+"all three live callers are doors". **That is wrong.** The three call
+sites were in hand and were mis-summarised: `propobj.c:1005` and
 `propobj.c:5855/5859` are `PROPDEF_TINTED_GLASS`, not doors. The door pair
 (`doorActivatePortal`/`doorDeactivatePortal`) exists but is not what drives
-portal 81. The whole "is a shutter opening off-screen?" question I posed was
-therefore a wrong question, and the two frames I could not explain are
+portal 81. The whole "is a shutter opening off-screen?" question posed there was
+therefore a wrong question, and the two frames that could not be explained are
 explained below. Reading the call sites was not the error; summarising them
 without re-reading was.
 
@@ -20332,7 +20348,7 @@ Facility's panes carry exactly the note's numbers - 400/600 and 350/550, with
 | 5 / 6 | 73 | 613.8 -> **255** | 523.8 -> 157 |
 
 And the pixels agree term for term. Backdrop `(10,20,10)` on the 640x480 frame:
-**mark 1 = 12204 px, mark 2 = 0 px.** The owner's sentence - "doesn't show
+**mark 1 = 12204 px, mark 2 = 0 px.** The playtest report's sentence - "doesn't show
 what's on the other side and is not transparent at all; if I get closer, it
 goes transparent and I can see to the other side fine" - is this table.
 
@@ -20368,7 +20384,7 @@ So opacity 255 means a pane at alpha 255 - opaque - and opacity 0 means alpha 0,
 invisible. That is the whole design, and it is consistent: the near pane is
 absent because Rare wants it absent.
 
-**A theory I formed and killed with one grep, recorded because it was
+**A theory formed and killed with one grep, recorded because it was
 convincing.** `envcolour` is a union of `word` with `{r,g,b,a}` and `rgba[4]`
 (`bondtypes.h:121`), and `word = opacity << 8` read through the BYTE members
 gives `b = opacity` on a big-endian N64 and `g = opacity` on x86 - a textbook
@@ -20419,7 +20435,7 @@ The 19-mark recording spends ~54 seconds inside the gas (far-fog 5000 -> ~1380,
 the input the lerp completes and **`fill=428442` finally appears** - the first
 time this project has rendered the fully gassed environment.
 
-**Those late frames are VALID, and I nearly discarded them.** `cmds=7` in the
+**Those late frames are VALID, and were nearly discarded.** `cmds=7` in the
 `sl_fog` line is the fog-command count, not the DL size; it reads 7 at frame
 13400 in the middle of normal play too. The `near`/`far` solve goes numerically
 noisy but `fog-geom=2318` and `a_shade=2318` are steady, so geometry is being
@@ -20438,8 +20454,8 @@ fully gassed frames:**
 **Identical populations.** Fog changes 4-34% of the frame and removes **not one
 pixel** of the green expanse, now measured in the FULLY gassed state rather
 than at 42% of the lerp. B-045's finding that fog cannot fill a region with no
-geometry is confirmed at the distances the owner plays at. **Implementing fog
-does not fix the owner's reported symptom**, and the recommendation to leave
+geometry is confirmed at the distances played at in playtest. **Implementing fog
+does not fix the reported symptom**, and the recommendation to leave
 `SL_FOG` OFF is unchanged - the saturation defect still blocks it.
 
 **A discrepancy worth recording rather than explaining away.** This file states
@@ -20496,7 +20512,7 @@ NOT take, and it is one grep from being confirmed or killed.
 
 ### Recommendation (not implemented): the stub generator must not invent `sl_*` symbols
 
-Filed at the coordinator's request. `tools/native/build.sh` resolves anything
+Filed for decision. `tools/native/build.sh` resolves anything
 missing at link time by emitting `long <name>(void) { return 0; }`. That is
 right for unimplemented SDK entry points and **wrong for anything named `sl_*`,
 which is ours by convention** - a stubbed `sl_` symbol is always a bug. It cost
@@ -20509,7 +20525,7 @@ that no amount of care at the call site catches.
 
 ---
 
-### B-051 — the fix attempt: a REAL decode gap found and closed, and it does NOT fix the owner's symptom. Retracting my own conclusion.
+### B-051 — the fix attempt: a REAL decode gap found and closed, and it does NOT fix the reported symptom. Retracting the earlier conclusion.
 
 Delivered behind **`SL_CC_GLASS`, default OFF**. **Recommendation: do NOT flip it.**
 Reasons below, and they are negative results.
@@ -20537,14 +20553,14 @@ distance, arriving exactly where predicted. **B-048's mip-chain family is
 constant "0") versus 3 (PRIMITIVE) - is the entire difference**, which is how
 the glass got swept into the family B-048 deliberately left alone.
 
-Blast radius measured, not assumed: across the owner's whole facility session
+Blast radius measured, not assumed: across the whole playtest facility session
 the shape `a1 = (COMB - 0) * SHADE + PRIM` matches **exactly one combiner
 word**, 2869 times. The classifier added (`g_cc_a_prim1`) is an exact-shape
 match in the same discipline as `g_cc_tex1mul` and `g_cc_a_envscale`.
 
 #### RETRACTION: "at opacity 255 Rare draws a solid pane and we draw nothing"
 
-That was my conclusion last round and **it is wrong.** Measured, counting the
+That was the conclusion last round and **it is wrong.** Measured, counting the
 glass combiner's triangles per frame across the mark 1 / mark 2 pair:
 
 ```
@@ -20557,7 +20573,7 @@ frame 3850  entries=0
 ```
 
 **The pane is submitted and rasterised when it is opaque, and not submitted at
-all when it is clear** - the opposite of what I asserted. So "the opaque pane
+all when it is clear** - the opposite of what was asserted. So "the opaque pane
 is not drawn" is withdrawn, and with it the reasoning that led from it.
 
 #### The fix does not fix it. Controlled A/B, one binary, only the toggle differing
@@ -20609,7 +20625,7 @@ between "wrong place", "z-rejected" and "these are a different pane".
 
 ### B-045 — fog was never the answer, stated plainly
 
-The coordinator asked for this to be explicit rather than left to lapse, and it
+This is stated explicitly rather than left to lapse, and it
 should be, because the hypothesis was pushed hard and early and it is wrong.
 
 **Measured, fully gassed, controlled A/B, one binary, only `SL_FOG` differing:**
@@ -20624,11 +20640,11 @@ cannot fill a region that has no geometry in it, and the green expanse is
 exactly such a region. The fog work was correct as DIAGNOSIS - the gas really
 is the environment ALT row plus a far-plane pull, and that really is what
 turns the void bright green - but **implementing fog was never the fix for
-what the owner reported**, and `SL_FOG` staying off costs them nothing on this
+what the playtest reported**, and `SL_FOG` staying off costs nothing on this
 symptom. The saturation defect that blocks the flip is a separate matter.
 
-**A correction to my own numbers.** I reported marks 18/19 as "71319 / 117017
-green px" using a loose green-family filter and then nearly retracted it when
+**A correction to earlier numbers.** Marks 18/19 were reported as "71319 / 117017
+green px" using a loose green-family filter and then nearly retracted when
 a strict filter on three fill colours returned 3 and 6 pixels. The strict
 filter was the wrong one: the dominant colour at those marks is
 **`(49,107,49)` = `0x316b31`, which IS a backdrop fill value** - one of the
@@ -20642,7 +20658,7 @@ continuum.
 reason than last round. Marks 15/16 have their nearest opaque pane at 637 and
 658 units - just past the 600 threshold - with 4864 and 10649 fill pixels, and
 the glass toggle changed **zero** of them. So the "that green is the undrawn
-pane" prediction I offered as a clean test of the fix **failed**: the fix does
+pane" prediction offered as a clean test of the fix **failed**: the fix does
 not touch it. Whether those pixels are pane-shaped remains open, but the pane's
 alpha is not what is producing them.
 
@@ -20783,7 +20799,7 @@ now reaches roughly 2.6x more of the frame, smoothly, at a modest strength
   of 0.0001/frame. All of the swing was fog.
 - **`SL_FRAMES` -> rendered frames is 2:1 here, not 4:1.** 17000 pumped gives
   8500 captures and 8499 `sl_fog` lines, and `sl_shot: f-0NNNN` interleaves
-  1:1 with `sl_fog: fNNNN` in a combined log. Trap 1 in the task brief cites
+  1:1 with `sl_fog: fNNNN` in a combined log. Trap 1 in the task specification cites
   ~4x from an earlier run; do not carry either ratio, print both counters.
 
 #### Two probes kept, both default OFF
@@ -20847,10 +20863,10 @@ claim was measured - through the wrong instrument.
   taken on the pre-fix binary and has not been re-run.
 - **That `SL_FOG` is safe as a default.** It stays off. Everything the earlier
   recommendation weighed was measured through the broken call.
-- **That the owner's originally reported symptom is resolved.** It is not:
+- **That the originally reported playtest symptom is resolved.** It is not:
   B-051's backdrop void is a separate defect and fog cannot fill a region with
   no geometry in it. That finding stands unchanged.
-- **Whether the flicker the owner saw in live play is this one.** This is the
+- **Whether the flicker seen in live play is this one.** This is the
   flicker the gate measures on a deterministic replay. It has the right shape —
   whole surfaces changing brightness between adjacent frames — but a live
   report cannot be matched to a replay frame.
@@ -20859,7 +20875,7 @@ claim was measured - through the wrong instrument.
 
 ### B-051 — the window is not empty. The pane IS drawn there, at full opacity, and it contributes zero pixels. 2026-08-27
 
-Measured on the owner's stamped ten-mark run `20260827-135114-lvl34`, replayed
+Measured on the stamped ten-mark playtest run `20260827-135114-lvl34`, replayed
 at default settings (`SL_FOG` on, `SL_CC_GLASS` off), 16432 frames.
 
 **Gates:** `make matching` **MATCH!**, `make trace-verify LEVEL=facility`
@@ -20902,7 +20918,7 @@ the one that drifts.
 | 8 | 21373 | 81 | 708.2 | **255** | DISABLED | 14128 `(6,12,6)` |
 | 9 | 21585 | 81 | 507.5 | 137 | enabled | 4534 `(5,10,5)` |
 
-Mark 1 is the owner's sentence rendered: a corridor, a window in the far wall,
+Mark 1 is the playtest report's sentence rendered: a corridor, a window in the far wall,
 and the window is a **flat solid rectangle**, `x[261,409] y[99,199]`, 149x101,
 **95.6% filled with one exact colour**. Mark 2, 96 records later, shows the
 room beyond — walls, a cabinet, a desk. `TintDist/CullDist` are 400/600,
@@ -20935,9 +20951,9 @@ So the geometry, the distance grading, the opacity and the portal disable are
 all doing what Rare designed. The pane is not missing, it is not misplaced, and
 it is not at the wrong depth.
 
-#### RETRACTION, mine, from four paragraphs ago — and the reason it matters
+#### RETRACTION, from four paragraphs ago — and the reason it matters
 
-I first read the `SL_TRI_ID` capture as proof that a quad *covers* the
+The `SL_TRI_ID` capture was first read as proof that a quad *covers* the
 rectangle in the shipped render. **It is not.** `tri_id_option()` is consulted
 in `tex_apply` as well as in the colour path (`sl_gfx_dl.c:1935`), and it
 **disables texturing for every triangle**. A TRI_ID capture therefore removes
@@ -20986,7 +21002,7 @@ precisely — no more, no less — so its position, depth and rasterisation are
 right, and the only thing standing between it and the framebuffer is its own
 texture.
 
-*(The mechanism I guessed at here — "a texel alpha of ~0" — is measured and
+*(The mechanism guessed at here — "a texel alpha of ~0" — is measured and
 WRONG. See the follow-up section below; the texel alpha is 102, and the real
 structural defect is different and more general.)*
 
@@ -21014,7 +21030,7 @@ correct 255 and a wrong 0 arrive at the framebuffer identically if the texel
 kills it. That is a specific, testable claim and the next measurement below
 tests it.
 
-#### The prop range cull the brief asked about is DEAD ON FACILITY, and that is Rare's data
+#### The prop range cull in question is DEAD ON FACILITY, and that is Rare's data
 
 `chrobjFogVisRangeRelated` (`propobj.c:13441`) does **not** read
 `g_ScaledFarFogIntensity`. It reads the NEAR fog record through
@@ -21025,7 +21041,7 @@ tests it.
 - facility's row in `fog_tables` (`bgfog.c:186`) carries NearFog **0**,
   MaxVisRange **0**, MaxObfuscationRange **0** — and so does the ALT/gas row
   (`bgfog.c:187`), so the gas does not change it either;
-- measured: `sl_nfd: ... NULL` on **all 16432 frames** of the owner's run, and
+- measured: `sl_nfd: ... NULL` on **all 16432 frames** of the playtest run, and
   `sl_table:` printed **0 lines**. Every prop's `objAlpha` is 255.
 
 Note also that `fog_tables` is a compiled C table in `bgfog.c`, not level data
@@ -21070,7 +21086,7 @@ a cutoff of 4827 against the measured 4828.8 — 0.04%. No byte-order, units or
 scale corruption, which is this project's dominant bug class and the specific
 thing worth ruling out. **Rule 5: this stays.**
 
-It is the shape of the owner's tank report: the moment the tanks blow, every
+It is the shape of the playtest tank report: the moment the tanks blow, every
 prop past ~1000 units stops being drawn where the limit had been ~4800. It is
 also why mark 10 is a green sea — 80629 pixels of one colour, with the
 projection's far plane falling alongside it (`zfar` in the run's `events`).
@@ -21098,7 +21114,7 @@ projection's far plane falling alongside it (`zfar` in the run's `events`).
   popping even though the arithmetic is untouched. **This is the one place a
   port-side defect could still hide behind a rule 5 verdict**, it is cheap to
   settle with the ROM oracle (`tools/native/romshot.py` at a matched moment),
-  and it should not be chased now - fog is closed and confirmed by the owner.
+  and it should not be chased now - fog is closed and confirmed in playtest.
   Recorded so the rule 5 verdict on `fogGetPropDistColor` is understood as
   conditional on it.
 - **Marks 3/4/5 are not analysed.** They are a three-mark cluster around one
@@ -21108,7 +21124,7 @@ projection's far plane falling alongside it (`zfar` in the run's `events`).
 
 ### B-051 — the texture dump. The combiner's alpha has an ADDEND that `GL_MODULATE` cannot express — and one fact still does not fit. 2026-08-27
 
-The coordinator's steer was to stop treating this as a glass problem and ask
+The next step was to stop treating this as a glass problem and ask
 whether it exposes a general defect in how the RDP combiner is translated to
 OpenGL. Three facts were asked for at triangle 1195 of `read=10103`. All three
 are now measured, on one line of one probe:
@@ -21184,7 +21200,7 @@ why it measured "0 pixels changed" while being the right value.
 **This is general, not glass-specific**, which is the point of the steer: the
 translation drops alpha addends everywhere. Glass is simply the only combiner
 in this game whose addend is non-zero — one word, matched 2869 times across the
-owner's session, per B-048's earlier sweep.
+playtest session, per B-048's earlier sweep.
 
 #### THE FACT THAT DOES NOT FIT, and why no fix is delivered
 
@@ -21202,9 +21218,9 @@ magenta fragment at 40% must change those pixels. So a 40% texel alpha does
 **not** account for the observation, and something between the fragment and the
 framebuffer is still unidentified.
 
-**So the diagnosis is incomplete and I am not delivering a fix.** The three
+**So the diagnosis is incomplete and no fix is delivered.** The three
 facts establish a real structural defect — the alpha addend is inexpressible —
-and the coordinator's reading of it is confirmed. But "texture on kills it"
+and the general-defect reading of it is confirmed. But "texture on kills it"
 and "texel alpha is 102" do not compose into an explanation, and a general
 combiner change is exactly the wrong thing to ship on an incomplete one. B-040
 shipped a culling change verified on rooms alone and destroyed every character
@@ -21257,7 +21273,7 @@ take, armed only for the glass combiner and only under the probe flag.
 | `=2` magenta, texture off | 14390 / 14390 | `(255,0,255)` | 21587 |
 | `=3` magenta, texture on, **vertex alpha** | **14390 / 14390** | **`(0,0,0)`** | 21386 |
 
-#### Why `=1` changed nothing, and why that was not what I read it as
+#### Why `=1` changed nothing, and why that was not what it was read as
 
 Under `=3` the vertex colour is magenta, so `out.rgb = tex.rgb * (255,0,255)`
 preserves the texel's RED and BLUE and zeroes its green. The result is
@@ -21270,7 +21286,7 @@ the triangles magenta could not change the frame no matter how well they drew.
 
 **`SL_GLASS_MARK=1` was a null instrument for this texture — a probe that could
 not fail.** Its `painted-magenta=480` counter proved the branch was reached and
-told me nothing about whether the draw mattered, and I read "0 pixels changed"
+said nothing about whether the draw mattered, and "0 pixels changed" was read
 as "the pane contributes zero pixels". **That reading is RETRACTED.** The pane
 contributes; it contributes near-black at 40% alpha, which is nearly the same
 thing as the backdrop it is drawn over, which is why it looks like a hole.
@@ -21289,10 +21305,10 @@ different answer than the one it produced.**
   all**, so the addend is inexpressible. Our pane arrives at the texel's
   uniform `102/255` — **40% instead of 100%**.
 - A 40% near-black pane over the backdrop darkens it instead of occluding it,
-  which is exactly the flat dark rectangle the owner reports as "not
+  which is exactly the flat dark rectangle the playtest reports as "not
   transparent, and you cannot see through it".
 
-So Rare's intent and the owner's symptom are much closer than this entry has
+So Rare's intent and the reported symptom are much closer than this entry has
 assumed throughout: **the window at distance is SUPPOSED to be a dark opaque
 pane.** It is not a void that should show a room; it is a pane that should be
 solid and is instead 40% transparent. `SL_GLASS_MARK=3` renders it solid, which
@@ -21345,8 +21361,8 @@ minimum distance of any pane at opacity 255, whole run:  1637.6
 ```
 
 `CullDist` is 600, so every opaque pane in that stream is at least 1637 units
-away — never in the band the owner's report lives in, where a pane is past
-`CullDist` AND close enough to fill a window in view (their mark 1 is 647).
+away — never in the band the playtest report lives in, where a pane is past
+`CullDist` AND close enough to fill a window in view (its mark 1 is 647).
 No frame in the sweep shows the case under investigation.
 
 **What a future session needs** is a `trace-record` stream that walks the
@@ -21393,7 +21409,7 @@ and it is the one `GL_MODULATE` cannot express under any vertex alpha.
 
 Two things follow, and they pull in opposite directions:
 
-- **The additive case is one word**, so the change the owner is waiting on is
+- **The additive case is one word**, so the pending change is
   far narrower than "every textured surface".
 - **The glass word is in 17 of 20 levels**, not just facility. Tinted glass is
   a game-wide prop type, so whatever ships will be seen everywhere, and the
@@ -21495,7 +21511,7 @@ two independently written paths, one general and one armed for a single
 combiner, agreeing exactly. That is the strongest corroboration available
 without the cartridge.
 
-Per-mode triangle counts over the owner's whole session:
+Per-mode triangle counts over the whole playtest session:
 `replace=5842278 modulate=19605717 add=12744903`. Roughly half of all draws
 take a changed path, while only 21386 pixels of that frame move - most of those
 draws carry a texel alpha of 255 already, so the two paths agree.
@@ -21532,7 +21548,7 @@ before, the yellow floor marking and the "BAY-4" lettering are solid crisp
 shapes; after, both are **stippled** - the floor texture shows through them in
 a checkerboard. 1653 pixels of pure `(255,255,0)` before are gone after.
 
-The mechanism, and this is the hypothesis rather than a measurement: my
+The mechanism, and this is the hypothesis rather than a measurement: the
 classifier equates "the alpha equation names no texel" with "the texel alpha is
 irrelevant". Aztec shows that is false - **the decal's cut-out is carried by
 texel alpha that the ALPHA EQUATION does not name**, so REPLACE mode discards
@@ -21669,7 +21685,7 @@ That is the tinted-glass pane going opaque - and **3469 is the exact count the
 first B-051 measurement recorded on pre-gas facility on 2026-08-26**. The fix
 lands on the originally reported region, from the level's own opening camera.
 
-**The owner's marked window** (`read=10103`): 14390 of 14390 masked pixels
+**The playtest's marked window** (`read=10103`): 14390 of 14390 masked pixels
 change to `(0,0,0)`, md5 `1eb7974d6801…` - **byte-identical to both the
 pre-correction general path and the one-combiner `SL_GLASS_MARK=3`
 experiment.** Three independently written paths agreeing exactly.
@@ -21725,7 +21741,7 @@ rather than an absence.
 #### 1. `fc159804 5ffedbf8` deliberately exercised - and it is NOT rare
 
 `SL_AEQ_WATCH=5ffedbf8` reports per frame whether that word reached a draw.
-Over the owner's session it draws on **267-894 frames per 2000 reads,
+Over the playtest session it draws on **267-894 frames per 2000 reads,
 throughout**, peaking at **5520 triangles at read 3851**. It is not a fade
 corner case; it is constantly on screen.
 
@@ -21783,7 +21799,7 @@ signature the first B-051 measurement recorded.
 
 #### 4. Characters in motion
 
-`read=29773` (the owner's mark 10) is the gas room with **two guards walking
+`read=29773` (playtest mark 10) is the gas room with **two guards walking
 the floor**, the frame this file already has a capture of. Both arms, captured
 alone, each confirming its moment in the log
 (`at read=29773 frame=29775 (window=read)`):
@@ -21815,7 +21831,7 @@ going opaque.** Nothing else on facility moves.
   is the pane finally drawing solid, which is the fix working. It is NOT
   evidence about the colour: the magenta probe that bounded the texel zeroed
   the green channel, so opaque black and opaque dark green remain equally
-  consistent. The owner's `facility-glass` recording settles it. **"Solid" must
+  consistent. The playtest `facility-glass` recording settles it. **"Solid" must
   not quietly become "correct".**
 - **The `tex.a + PRIM.a` approximation.** Not visibly exposed in any frame
   measured, but `(TEX0-ENV)*SHADE+ENV` still drops its `*SHADE` factor; a scene
@@ -21829,7 +21845,7 @@ going opaque.** Nothing else on facility moves.
 
 This investigation kept losing time to **object identity by inference**. The
 live player position could not be read reliably, so which of twenty tinted-glass
-panes the owner was looking at had to be guessed, so the glare/material
+panes the player was looking at had to be guessed, so the glare/material
 comparison against the cartridge was blocked. This is the instrument that
 removes the guess, plus every control that was run against it - including the
 two that came back negative.
@@ -21862,7 +21878,7 @@ parity ROM. Host side is `tools/native/rominspect.py`.
 
 #### Control 2, and it came back NEGATIVE: no pad bit is safe
 
-Asked to bind capture to Select and verify Select is unconsumed. It cannot be,
+Proposed: bind capture to Select and verify Select is unconsumed. It cannot be,
 for two independent reasons, both established rather than assumed:
 
 1. **The N64 has no Select button**, and parallel_n64 reaches only real N64
@@ -21996,7 +22012,7 @@ Anyone matching a screenshot to a distance will get this wrong; the capture
 publishes both positions so the mistake is visible rather than latent.
 
 **`CullDist` is 600 and the nearest a pane ever gets in any of the four ROM
-recordings is 6641.** That is a factor of eleven outside the band the owner's
+recordings is 6641.** That is a factor of eleven outside the band the playtest
 report lives in, and it is the same shape as the `facility-gas` dead end
 recorded earlier in this file (minimum 1637.6 there). **None of the four
 recordings contains the case under investigation** - and now that is a
@@ -22070,7 +22086,7 @@ Two smaller ones, same session, same shape:
 - FINDTYPE turns a null SELECT into one of three distinguishable measurements
   rather than a shrug.
 - `ROM_SIZECTL=1` is the control for the whole debug-ROM comparison and is what
-  turned "my instrument perturbs the boot" into "every ROM image does".
+  turned "the instrument perturbs the boot" into "every ROM image does".
 
 #### Not built, stated plainly rather than left to be discovered
 
@@ -22088,7 +22104,7 @@ because that is the live question.
 #### 2026-08-27: the oracle now SPEAKS WHILE YOU PLAY. `make trace-record-debug`
 
 The instrument above was correct and silent, which for two sessions made it
-useless. The owner recorded with `make trace-record`, aimed, pressed Create,
+useless. A playtest recorded with `make trace-record`: the player aimed, pressed Create,
 and **the terminal printed nothing** - no confirmation the press registered, no
 statement of what was targeted. Both attempts produced `hits=0`, discovered
 afterwards from a replay, with no way to tell a press that missed from a press
@@ -22170,30 +22186,30 @@ IDENTICAL; 65 harness tests pass; the debug ROM's own control reports
 
 **Still not done, and it is the same thing as before:** one recording that
 walks the security-door corridor and stops 600-900 units short of the window.
-The instrument can now tell the owner, live, whether they are there.
+The instrument can now tell the player, live, whether they are there.
 
 
 ### B-051/B-032 — bullet decals on glass: SPAWNED and SUBMITTED, ZERO PIXELS. The cause is the B-032 bitfield read at its SECOND, uncorrected site, and it is on the prop hit path. 2026-08-27
 
-The owner's report: *"bullet decals on glass windows are only visible when there
+The playtest report: *"bullet decals on glass windows are only visible when there
 is a PROP behind the glass. If there is just a wall behind it, the decals do not
 appear."*
 
-**Measured end to end on the owner's own native recording**
+**Measured end to end on a native playtest recording**
 `~/.sightline/runs/20260827-181853-lvl34`, which turned out to contain twelve
 shots into two `PROPDEF_TINTED_GLASS` panes. Nothing here is inferred from a
 screenshot or from reading code alone; every number below came out of a run.
 
 #### The three-way split, settled
 
-The brief's split - not spawned / spawned-not-submitted / submitted-not-visible
+The investigation scope's split - not spawned / spawned-not-submitted / submitted-not-visible
 - resolves to the **third**, and the first two are ruled out by counters that
 also have a known-positive:
 
 ```
                                        creates  quads/frame  pixels contributed
 background decal, wall at spawn             85           85               6147
-glass-pane decal, owner's recording         12          3-5                  0
+glass-pane decal, playtest recording        12          3-5                  0
 ```
 
 The 6147 is the positive control and it matters: **background bullet decals ARE
@@ -22334,7 +22350,7 @@ inside `#ifndef __sgi`); `make trace-verify LEVEL=facility`; `make bootsweep`.
 the emulator, so a native-only defect on this path is invisible to all 117
 traces, which is why the gate has been green throughout.
 
-#### Two zeros that were nearly believed, recorded because the brief warned about exactly this
+#### Two zeros that were nearly believed, recorded because the task specification warned about exactly this
 
 - **The first A/B compared frame 4700 and reported 0 for all four arms**,
   including fix-vs-broken. The pane is not on screen at 4700 - the player has
@@ -22345,7 +22361,7 @@ traces, which is why the gate has been green throughout.
   a grep artefact: the per-frame summary line contains the text
   `ROOM-REJECTED:0`. The real count of reject EVENTS is a separate line, and
   the correlation that matters came out flat: **0 of 178 background creates in
-  the owner's recording were room-rejected within 20 frames of being made.**
+  the playtest recording were room-rejected within 20 frames of being made.**
   The `getROOMID_isRendered` gate is doing exactly Rare's job - dropping decals
   in rooms you have walked away from - and is not implicated.
 
@@ -22365,9 +22381,9 @@ traces, which is why the gate has been green throughout.
 
 #### What is NOT established
 
-- **The "prop behind the glass" half of the owner's sentence.** The recording
+- **The "prop behind the glass" half of the playtest report's sentence.** The recording
   contains glass with a wall behind it and nothing else, so the contrast the
-  owner describes was never measured. The mechanism above explains the "wall
+  report describes was never measured. The mechanism above explains the "wall
   behind -> no decal" half completely. The other half is CONSISTENT with the
   shot penetrating the glass and the decal landing on the prop instead - an
   ordinary prop decal, drawn immediately after its own prop's geometry in the
@@ -22393,7 +22409,7 @@ traces, which is why the gate has been green throughout.
 
 ### B-077 — the large-texture grid/stitch seams are NOT a texture-addressing defect. B-052 REFUTED as their cause. 2026-09-02
 
-Owner observation after `a304d726`: tinted glass is accepted and closed, but
+Playtest observation after `a304d726`: tinted glass is accepted and closed, but
 visible grid/stitch lines remain across textured surfaces on **doors, security
 consoles and other props with LARGER TEXTURES**. The correlation with larger
 textures was the new datum, and B-052 was the standing suspect.
@@ -22520,15 +22536,15 @@ SAMPLED: filtering, minification and the absence of any mip chain are the
 untested stage, and a tiling texture minified with `GL_LINEAR` and no mip
 level is a textbook producer of regular light/dark banding across a large
 surface. That is NOT authorisation to start changing filters — it is where
-the next round should point, and it needs the owner to name one prop first.
+the next round should point, and it needs a playtest to name one prop first.
 
 Two things must NOT be inferred from this entry:
 
 - It does not say B-052 is fixed. B-052's resolver defect is still in the
   tree, still unrepaired, and still blocks any future mip work. It is parked
   because it is not LOAD-BEARING for consumed output, not because it is gone.
-- It does not say the seams are imaginary. They are the owner's physical
-  observation. It says only that seven measured candidate causes in the tile
+- It does not say the seams are imaginary. They are a physical observation
+  from a playtest. It says only that seven measured candidate causes in the tile
   chain are eliminated.
 
 #### Reproducing the census
@@ -22633,7 +22649,7 @@ block_tmem) * 8` rather than requiring an exact match - then re-run the voided
 LOD arms, and only then consider the LOD-fraction pipeline, which needs the one
 undocumented step above.
 
-### B-051 — texgen + lighting become the NATIVE DEFAULT after owner visual validation on facility. 2026-08-28
+### B-051 — texgen + lighting become the NATIVE DEFAULT after playtest visual validation on facility. 2026-08-28
 
 The semantics landed in `3c581b2f` shipped **default OFF**. This entry records
 flipping `texgen_on()` and `light_on()` to **default ON**, and exactly what that
@@ -22739,7 +22755,7 @@ and 1.81), so they are a level fade, not the flip.
 
 #### What is established, and what is explicitly not
 
-- **Established:** facility is the visually validated surface - the owner
+- **Established:** facility is the visually validated surface - playtest
   confirmed `SL_TEXGEN=1 SL_LIGHT=1` there, and that arm is now byte-identical
   to the default. Rollback restores `fbad9809` pixel for pixel. Containment is
   structural (`g_vgen_ok`/`g_vlrgb_ok` are set only in the `G_TEXTURE_GEN` /
@@ -22790,7 +22806,7 @@ make bootsweep                    20/20 OK, 0 levels failed
 
 ### B-053 — the facility intro camera: the record walk is CORRECT, the seed is not. 2026-08-28 — FIXED 2026-08-28
 
-Owner report: the cartridge's facility intro shows the first hallway
+Playtest report: the cartridge's facility intro shows the first hallway
 outside the bathroom looking at the bulletproof vest; the native port shows
 the tank room at the far end of the level.
 
@@ -22829,7 +22845,7 @@ cam  position                        pad   where
 ```
 
 Camera 2 is the only one near the body armour (pad 215 at 801,-452,1274) -
-the owner's "vest" camera. Pads 104 (9582,-510,-3623) and 2 (468,-470,571)
+the reported "vest" camera. Pads 104 (9582,-510,-3623) and 2 (468,-470,571)
 are the two rooms.
 
 - NATIVE (gdb on build/native/skeleton): count 4, records at intro+0/40/80/
@@ -22870,7 +22886,7 @@ Fixed in two commits, in that causal order: replay stopped depending on the
 accidental constant, and only then did interactive boot become cartridge-like.
 
 **Facility has four legitimate cartridge intro cameras, and the vest camera
-is one of four - not "the" canonical facility intro.** The owner's report was
+is one of four - not "the" canonical facility intro.** The playtest report was
 of a real defect, but the defect was never "the wrong camera": three of the
 four are at the tank end, so a hardware boot shows a far-end camera most of
 the time. Retail boot timing is what supplies the entropy. Native's
@@ -22929,7 +22945,7 @@ is the documented `roompos_1` scale at `prop.c:1524-1526`.
 
 ### B-054 — a GLSL world shader leaked into 2D rendering, in TWO places. Black boxes around HUD glyphs and bullet decals. 2026-08-28 — FIXED 2026-08-28
 
-Owner reported opaque black rectangles around watch/HUD text and around
+A playtest reported opaque black rectangles around watch/HUD text and around
 bullet decals, intermittently: some launches clean, some not, on an
 UNCHANGED binary. Fixed by two commits, `8d16ade5` and `5130c36a`.
 
@@ -22985,7 +23001,7 @@ drawn with the program bound was ZERO on both arms.
 
 `draw_fillrect` never called `texenv_set` at all, and `mode2d_begin()` did
 not either, so the fill path inherited whatever geometry left bound. Using
-five owner recordings differing only by seed, at frame 247:
+five playtest recordings differing only by seed, at frame 247:
 
 ```
                             boxed      clean
@@ -23073,7 +23089,7 @@ Confirming any of them needs a per-record-type doc.
 
 The cartridge's watch face bursts into heavy static for ~1.5s at irregular
 intervals, then fades clean. Native rendered it perfectly flat. Fixed by
-`359fde76`; owner-confirmed.
+`359fde76`; confirmed in playtest.
 
 **Native's game logic was already correct.** The burst state machine runs:
 `options.c:1509` fires on `(D_80040B0C << 0x10) < randomGetNext()`
@@ -23160,8 +23176,8 @@ the renderer handles, and was left alone.
 
 ### B-058 — menu key repeat is far too fast: one press can skip to the bottom
 
-- **Found:**  2026-09-01, owner hand-testing the native keyboard/mouse work
-- **Owner:**  Phase 1, the same native-input track this was found in
+- **Found:**  2026-09-01, manual hand-testing of the native keyboard/mouse work
+- **Area:**   Native input
 - **Where:**  `src/platform/sl_input.c` `map_kbm`, the `if (menu)` branch
 - **Blocks:** nothing structural; it makes the menus unpleasant to use
 
@@ -23182,12 +23198,12 @@ to pitch direction and pointer capture, and this is a separate behaviour.
 
 ### B-059 — left mouse button should confirm the highlighted menu item
 
-- **Found:**  2026-09-01, owner hand-testing
-- **Owner:**  Phase 1, native input
+- **Found:**  2026-09-01, manual hand-testing
+- **Area:**   Native input
 - **Where:**  `src/platform/sl_input.c` `read_mouse` / `map_kbm` menu branch
 - **Blocks:** nothing
 
-Owner wants LMB in a menu to produce the same input Enter does — confirm the
+Requirement: LMB in a menu produces the same input Enter does — confirm the
 currently highlighted item. Explicitly NOT a pointer system: no hover, no
 hit-testing, no pointer targets, no click-to-activate-what-is-under-the-cursor.
 The mouse's POSITION stays unread in menus, exactly as the wheel work kept it.
@@ -23200,12 +23216,14 @@ this must preserve the drain.
 ### B-060 — controller pitch still obeys Look Up/Down; only the mouse was carved out
 
 - **Found:**  2026-09-01, implementing the mouse-owns-its-own-pitch decision
-- **Owner:**  unclear — depends on whether the owner wants the same treatment
-              for pads, which they have not asked for
+- **Area:**   Native input
 - **Where:**  `src/game/bondview2.c:5579`, `src/platform/sl_input.c` `map_kbm`
 - **Blocks:** nothing
 
-The owner's ownership boundary is: the mouse always has conventional PC
+Whether this is work at all is unclear: it depends on whether the same
+treatment is wanted for pads, which has not been requested.
+
+The decided ownership boundary is: the mouse always has conventional PC
 direction; the CONTROLLER keeps GoldenEye's control style and Look Up/Down
 setting. That is what was implemented — the mouse pre-negates its own pitch to
 cancel the `invertPitch` block, and the pad path is untouched.
@@ -23217,7 +23235,7 @@ is a separate decision, not a bug in this one.
 ### B-061 — Facility direct boot hangs on Windows in `stanDetermineEOF`; Linux boots the same level
 
 - **Found:**  2026-09-01, Win32/i686/PE32 bring-up
-- **Owner:**  Windows port
+- **Area:**   Windows platform
 - **Blocks:** Facility on Windows. This is the FIRST BROKEN STAGE of the
               native-Windows chain; everything before it is cleared.
 
@@ -23316,7 +23334,7 @@ one from a scratch `build/win32`).
 ### B-062 — campaign levels other than Facility do not yet boot on Windows
 
 - **Found:**  2026-09-02, during B-061 acceptance
-- **Owner:**  Windows port
+- **Area:**   Windows platform
 - **Status:** finding only, NOT a regression, NOT in B-061's scope
 
 Facility (34) is the only level in Windows scope so far. Spot-checked 27, 43,
@@ -23332,10 +23350,10 @@ describes the Linux build, not Windows.
 ### B-063 — windowed Facility crashes at frame 3 on Windows; headless survives 300
 
 - **Found:**  2026-09-02, during the PowerShell workflow acceptance
-- **Owner:**  Windows port
+- **Area:**   Windows platform
 - **Status:** finding only, NOT a regression, NOT caused by the PowerShell
               workflow — proven differentially, see below
-- **Blocks:** the owner actually playing Facility on Windows, which is the
+- **Blocks:** actually playing Facility on Windows in playtest, which is the
               standing session goal
 
 `SL_WINDOW=0 SL_FRAMES=300` reports `survived 300 pumped frames`, exit 0,
@@ -23428,7 +23446,7 @@ see B-066.
 
 - **Found:**  2026-09-02 (recorded from prior session recon, re-observed in
               every Windows run)
-- **Owner:**  Windows port
+- **Area:**   Windows platform
 - **Status:** parked debt, handled loud and non-fatal
 - **Blocks:** nothing
 
@@ -23457,7 +23475,6 @@ limitation, not a demonstrated output defect.
 ### B-065 — two Windows-workflow leftovers deliberately not touched this sprint
 
 - **Found:**  2026-09-02, PowerShell workflow sprint
-- **Owner:**  project owner (both are owner-owned files or owner judgement)
 - **Status:** finding only
 - **Blocks:** nothing
 
@@ -23468,7 +23485,7 @@ Left undone on purpose, recorded so they are not lost:
    point the four hook events at the retained `.sh` launchers. That is
    dual-host preservation language the platform pivot retires. It was NOT
    edited this sprint because that configuration is per-machine editor tooling
-   and the sprint brief scoped it to "commit", not "modify". (Since then the
+   and the sprint's stated scope was "commit", not "modify". (Since then the
    hook configuration has been removed from the tracked tree entirely.)
 
 2. **Crash reports are written to a POSIX path on Windows.** Every windowed run
@@ -23482,9 +23499,9 @@ Left undone on purpose, recorded so they are not lost:
 ### B-066 — windowed Facility renders at ~1-2 frames/sec
 
 - **Found:**  2026-09-02, immediately after B-063 was fixed
-- **Owner:**  Windows port / renderer
+- **Area:**   Windows platform / renderer
 - **Status:** finding, measured
-- **Blocks:** the owner actually playing Facility. B-063 was the crash; this is
+- **Blocks:** actually playing Facility in playtest. B-063 was the crash; this is
               now the thing in the way.
 
 Measured on the same binary, same level, same boot:
@@ -23570,7 +23587,7 @@ segment `.bss` buffers live inside the image at `0x013xxxxx`, also below
 same way. Nothing observed does - every bad operand measured was a heap
 pointer - but the invariant is narrower than it looks. Resolving the ambiguity
 properly (for instance by requiring a segment-resolved target to look like a
-display list rather than merely to be readable) is renderer work and an owner
+display list rather than merely to be readable) is renderer work and a project
 decision.
 
 `sl_gl: 1 error(s) first=0x0502` (GL_INVALID_OPERATION) persists and was not
@@ -23582,7 +23599,6 @@ deterministic fault. See B-068.
 ### B-067 — the matching build is UNVERIFIED since the platform pivot
 
 - **Found:**  2026-09-02
-- **Owner:**  project owner
 - **Status:** correction to the record, plus a measured route to fixing it
 - **Blocks:** nothing today, but it is a non-negotiable constraint currently
               resting on inspection rather than measurement
@@ -23631,7 +23647,7 @@ names the substitution itself. With `-ldl` dropped and `--export-all-symbols`
 substituted, the link exits 0 and the binary runs and prints its usage.
 
 NOT done here, deliberately: that is a local delta against a vendored upstream
-tool, which is an owner maintenance decision, and it is outside a crash
+tool, which is a project maintenance decision, and it is outside a crash
 objective. And it remains UNPROVEN that `make matching` then yields a
 byte-identical ROM - `recomp` has not processed a real ELF, and `libc_impl.c`'s
 IRIX syscall emulation is only exercised when it does. Linking and printing
@@ -23648,9 +23664,9 @@ when the instrument can show it ran.
 ### B-068 — Facility faults in stanIsSpecialBit1Set at frame 567 once it renders
 
 - **Found:**  2026-09-02, immediately after B-066 was fixed
-- **Owner:**  Windows port / game
+- **Area:**   Windows platform / game
 - **Status:** new first broken stage, fully deterministic
-- **Blocks:** the owner playing Facility
+- **Blocks:** playing Facility in playtest
 
 With the heap relocated, windowed Facility renders properly and runs ~12
 seconds before faulting. Identical across repeated runs - same frame, same
@@ -23780,7 +23796,7 @@ picked:
   supplying room gcc does not.
 
 Under project rule 5 a crash is fixable, but if the answer is "Rare relied on
-frame-layout luck" the fix is a behaviour change and belongs to the owner. Do
+frame-layout luck" the fix is a behaviour change and needs a design ruling. Do
 not assume; measure first.
 
 The temporary probes used above were reverted once their output was recorded —
@@ -23834,10 +23850,11 @@ does not preprocess through MinGW GCC, so that check is still unavailable.
 ### B-069 — OPEN QUESTION: does a physical keypress reach the movement channels on Windows?
 
 - **Found:**  2026-09-02, native keyboard/mouse mechanism stage
-- **Owner:**  project owner — one keypress settles it
 - **Status:** OPEN QUESTION, not a defect. The ambiguity is in the INSTRUMENT,
               and it is not known to be in the game.
 - **Blocks:** nothing yet. Do not rework input on this entry alone.
+
+One physical keypress in a manual playtest settles it.
 
 **MEASURED.** With a real window up and capture established first
 (`own=1 grab=1 ch=1`, so KBM owns the input and the channels are live),
@@ -23878,22 +23895,22 @@ lesson holds in both directions: an instrument reporting nothing is not a
 negative result, and an instrument reporting something is not automatically
 right either.
 
-Context: stages 1 and 3 of the owner's chain passed on mechanism in the same
+Context: stages 1 and 3 of the playtest runtime chain passed on mechanism in the same
 session — audio opens and survives (`submits=1498 refused=0 underruns=4`,
 exit 0 over 53.5s), and mouse capture works through the GENERIC SDL
 relative-mouse path with no Raw Input, no ClipCursor and no DirectInput. Delta
 signs are consistent with the settled `g_dx_sign=-1, g_dy_sign=-1`. Nothing on
 screen was judged: channel values are not a claim about which way the camera
-turns, which is the owner's hand-test.
+turns, which is the manual hand-test.
 
 ### B-070 — Windows audio is DIGITAL SILENCE: every submitted PCM sample is zero
 
-- **Found:**  2026-09-02, owner physical acceptance ("there is no audible audio")
-- **Owner:**  Windows port
+- **Found:**  2026-09-02, physical acceptance playtest ("there is no audible audio")
+- **Area:**   Windows platform
 - **Status:** OPEN. Root cause NOT established. CASE A confirmed.
-- **Blocks:** the owner's runtime chain at the audio stage.
+- **Blocks:** the playtest runtime chain at the audio stage.
 
-**The owner's ears are the measurement, and they said silence.** An earlier
+**Listening in playtest is the measurement, and it found silence.** An earlier
 report that Windows audio "passes on mechanism" was withdrawn: device open,
 1498 submits and 0 refusals establish TRANSPORT ACTIVITY ONLY. Consumed is not
 interpreted.
@@ -23953,19 +23970,19 @@ audio microcode/ACMD command set, reverb/FX config, per-frame scheduling and
 ENVMIX_STATE are recorded as NOT covered by Zoinkity's notes — do not spend
 time searching them.
 
-Acceptance is the OWNER HEARING music or SFX through
+Acceptance is music or SFX AUDIBLE IN PLAYTEST through
 `.\tools\windows\play.ps1`. A non-zero `nonzero=` count is necessary and NOT
 sufficient.
 
-### B-071 — Windows mouse look is MIRRORED on both axes (owner physically observed)
+### B-071 — Windows mouse look is MIRRORED on both axes (physically observed in playtest)
 
-- **Found:**  2026-09-02, owner physical acceptance of `.\tools\windows\play.ps1`
-- **Owner:**  Windows port, input
-- **Status:** REPAIR COMMITTED 2026-09-02, AWAITING OWNER PHYSICAL
-              CONFIRMATION. Not closed until the owner's hand says so.
+- **Found:**  2026-09-02, physical acceptance playtest of `.\tools\windows\play.ps1`
+- **Area:**   Windows platform / input
+- **Status:** REPAIR COMMITTED 2026-09-02, AWAITING PHYSICAL PLAYTEST
+              CONFIRMATION. Not closed until manual play says so.
 - **Blocks:** playable feel. Not the first broken stage in the runtime chain.
 
-**Owner's physical result, which is authoritative:**
+**Physical playtest result, which is authoritative:**
 
 ```
 LEFT  -> RIGHT
@@ -23977,13 +23994,13 @@ DOWN  -> UP
 All mouse looking is mirrored on both axes. Facility launches, runs, and mouse
 CAPTURE works — only the direction is wrong.
 
-**This supersedes a weaker synthetic finding of mine.** I reported injected
-mouse deltas as "consistent with the settled `g_dx_sign=-1, g_dy_sign=-1`":
+**This supersedes a weaker earlier synthetic finding.** Injected
+mouse deltas were reported as "consistent with the settled `g_dx_sign=-1, g_dy_sign=-1`":
 raw dx +40 gave `turn=-70`, dx -40 gave `turn=+70`, dy +30 gave `pitch=-70`.
 Those numbers are still correct, and they are still not an answer. They measure
-CHANNEL VALUES at the input layer, not which way the camera turns. I said so at
+CHANNEL VALUES at the input layer, not which way the camera turns. That was stated at
 the time, but recording "consistent with" against a question only the screen
-can answer under-served it, and the owner's result is the one that counts.
+can answer under-served it, and the playtest result is the one that counts.
 
 **What is NOT invalidated:** the WSL physical acceptance of
 `g_dx_sign=-1, g_dy_sign=-1` remains historically valid FOR WSL. It does not
@@ -24037,7 +24054,7 @@ pitch-only, and a pitch-only knob cannot mirror yaw. The report was both axes.
 
 **FIX:** the default is now per-platform, because the value encodes a HOST
 convention rather than anything about the game. `_WIN32` gets `+1/+1`;
-every other host keeps the owner-validated `-1/-1`. Nothing downstream of
+every other host keeps the playtest-validated `-1/-1`. Nothing downstream of
 `dx *= g_dx_sign` changed, and no general controls work was done.
 `SL_MOUSE_DX_SIGN` / `SL_MOUSE_DY_SIGN` remain the runtime escape hatch, so
 both conventions stay reachable without a rebuild.
@@ -24061,9 +24078,9 @@ in this project keep asking for. Neither run is evidence about physical
 direction, and neither is offered as such.
 
 **NO SYNTHETIC INPUT WAS USED, deliberately.** A synthetic pointer probe has
-passed twice here while the owner's hand failed twice; the argument above needs
+passed twice here while manual play failed twice; the argument above needs
 none. The chain from `dx` to the camera is linear with exactly one sign in it,
-the owner physically observed the product as inverted on both axes, and that
+manual play physically showed the product as inverted on both axes, and that
 single sign is the only place this repository can change it.
 
 **NO TEMPORARY INSTRUMENTATION WAS ADDED**, so there is none to remove. The
@@ -24079,7 +24096,7 @@ producer is reachable only via `sl_gfx_active()` with no recorded stream loaded
 (`src/platform/sl_ultra_shim.c:1158`, "there is no third producer"), so replay
 never reaches `read_mouse`.
 
-**ACCEPTANCE IS PHYSICAL AND HAS NOT HAPPENED YET.** The owner runs
+**ACCEPTANCE IS PHYSICAL AND HAS NOT HAPPENED YET.** A playtest runs
 `.	ools\windows\play.ps1` and confirms LEFT->LEFT, RIGHT->RIGHT, UP->UP,
 DOWN->DOWN. If one axis is right and the other is not, the double-negation
 model is wrong and this should be reopened rather than patched with an env var.
@@ -24124,7 +24141,7 @@ that first — it is one rebuild.
 
 **THIS DOES NOT MEAN B-066 CAUSED THE SILENCE.** Audio was already broken before
 it: the pre-B-066 log shows `completedWithoutFault=0` with all 149 tasks
-faulting, and the owner heard nothing on a build predating the heap move. What
+faulting, and nothing was heard in playtest on a build predating the heap move. What
 changed is WHICH address fails and WHERE, not whether audio worked. Two defects
 may be stacked here and they must not be conflated.
 
@@ -24137,19 +24154,23 @@ wrong. DO NOT change `phys()` or the address model until that is measured;
 
 Still true and unchanged: submitted PCM is digital silence
 (`nonzero=0/438080`, `peak=0`, `silent-blocks=298/298`), the device drains
-normally, and acceptance remains the OWNER HEARING sound.
+normally, and acceptance remains sound AUDIBLE IN PLAYTEST.
 
 ---
 
 ### B-072 — the Facility intro costs 25-50 ms of GAME work per VI, and nothing else on the frame is close
 
 - **Found:**  2026-09-02, measuring the reported intro crackling/slowdown (led to the VI-catch-up repair in `sl_pace_frame`)
-- **Owner:**  unclear — this is renderer/sim CPU cost, not audio. Best guess Phase 2 (sim/render decoupling), because that is the refactor that would let the cost be hidden rather than paid on the VI thread.
+- **Area:**   Renderer/sim CPU cost, not audio
 - **Where:**  `src/platform/sl_ultra_shim.c` `sl_pump` — the cost is everything BETWEEN pump calls, i.e. the game's own frame construction, not the pump.
 - **Blocks:** nothing today. The VI catch-up makes the sim and the audio run at
   the right RATE regardless, so the symptom is now judder rather than
   slow-motion-plus-crackle. It will block any acceptance phrased as "the intro
   is smooth".
+
+Which work picks this up was unclear when it was recorded. Best guess: the
+sim/render decoupling, because that is the refactor that would let the cost
+be hidden rather than paid on the VI thread.
 
 MEASURED, windowed Facility from boot, 960x720, a phase timer around the pump
 attributing each wall second to a phase:
@@ -24186,10 +24207,12 @@ measurement here separates DL processing from simulation.
 - **Found:**  2026-09-02, while verifying the B-073 repair. NOT introduced by it:
   before the repair the same stream died at frame 0x539 in `bgTestHitOnObj`, so
   everything after that point was simply never executed.
-- **Owner:**  audio. Parked behind the owner's Facility acceptance playthrough.
+- **Area:**   Audio
 - **Where:**  hang PC resolves to `alCSPGetState`
   (`src/libultra/audio/cspgetstate.c:27`) reached from `musicTrack1Play`
   (`src/music.c:908`) via `maybe_mp_interface` (`src/game/bondview2.c:9224`).
+
+Parked behind the Facility acceptance playtest.
 
 MEASURED on `tools/trace/inputs/facility-sweep-007agent.input`, Windows i686
 build, hang watchdog at 120 s:
@@ -24215,11 +24238,11 @@ Facility path.
 
 ---
 
-### B-075 — the post-1.1 GL paths compiled OUT on Windows, so B-048's fire and B-045's gas were absent from the Windows binary — FIXED 2026-09-02, owner-accepted
+### B-075 — the post-1.1 GL paths compiled OUT on Windows, so B-048's fire and B-045's gas were absent from the Windows binary — FIXED 2026-09-02, accepted in playtest
 
 - **Found:**  2026-09-02, chasing the Windows explosion colour and Facility gas
   regressions against the already-accepted native behaviour.
-- **Owner:**  Phase 2 (renderer), Windows platform surface.
+- **Area:**   Renderer / Windows platform surface
 - **Where:**  `src/gfx/sl_gfx_dl.c` — the `SL_MULTITEX` (B-048) and
   `SL_FOGSTAGE` (B-045) capability gates, and the new Win32 runtime-resolution
   block above them.
@@ -24246,14 +24269,14 @@ census now reports the RUNTIME resolution state, so `tex1=on` can no longer mean
 only that the path was *built*. The non-Win32 build is untouched: the direct
 calls stand exactly as they were.
 
-**OWNER PHYSICAL ACCEPTANCE, 2026-09-02**, on the binary built from this repair:
+**PHYSICAL PLAYTEST ACCEPTANCE, 2026-09-02**, on the binary built from this repair:
 
 | | verdict |
 |---|---|
 | B-048 — Windows explosion colour regression (TEXEL1 fire) | **FIXED / looks good** |
 | B-045 — Windows Facility gas regression (fog stage) | **FIXED / looks good** |
 
-The acceptance is the owner's own visual test. `tools/windows/test.ps1` is a
+The acceptance is a manual visual playtest. `tools/windows/test.ps1` is a
 Facility smoke and does not evidence visual correctness either way.
 
 **STILL WRONG after this repair, and explicitly NOT addressed by it:**
@@ -24262,7 +24285,7 @@ Facility smoke and does not evidence visual correctness either way.
   renderer stage. See B-051, which solved the mechanism (`PROPDEF_TINTED_GLASS`,
   the opaque pane is not drawn); what is open is restoring that accepted
   behaviour on Windows. OPEN.
-- **Door grid / stitch seams** — real, observed by the owner on the same build.
+- **Door grid / stitch seams** — real, observed in playtest on the same build.
   Not investigated. PARKED behind the glass work, because glass is the earlier
   wrong stage and may move what the seams look like.
 - **B-072 — performance** — still bad. Gameplay *and* audio stutter worsen with
@@ -24272,8 +24295,8 @@ Facility smoke and does not evidence visual correctness either way.
 
 ### B-076 — B-051's tinted glass on Windows: the alpha equation was decoded, classified and compiled, and then thrown away by a texenv mode that did not exist in the binary. 2026-09-02
 
-The same defect class as B-075, one gate further on, and it is why the owner
-still saw the tinted-glass transition wrong on the binary that fixed
+The same defect class as B-075, one gate further on, and it is why a playtest
+still showed the tinted-glass transition wrong on the binary that fixed
 explosions and gas.
 
 #### The gate
@@ -24372,7 +24395,7 @@ stays parked and untouched.
 #### Default equals the previously accepted ON path
 
 The question this round had to answer was whether Windows DEFAULT equals the
-feature-ON path the owner already accepted. It does, for all three:
+feature-ON path already accepted in playtest. It does, for all three:
 
 | feature | DEFAULT | explicit ON | rollback OFF |
 |---|---|---|---|
@@ -24396,7 +24419,7 @@ it precisely because a taken/not-taken split is categorical.
 #### Not done, stated plainly
 
 - **This is telemetry, not visual acceptance.** `tools/windows/test.ps1` PASS
-  1/1 evidences execution only. **Closure requires the owner's own run.**
+  1/1 evidences execution only. **Closure requires a playtest run.**
 - **A separate latent defect, filed not fixed:** `#define SL_TEXENV_COMBINE`
   sits at `sl_gfx_dl.c:5707`, but `aeq_apply_env` tests it at :5680 — *before*
   it is defined. That block sets `GL_TEXTURE_ENV_COLOR` for `AEQ_LERP`, so on
@@ -24559,10 +24582,10 @@ comments. Filed, not fixed.
   `PROP_LABBENCH`, `PROP_GASTANK` and `PROP_CHRREMOTEMINE` — no `PROP_CONSOLE*`
   in any of them. That the consoles share this path is DERIVED from the repair
   being a property of the F5 clamp bit and of the single `tex_wrap` every draw
-  goes through, not MEASURED on a console. If the owner still sees the pattern
+  goes through, not MEASURED on a console. If a playtest still shows the pattern
   on consoles after this, that inference is what failed.
-- **This is telemetry, not visual acceptance.** Closure requires the owner's
-  own run.
+- **This is telemetry, not visual acceptance.** Closure requires a
+  playtest run.
 - **B-052 did NOT become a dependency.** The repair needs no tile above 0, so
   the interior-TMEM defect is still parked exactly where B-077 left it.
 - **`make trace-verify` was not available** — `make` is not on PATH on this
@@ -24576,7 +24599,7 @@ comments. Filed, not fixed.
 
 `[P2] gfx: B-072 - mem_readable asked the kernel per DL operand`
 
-### The discriminator the owner supplied
+### The discriminator from the playtest report
 
 After the tank-room tanks explode: enemies flood in, gas is present, gameplay
 becomes near-unplayable. **Facing a wall recovers the frame rate materially;
@@ -24586,7 +24609,7 @@ weakened a pure AI/spawn or pure gas-simulation explanation and made a
 view-dependent workload the leading hypothesis. It was a hypothesis, not a
 finding, and it is now MEASURED.
 
-### One timing split, and it did not need the owner
+### One timing split, and it did not need a playtest
 
 A temporary env-gated profiler (`SL_FRAMEPROF=1`, since removed) measured, per
 presented frame: total frame work (boundary interval minus the pacer's *measured*
@@ -24604,7 +24627,7 @@ everything upstream of it — the game's own frame, its visibility work, the
 construction of the display list — is 0.72 ms. The wall-versus-doorway arms
 were never needed: the defect reproduces on the spawn camera, and the previous
 "25-50 ms of GAME work" figure was correct about the magnitude and wrong about
-the owner. It is renderer cost, and always was.
+which side owned it. It is renderer cost, and always was.
 
 ### First load-bearing cost
 
@@ -24617,7 +24640,7 @@ orders of magnitude apart in cost. `mincore()` reads a bitmap the kernel already
 holds; `VirtualQuery` walks the VAD tree and marshals a
 `MEMORY_BASIC_INFORMATION` across the user/kernel boundary. The call count
 scales per DL command and per triangle — which is exactly the view-dependent
-term the owner was feeling through the doorway.
+term felt in play through the doorway.
 
 ### The repair
 
@@ -24648,7 +24671,7 @@ investigation — same 700 frames, cumulative 66.4 -> 145.0 frame/s.
 
 ### Not done, stated plainly
 
-- **Not closed from counters.** Acceptance is the owner's tank room: enemies
+- **Not closed from counters.** Acceptance is a playtest of the tank room: enemies
   flooding the doorway without catastrophic frame-time growth, audio not
   stuttering because the frame is late, fire not feeling frames behind.
 - **The wall-versus-doorway arms were never run.** They became unnecessary when
@@ -24674,13 +24697,13 @@ investigation — same 700 frames, cumulative 66.4 -> 145.0 frame/s.
   and the draw submission themselves. The renderer is immediate-mode
   `glBegin(GL_TRIANGLES)`/`glVertex`, and `tex_acquire` runs once per triangle
   with a linear scan of the texture cache.
-- **Do not start this before the owner has physically tested the tank room** —
+- **Do not start this before the tank room has been physically playtested** —
   B-072's acceptance is a person's judgement, not a counter, and a second
   renderer change in flight would confound it.
 
-### B-080 — right-click aim turned the mouse into a virtual N64 stick — FIXED 2026-09-03, pending owner hand test
+### B-080 — right-click aim turned the mouse into a virtual N64 stick — FIXED 2026-09-03, pending manual hand test
 
-- **Found:** 2026-09-03, owner physical report: mouse look "somewhat too
+- **Found:** 2026-09-03, physical playtest report: mouse look "somewhat too
   sensitive", and right-click aim "effectively unusable" — crosshair jumps
   around, precision aiming very difficult, "behaves like a mouse being
   converted into digital/stick input".
@@ -24713,23 +24736,23 @@ investigation — same 700 frames, cumulative 66.4 -> 145.0 frame/s.
   ```
 
   `tools\windows\test.ps1` passed: `survived 300 pumped frames`, exit 0.
-- **NOT closed.** Acceptance is the owner's hands: smooth normal look, smooth
+- **NOT closed.** Acceptance is manual play: smooth normal look, smooth
   right-click aim, no crosshair jump, tiny movements usable, rotation stopping
   the instant the mouse does, controller aiming unchanged.
 
 ### B-081 — mouse sensitivity default is unverified, and deliberately NOT guessed
 
-- **Found:** 2026-09-03, same owner report as B-080 ("somewhat too sensitive").
+- **Found:** 2026-09-03, same playtest report as B-080 ("somewhat too sensitive").
 - **Status:** OPEN, and correctly so. `SL_MOUSE_SENS` default stays 6 in this
   change. The architecture repair in B-080 changes what the number MEANS —
   before it was scaling a virtual stick position, now it scales a turn rate —
   so any value chosen before that repair was tested by hand would be measuring
   the wrong system.
-- **Next step, and it is the owner's:** one short comparison of
+- **Next step, and it is a playtest:** one short comparison of
   `SL_MOUSE_SENS` 2 / 3 / 4 against the default 6. A nearby wall, a doorway or
   the first playable room is enough; a full Facility run is not needed.
 - **Do not add `SL_MOUSE_AIM_SENS` preemptively.** A separate aim sensitivity
-  is worth having only if, after B-080, the owner actually wants aim to differ
+  is worth having only if, after B-080, playtesting shows aim needs to differ
   from hip-fire look.
 
 ### B-082 — the front end was unreachable: a single-threaded audio deadlock at the gun barrel  — CLOSED 2026-09-03
@@ -24785,9 +24808,9 @@ investigation — same 700 frames, cumulative 66.4 -> 145.0 frame/s.
 ### B-083 — file select livelocks: the front end reaches it and no frame ever completes
 
 - **Found:** 2026-09-03, immediately after B-082 unblocked the boot chain.
-- **Status:** FIXED in code 2026-09-03, AWAITING OWNER PHYSICAL ACCEPTANCE.
+- **Status:** FIXED in code 2026-09-03, AWAITING PHYSICAL PLAYTEST ACCEPTANCE.
   Was the FIRST blocker on the player path. The automated evidence is below;
-  frontend visual acceptance is NOT claimed and remains the owner's call.
+  frontend visual acceptance is NOT claimed and remains a playtest call.
 - **How far the front end gets:** `0 LEGAL -> 1 NINTENDO -> 2 RAREWARE ->
   3 EYE_INTRO -> 4 GOLDENEYE_LOGO -> 5 FILE_SELECT`, driven by a synthesized
   `SL_INPUT` stream pulsing A and START. Input IS consumed — the Nintendo logo
@@ -24835,7 +24858,7 @@ investigation — same 700 frames, cumulative 66.4 -> 145.0 frame/s.
   A populated save hides it, which is why it took a first-boot player to find.
 - **Why it was reported as a GOLDENEYE_LOGO freeze:** the spin happens inside
   the file-select tick before that screen ever presents a frame, so the last
-  image on screen stays the preceding logo. The owner's watchdog then abort()s
+  image on screen stays the preceding logo. The watchdog then abort()s
   after 30 stalled seconds - which is the "and crashes" half of the report.
   One defect, not two.
 
@@ -24857,7 +24880,7 @@ investigation — same 700 frames, cumulative 66.4 -> 145.0 frame/s.
 
 ### B-085 — front end boot sequence renders wrong: logo textures and the gun barrel
 
-- **Found:** 2026-09-03, OWNER PHYSICAL TEST of the d8ef625a build. These are
+- **Found:** 2026-09-03, PHYSICAL PLAYTEST of the d8ef625a build. These are
   eyes-on observations, not harness output, and they OUTRANK any automated
   "reached FILE_SELECT" result for questions about how the front end looks.
 - **Status:** OPEN. Recorded, deliberately NOT started. B-083 (the file-select
@@ -24882,13 +24905,13 @@ investigation — same 700 frames, cumulative 66.4 -> 145.0 frame/s.
   lists "boot logos in weird tones" and the gunbarrel at `title.c:168` as
   already-suspected items. Check whether this is the same defect resurfacing
   before opening a new investigation.
-- **Verification when this is picked up:** owner physical test. There is no
+- **Verification when this is picked up:** physical playtest. There is no
   automated oracle for "the logo looks right", and windowed textual diffs are
   explicitly not a determinism oracle on this project (B-082).
 
 #### UPDATE 2026-09-03 - the NINTENDO texture cause is found and fixed. It is NOT shared.
 
-Owner re-tested the `f6d4df6b` build and added two observations: `GOLDENEYE_LOGO`
+A playtest re-test of the `f6d4df6b` build added two observations: `GOLDENEYE_LOGO`
 textures are also wrong, and `FILE_SELECT` is now REACHED but its textures are
 wrong too. That raised the obvious question - is one defect surviving all the way
 through the front end? **Measured: no.** Four screens, at least three causes.
@@ -24951,8 +24974,8 @@ entered there. It can only affect a `G_TEXTURE_GEN` draw issued BEFORE the first
 `gSPLookAt` of the process.
 
 **NOT VISUALLY ACCEPTED.** The counters prove the coordinate is now generated
-rather than collapsed; they do NOT prove the pixels are right. Owner physical
-test still owed, and the S-vs-T axis assignment remains the unsourced arm
+rather than collapsed; they do NOT prove the pixels are right. Physical
+playtest still owed, and the S-vs-T axis assignment remains the unsourced arm
 (`SL_TEXGEN_SWAP`, and the doc-routing `not_covered` entry for it).
 
 **The other three screens are NOT this defect** - measured, per screen:
@@ -24982,7 +25005,7 @@ RAREWARE 271-300, EYE_INTRO 301-329, GOLDENEYE_LOGO 330-518, FILE_SELECT 519+.
 > 290 of them. In that window it draws 268 triangles a frame of which **260
 > are `G_TEXTURE_GEN`**, with 0 declines because ce524325's seeded basis is
 > already in force. So RAREWARE *does* use texgen and ce524325 *did* reach it,
-> which is what the owner physically observed and what this table denied. The
+> which is what the physical playtest observed and what this table denied. The
 > COMBINERS in the row were correct; only the texgen column and the verdict
 > were wrong. The residual defect is B-088 and is NOT a texgen fault.
 >
@@ -25124,10 +25147,10 @@ lvlRender                            src/game/lv.c:702
 
 ### B-088 - the Rareware logo sampled a 3-texel strip of its reflection map
 
-- **Found:** 2026-09-03, owner physical test of the `ce524325` build. RAREWARE
+- **Found:** 2026-09-03, physical playtest of the `ce524325` build. RAREWARE
   substantially better but NOT ACCEPTED - geometry present, texture present,
   reflective/material finish wrong.
-- **Status:** FIXED in `src/gfx/sl_gfx_dl.c`. Owner physical test still owed.
+- **Status:** FIXED in `src/gfx/sl_gfx_dl.c`. Physical playtest still owed.
 
 **Cause: settilesize is the CLAMP RECTANGLE, not the image extent.** On a
 repeating axis the RDP wraps at `2^mask` and samples that whole span; `uls/lrs`
@@ -25205,7 +25228,7 @@ agrees with 32 and never with 20.
 
 **NOT VISUALLY ACCEPTED.** The counters prove the full 32x32 reflection map is
 now bound and sampled where a 20x3 strip was before; they do NOT prove the
-pixels are right. Owner physical test is still owed.
+pixels are right. Physical playtest is still owed.
 
 **Known-unimplemented, deliberately not changed here.** The RDP also subtracts
 the tile's `uls`/`ult` from the incoming coordinate before masking. For this
@@ -25213,17 +25236,17 @@ tile that is a texture-space offset of (11.5, 29) texels: it rotates which part
 of the env map lands where, but not the extent. No defect was measured for it
 this round, so it was left alone rather than changed on an argument. UNMEASURED.
 
-- **Verification:** owner physical test of RAREWARE; `test.ps1`; direct Facility
+- **Verification:** physical playtest of RAREWARE; `test.ps1`; direct Facility
   boot.
 
 ---
 
 ### B-089 — the EYE_INTRO gun barrel: 30 vertices built correctly, then addressed as if this were an N64
 
-- **Found:** 2026-09-03, owner physical test of `c992c8f7`. Reported as "Bond
+- **Found:** 2026-09-03, physical playtest of `c992c8f7`. Reported as "Bond
   renders and walks, but the moving circular aperture and the surrounding mask
   are simply absent, and the sequence stutters badly at the shot."
-- **Status:** FIXED in code 2026-09-03. **Owner physical acceptance still owed —
+- **Status:** FIXED in code 2026-09-03. **Physical playtest acceptance still owed —
   no pixel claim is made below.** This closes the B-085 sub-item "`EYE_INTRO` —
   no gun-barrel presentation".
 - **Where:** `src/game/title.c:476` (`initializeGunBarrelIntro`).
@@ -25316,8 +25339,8 @@ comparing per-frame `cmds`/`vtx`/`tris`:
 - **DL frames 1-403 (LEGAL + NINTENDO + RAREWARE): 403 of 403 lines byte-identical.**
 - DL frames 404-699 (EYE_INTRO): 295 of 296 differ — `vtx=0 -> vtx=64`.
 
-So the change cannot have touched the three screens the owner has already
-accepted. After the fix the sequence also runs to completion for the first time:
+So the change cannot have touched the three screens already accepted in
+playtest. After the fix the sequence also runs to completion for the first time:
 `mode 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9` at DL frames 641, 875, 896, 977,
 1085, 1116, 1147, and mode 9 is what `isGunBarrelInMode9` hands to
 `MENU_GOLDENEYE_LOGO`. Every inter-mode interval matches Rare's own constants
@@ -25333,10 +25356,10 @@ composites against the barrel backdrop. `createGunbarrelRenderHole` writes
 `manipulateGunbarrelAndLogoMatrices` sets `gDPSetPrimColor(..., 0xE6,0xE6,0xE6,
 0x00)`, also alpha zero. Whether that is Rare being deliberate (the combiner in
 force takes colour from PRIMITIVE, not from vertex alpha) or a second defect is
-**UNMEASURED**. If the owner reports the aperture as present but wrongly shaded,
+**UNMEASURED**. If a playtest reports the aperture as present but wrongly shaded,
 start there and not at the vertex path.
 
-- **Verification:** owner physical test of `EYE_INTRO`; `test.ps1`; direct
+- **Verification:** physical playtest of `EYE_INTRO`; `test.ps1`; direct
   Facility boot; the 403-frame containment A/B above.
 
 ---
@@ -25345,8 +25368,8 @@ start there and not at the vertex path.
 
 - **Found:** 2026-09-03, while looking for the B-085 "freezes/stutters around the
   shot". It is not at the shot. It is everywhere.
-- **Status:** FIXED in code 2026-09-03. Owner physical acceptance owed for
-  whether this is the stutter they saw.
+- **Status:** FIXED in code 2026-09-03. Physical playtest acceptance owed for
+  whether this is the reported stutter.
 - **Where:** `src/gfx/sl_gfx_dl.c`, the `if ((frames++ % 60) == 0)` census at the
   foot of `sl_gfx_frame_dl`.
 
@@ -25490,8 +25513,8 @@ only the render/update rate doubled.
   after, against a derived intent of 241 ticks / 60.4 ticks per second = 3.99 s.
   No mechanism in the game can make it 10 s: the timer accumulates elapsed VIs
   and is frame-rate invariant. The ~10 s console figure is unexplained and needs
-  the owner's physical re-check, not a code change.
-- Final perceived timing is the owner's physical test. Counters prove cadence,
+  a physical playtest re-check, not a code change.
+- Final perceived timing is the physical playtest. Counters prove cadence,
   not acceptance.
 
 - **Verification:** the before/after BOOTPROBE measurements above; the
@@ -25503,11 +25526,11 @@ only the render/update rate doubled.
 
 ### THE FRONT END'S FRAME CADENCE IS WORKLOAD-DETERMINED ON HARDWARE, AND THE NATIVE HARNESS HAS NO WORKLOAD. 2026-09-03
 
-The owner re-compared 4ff45cca against the cartridge and refuted the engineering
+A playtest re-comparison of 4ff45cca against the cartridge refuted the engineering
 acceptance: LEGAL about half the ROM's duration, NINTENDO the right length but
 rotating slower than the ROM, RAREWARE much closer than before but still slow,
-and EYE_INTRO now roughly 2x too FAST - Bond visibly speed-walks. That is owner
-physical evidence and it outranks the counters 4ff45cca was accepted on.
+and EYE_INTRO now roughly 2x too FAST - Bond visibly speed-walks. That is
+physical playtest evidence and it outranks the counters 4ff45cca was accepted on.
 
 Two claims from that round are WITHDRAWN and must not be built on: "Rare's front
 end is designed for one game frame per VI everywhere" - an inference from the
@@ -25551,7 +25574,7 @@ histogram of `{1:108, 2:224}`. That histogram covered GAMEPLAY - 600 VIs anchore
 120 VIs after `mission_state` reaches 1 - and NOT the front end. Both 1 and 2
 occur, so the console holds no single ratio.
 
-Against that, the owner's physical test puts the RAREWARE logo at roughly one
+Against that, the physical playtest puts the RAREWARE logo at roughly one
 update per VI (a black clear plus one 32x32 textured model) and the gun-barrel
 eye intro at roughly one update per TWO VIs (a full character model, a gun, a
 backdrop and the aperture). Those are different scenes with different RDP costs,
@@ -25617,7 +25640,7 @@ invariant. That half of 4ff45cca's diagnosis stands.
 
 #### What the LEGAL interval actually contains
 
-MEASURED, and it settles the owner's report in the negative. `MENU_LEGAL_SCREEN`
+MEASURED, and it settles the playtest report in the negative. `MENU_LEGAL_SCREEN`
 runs until 241 accumulated `g_ClockTimer` units, and those units ARE elapsed VIs,
 so the screen occupies 241 VIs = 4.02 s **at any cadence whatever**. Three
 independent cadences confirm it: 4.035 s at 2 VI/update, 3.975 s at 1 VI/update,
@@ -25625,7 +25648,7 @@ and - from an instrument fault that turned out to be a useful control - 4.053 s
 at 3 VI/update. No scheduling change and no cadence can make this screen 8-10 s,
 and the timer must not be doubled to fake it.
 
-What is NOT established is which wall interval the owner timed on the cartridge.
+What is NOT established is which wall interval the playtest timed on the cartridge.
 Natively the two black `MENU_SWITCH_SCREENS` gaps bracketing the legal screen
 cost 13 VIs and 4 VIs (0.220 s and 0.063 s), because
 `init_menu00_legalscreen`'s `load_object_fill_header` and `fileValidateSaves`,
@@ -25697,10 +25720,10 @@ Status: **OPEN, NOT REPAIRED.** The first wrong value is identified and measured
 The repair lands in global VI accounting and was therefore not made - see
 "Why there is no repair in this commit" below.
 
-The owner captured both systems immediately before the Nintendo portion ends:
+Playtest captures of both systems immediately before the Nintendo portion ends:
 the cartridge shows the logo essentially FORWARD FACING, Sightline shows it
 roughly a quarter turn away. Screen duration is correct on both and is
-owner-accepted.
+accepted in playtest.
 
 #### The magnitude check that governed the round
 
@@ -25790,7 +25813,7 @@ The two clocks in this screen are not the same clock:
 
 * the stage's LENGTH comes from `g_MenuTimer += g_ClockTimer` (front.c:1653) -
   elapsed VI, so it is time-correct on both, which is why duration is right and
-  owner-accepted;
+  accepted in playtest;
 * the logo's ANGLE comes from `ninLogoRotRate += 0.017453292` (front.c:1718) -
   once per CONSTRUCTOR CALL, i.e. per RENDERED frame, and exactly 1.000 degree.
 
@@ -25828,14 +25851,14 @@ evidence that found it.
 That repairing the VI accounting is sufficient. It is proven that the angle
 sequence is short by the exact number of dropped renders and that the geometry
 is right at every angle tested; it is NOT proven that no second defect appears
-once the frame count is correct. Owner physical re-check is still required.
+once the frame count is correct. Physical playtest re-check is still required.
 
 ---
 
 ### B-093 — the Nintendo deficit is HOST-LOAD DEPENDENT, not a VI-accounting defect: clean runs render 500-501 where the cartridge renders 499, and 417 was an instrumented run. 2026-09-04
 
 Status: **B-092's mechanism is confirmed and its MAGNITUDE claim is withdrawn.**
-No production change was made, on evidence. Owner physical re-check still governs.
+No production change was made, on evidence. Physical playtest re-check still governs.
 
 This round was authorized to make the minimum causal repair to VI accounting.
 The mandatory reproduction gate refused it: **the deficit does not reproduce on a
@@ -25997,7 +26020,7 @@ was wrong. What DOES make the Nintendo frame expensive is **not measured** here.
 
 #### What is NOT proven
 
-* That the owner's original quarter-turn screenshot was a loaded run. It is
+* That the original playtest quarter-turn screenshot was a loaded run. It is
   consistent with one - the measured spectrum brackets it, 22 deg short under
   light load and 247 deg short under capture, against the reported 76 - but the
   conditions of that session were not recorded and cannot be recovered.
@@ -26107,7 +26130,7 @@ of the walk, and the three obvious mechanisms are refuted above. Reducing
 per-triangle interpreter cost is a renderer work item with real correctness
 risk (`tex_apply` running once per triangle rather than per state change is the
 most obvious structural candidate, at 12.8% of the walk). Choosing and scoping
-that is not a measurement, so it is left to the coordinator rather than guessed
+that is not a measurement, so it is left as an open decision rather than guessed
 at here.
 
 #### Instrument faults caught in this round
@@ -26318,8 +26341,8 @@ the domain mismatch inside `set_solo_and_ptr_briefing` itself. Do not "fix" it
 by changing `pull_and_display_text_for_folder_a0`; both of its front-end callers
 depend on the SP_LEVEL keying.
 
-Owner: whichever phase makes the direct-boot path a supported way to play a
-level through to its end. Today it is a bring-up shortcut that is always killed
+This belongs with whatever work makes the direct-boot path a supported way to
+play a level through to its end. Today it is a bring-up shortcut that is always killed
 by the frame limit before the mission can finish, which is why no gate has ever
 hit this.
 
@@ -26434,7 +26457,7 @@ thrown away.
 
 ### B-097 — Dam has no sky: the sky is built from RAW RDP TRIANGLES pushed through `rdphalf`, and the native interpreter discarded every word of them. 2026-09-08
 
-- **Found:** 2026-09-08, owner-reported: Dam's sky/background absent in the
+- **Found:** 2026-09-08, reported in playtest: Dam's sky/background absent in the
   level intro and still absent once gameplay begins.
 - **Ours, not Rare's.** `src/game/sky.c` is byte-identical to the upstream
   decomp (`md5 a63ce4e60936e0cbab1e067d71926347` against
@@ -26509,11 +26532,11 @@ side by side settled it in seconds after the count had misled for a while.
 
 ### B-098 — the sky was ~90% right and read as stormy twilight: the RDP lerps the cloud texture from the SKY BASE COLOUR toward the shade, and GL_MODULATE dropped the base entirely. 2026-09-08
 
-Follow-on to B-097, which made Dam's sky *draw*. The owner's verdict on that
+Follow-on to B-097, which made Dam's sky *draw*. The playtest verdict on that
 was "geometry and texture substantially correct, but the ROM is visibly
 BLUER — Sightline looks like stormy twilight/night".
 
-**The hypothesis handed to this round was refuted.** The brief proposed that
+**The hypothesis handed to this round was refuted.** The task specification proposed that
 the white cloud contribution was missing or under-applied. It is not. The
 decoder's shade reconstruction is correct, and the same run that found the
 real defect proves it: `SL_RDPTRI_DBG=1` on Dam measures the sky primitive's
@@ -26567,7 +26590,7 @@ The backend was already decoding the word correctly into `g_cc_ra/rb/rc/rd`.
 Nothing read it at the sky draw. `env=103060ff` is Dam's fog row read back at
 draw time (`bgfog.c:184`, red `0x10` green `0x30` blue `0x60`).
 
-**Note on the cited table.** The brief cited `bgfog.c:120/:129`, which is the
+**Note on the cited table.** The task specification cited `bgfog.c:120/:129`, which is the
 `VERSION_EU` block. This build compiles `-DVERSION_US` (`build.ps1:206`), so
 the row that actually applies is `bgfog.c:184` — different column layout,
 *identical* values for Dam, so the numbers held.
@@ -26662,7 +26685,7 @@ Near the end of the Dam intro, the truck passes extremely close to the camera
 and the camera ends up inside the truck body, with its internal geometry
 visible from within.
 
-**CORRECTED 2026-09-08, owner comparison against the cartridge.** The earlier
+**CORRECTED 2026-09-08, playtest comparison against the cartridge.** The earlier
 wording here said "the ROM does not exhibit this". That is WRONG and is
 withdrawn. The ROM's camera *does* intersect the truck slightly, principally
 around the wheel-well area. What differs is DEGREE: Sightline penetrates
@@ -26868,10 +26891,10 @@ it. Issue administration must not block rendering fixes.
 
 ### Alarm / security-door panel pop-in — CLOSED, port bug, do not reopen. 2026-09-08
 
-The owner compared against the cartridge: the panels pop and load at the same
+A playtest comparison against the cartridge: the panels pop and load at the same
 point in the ROM. This is Rare's behaviour and rule 5 applies. Recorded here so
 it is not re-filed the next time somebody notices it in a capture. No Gitea
-issue, by owner instruction.
+issue, by project decision.
 
 ### B-101 — the RDP scissor: a witness was demanded before applying it, the witness was BUILT, and the answer is DO NOT APPLY IT. 2026-09-08
 
@@ -26984,7 +27007,7 @@ in: `tools/windows/build.ps1` exit 0 and `tools/windows/test.ps1` PASS.
 `glScissor` call site and `sciss_gl_apply` are all unreachable. The per-frame
 cost added to a normal run is one 4-int `memcpy` and three assignments.
 
-**What the owner should replay to check this claim.** Frigate, stage 26,
+**What a playtest should replay to check this claim.** Frigate, stage 26,
 replaying `tools/trace/inputs/frigate.input`, around read index 2048 — that is
 the frame where the band is. The open question the ROM would settle in one
 look: at that moment, does the cartridge show ship structure there, or sky?
@@ -27004,21 +27027,21 @@ deduplicate against):
 
 | # | Link | Backlog ID | Classification |
 |---|---|---|---|
-| 1 | private issue #1 | B-099 | LOAD-BEARING BUG — fix landed in `d7ed8d2d`, **left OPEN**, acceptance needs owner replay |
+| 1 | private issue #1 | B-099 | LOAD-BEARING BUG — fix landed in `d7ed8d2d`, **left OPEN**, acceptance needs a playtest replay |
 | 2 | private issue #2 | B-100 | CORRECTNESS DEBT — *excessive* truck/camera penetration, not any penetration |
 | 3 | private issue #3 | (no dedicated entry) | CORRECTNESS DEBT — missing tower section, Dam |
 | 4 | private issue #4 | (no dedicated entry) | CORRECTNESS DEBT — gun / ground arrow vanish near the security door, Dam |
 | 5 | private issue #5 | (no dedicated entry) | CORRECTNESS DEBT — explosion rendering regression, Dam |
 
 Gitea does **not** replace this file; both are kept. No issue was filed for the
-alarm / security-door panel pop-in — the owner compared it against the
+alarm / security-door panel pop-in — a playtest compared it against the
 cartridge and closed it as Rare's behaviour, and filing it would invite someone
 to re-investigate a closed question.
 
 ### B-102 — B-100 does NOT reproduce on the default seed, and at HEAD it does not reproduce at all: camera, projection, shot duration and truck path all match the cartridge exactly. 2026-09-08
 
-**The reproduction in the brief is wrong, and that is the first thing to fix.**
-The round was told "the truck camera is what you get with the DEFAULT seed —
+**The reproduction procedure in the task specification is wrong, and that is the first thing to fix.**
+The task specification stated "the truck camera is what you get with the DEFAULT seed —
 confirm that yourself". Confirmed, and it is false. Dam's setup declares six
 `FixedCam` records (`assets/obseg/setup/UsetupdamZ.c:1171-1183`) and
 `bondview_r.c:357` picks one with `randomGetNext() % 6`. The **default** boot
@@ -27037,9 +27060,9 @@ approaches is object prop **279**, the green truck, driving its own path. So
 stage list to trace is the truck's transform and the shot's duration, not the
 camera path.
 
-**Both hypotheses in the brief are REFUTED by measurement.**
+**Both hypotheses in the task specification are REFUTED by measurement.**
 
-*The near plane.* The brief proposed that Dam's intro runs at near 30 (the
+*The near plane.* The task specification proposed that Dam's intro runs at near 30 (the
 `DAM + ENVIRONMENTDATA_CINEMA` row, `bgfog.c:185`) against gameplay's near 5,
 and that a too-near near plane clips less and exposes more interior. Measured
 on both sides, per frame: the cinematic uses **exactly two** projection states
@@ -27084,7 +27107,7 @@ this — is wrong. `src/game/bg.c` was reverted to `d7ed8d2d~1`, rebuilt, and th
 same three seed-4 frames captured: **byte-identical, sha256 for sha256, 2073615
 bytes each.** This shot does not touch the portal fix.
 
-**What is actually needed next: owner re-observation.** Everything measurable
+**What is actually needed next: playtest re-observation.** Everything measurable
 agrees with the cartridge, so either the report predates something else that
 has since landed, or it was made under a setting this round did not reproduce
 (screen size, control style, or a real-time-paced play session rather than an
@@ -27133,17 +27156,17 @@ the missing tower section, the gun / ground-arrow disappearance near the
 security door, and the explosion rendering regression. This round changed no
 rendering behaviour at all.
 
-### B-099 — CLOSED 2026-09-08, owner acceptance on replay.
+### B-099 — CLOSED 2026-09-08, acceptance on playtest replay.
 
-The owner replayed the dry-side Dam intro on a build carrying `d7ed8d2d` and
+A playtest replay of the dry-side Dam intro on a build carrying `d7ed8d2d`
 confirms the dam face renders. The fix — a portal polygon shared by several
 table records being byte-swapped once PER RECORD, so an even reference count
 put it back in big-endian — is accepted. Gitea issue #1 closed with the
 acceptance recorded there.
 
-### B-100 — FAILED owner acceptance, and this round's near-plane candidate is MEASURED AND REFUTED. 2026-09-08
+### B-100 — FAILED playtest acceptance, and this round's near-plane candidate is MEASURED AND REFUTED. 2026-09-08
 
-**The owner's replay says the defect is plainly still there**, and it came with
+**The playtest replay says the defect is plainly still there**, and it came with
 a SECOND, INDEPENDENT witness found during ordinary play:
 
 * **Witness A, cinematic.** Dam truck intro (`SL_RNG_SEED=...0004`/`...0005`):
@@ -27161,7 +27184,7 @@ NOT duplicated.
 **Two claims from the previous round are WITHDRAWN.** "Near-plane hypothesis
 refuted" only ever established that the game-side configured znear VALUE agrees
 with the ROM; equal znear does not establish equal CONSUMED clipping. And
-"none in the B-100 chain" is withdrawn outright — the owner's replay is a
+"none in the B-100 chain" is withdrawn outright — the playtest replay is a
 consumed-output mismatch. What stands, and what this round built on rather than
 re-litigating, is that camera position, truck world transform, projection
 parameters and shot timing all agree with the cartridge.
@@ -27238,8 +27261,8 @@ before.
 
 ### B-103 — Witness B has no recorded reproduction, and that is now the blocker. 2026-09-08
 
-The owner's close-wall witness cannot presently be replayed by anyone but the
-owner. Every recorded stream in `tools/trace/inputs` is a traversal; none of
+The playtest close-wall witness cannot presently be replayed outside manual
+play. Every recorded stream in `tools/trace/inputs` is a traversal; none of
 them presses the camera against a surface, which is why the gameplay census
 above is flat zero and why this round could only test Witness A.
 
@@ -27248,7 +27271,7 @@ frame-matched A/B, and no way to tell a fix from a coincidence — the same hole
 `introcam.py` was written to close for the seeded intro shots.
 
 **Wanted next, and it is one thing:** a short recorded input stream on `dam`
-that walks the player into the tower/wall the owner describes and holds there.
+that walks the player into the tower/wall the playtest report describes and holds there.
 `tools/trace/` already records; the missing piece is a stream that visits the
 place. With it, `romshot.py` gives the cartridge side for free and the census
 above says immediately whether near-plane clipping is even in the frame.
@@ -27268,11 +27291,11 @@ tower section (Gitea #3), the gun / ground-arrow disappearance near the
 security door (#4), and the explosion rendering regression (#5). This round
 demonstrated no mechanism, so it unified nothing and closed none of them.
 
-### B-104 — the recorder cannot record the way the owner plays: native keyboard and mouse never reached the input stream, so both Dam seam witnesses are non-empty and inert. 2026-09-08
+### B-104 — the recorder cannot record the way the build is played by hand: native keyboard and mouse never reached the input stream, so both Dam seam witnesses are non-empty and inert. 2026-09-08
 
 **B-103 asked for a recorded stream that walks the player into the wall. Three
-were delivered and none of them contains a step.** This is not an owner error —
-they played the level, twice, deliberately, and the second attempt was recorded
+were delivered and none of them contains a step.** This is not a playtest error —
+the level was played, twice, deliberately, and the second attempt was recorded
 specifically to be a better instrument than the first.
 
 Decoded straight out of the files (`byte0` stick y, `byte1` stick x, `byte2/3`
@@ -27287,8 +27310,8 @@ buttons, per the format note at `sl_ultra_shim.c:1276`):
 **Zero stick deflection in every record of all three, and no d-pad in any of
 them.** With no stick and no d-pad there is no movement and no turn under any
 control style, so the streams cannot express the thing they were recorded to
-capture. `dam-seam-01` is the sharper evidence of the two: the owner was asked
-to approach and back off several times, tried harder, and the file came out
+capture. `dam-seam-01` is the sharper evidence of the two: it was recorded to
+approach and back off several times, with more deliberate play, and the file came out
 *more* inert than the first — 8 button records in 3021.
 
 **Confirmed by replay, not only by decode.** `SL_CAM_DBG=1` over
@@ -27299,7 +27322,7 @@ end of the run — ~5000 pumped frames, about 42 s — the player is at
 **The positive control is the same file with four bytes per record changed.**
 Injecting `stick_y = +70` from record 1250 (nothing else altered) walks Bond off
 the spawn, down the causeway and into the rock face. So the replay path applies
-movement correctly and the instrument detects it; the owner's stream simply has
+movement correctly and the instrument detects it; the playtest stream simply has
 none. This control matters because an all-zero census is otherwise
 indistinguishable from a probe that never ran, and this document has been
 burned by that three times.
@@ -27316,8 +27339,8 @@ recorded them.
 
 A gamepad session records fine, because the pad *is* the stick. That is why
 the 119 emulator streams and `dam-sweep-*` are unaffected, and it is why this
-stayed invisible: the defect only bites the input device the owner actually
-uses.
+stayed invisible: the defect only bites the input device manual playtests
+actually use.
 
 **This is the worst shape a witness can have.** The file is present, non-empty,
 the right size, replays without error and reproduces nothing. It passes every
@@ -27335,7 +27358,7 @@ of the keys replays as itself rather than as the last active frame repeated.
 
 `SL_INPUT=<p>` picks up `<p>.move` automatically when it exists, and
 `sl_main.c` writes `<run>/input.move` beside `<run>/input` on every captured
-session, so the owner sets nothing. A missing sidecar is silent and inert; only
+session, so the player sets nothing. A missing sidecar is silent and inert; only
 an explicitly named `SL_MOVE` that cannot be opened is fatal.
 
 **Measured, both halves:**
@@ -27345,7 +27368,7 @@ an explicitly named `SL_MOVE` that cannot be opened is fatal.
   sha256, 103680750 bytes each side** — non-zero, so not the two-empty-files
   false pass recorded elsewhere in this document.
 * **The replay half works.** A synthetic sidecar carrying `walk=+70` from
-  retrace 1250, over the owner's own `dam-seam-00` stream, walks Bond down the
+  retrace 1250, over the playtest's own `dam-seam-00` stream, walks Bond down the
   causeway and into the tunnel.
 * **The record half round-trips.** Replaying with `SL_MOVE_RECORD` set
   reproduces the input sidecar **byte-identically over all 3545 records**; the
@@ -27361,12 +27384,12 @@ from anything above. `SL_NEARWIT` was **not** run against these streams: the
 census would have been flat zero and would have meant only that Bond stood at
 the spawn. The near-plane thread stays parked exactly where B-100 left it.
 
-**Wanted next, and it is still one thing:** the owner re-records the approach on
-a build carrying this change. `<run>/input` and `<run>/input.move` are both
+**Wanted next, and it is still one thing:** a playtest re-recording of the approach
+on a build carrying this change. `<run>/input` and `<run>/input.move` are both
 written automatically; both are needed, and the `.move` is the half that has
 never existed before.
 
-### B-104 addendum — the three streams are removed, the seed now travels with the stream, and two claims from the round brief are corrected. 2026-09-08
+### B-104 addendum — the three streams are removed, the seed now travels with the stream, and two claims from the round's task specification are corrected. 2026-09-08
 
 **The three void streams are NOT in the tree.** `dam-seam-00`, `dam-seam-01`
 and `dam-truck-00` were committed earlier this round as evidence and have been
@@ -27452,9 +27475,9 @@ produces RNG state `00000000000f4241` on the pre-change build and
 `00000000000f4241` on the post-change build — identical value, wording only.
 `tools/windows/test.ps1` passes.
 
-### B-105 — the fix is ACCEPTED IN THE OWNER'S HANDS: two sessions recorded with movement. One of them terminates early on replay. 2026-09-08
+### B-105 — the fix is ACCEPTED IN MANUAL PLAY: two sessions recorded with movement. One of them terminates early on replay. 2026-09-08
 
-The owner re-recorded twice during this round, on a build carrying the
+Two playtest re-recordings were made during this round, on a build carrying the
 sidecar. Both carry real movement, and the pad half of both is as inert as ever
 - which is the fix working exactly as described:
 
@@ -27496,8 +27519,8 @@ directories by frame count. They are controller-derived, not ROM-derived.
 
 ### B-106 — the gun/ground-marking A/B: the viewmodel's lists are IDENTIFIED, and the mark table that the A/B rests on is MEASURED to stop covering the frame. No cause is claimed. 2026-09-08
 
-Round input: the owner's marks run `20260908-205947-lvl33`, eight F8 marks on
-Dam, classified by the owner as **gun + ground-marking disappear together, and
+Round input: the playtest marks run `20260908-205947-lvl33`, eight F8 marks on
+Dam, classified in the playtest report as **gun + ground-marking disappear together, and
 it depends on where you stand**. Primary pair `mark-006` GOOD / `mark-005` BAD,
 both aimed at the same truck wheel, secondary controls `003`/`007` (visible)
 and `004`/`008` (absent).
@@ -27518,7 +27541,7 @@ model part. A probe over the words that function itself writes
     05004660 05004528 05004390 05004158 05005188 05005398 05005ab0 05005c78
     05005e00 05005b68 05005fc0
 
-That is byte-for-byte the set at `ord=29..47` of the owner's **mark-007**, in
+That is byte-for-byte the set at `ord=29..47` of the playtest **mark-007**, in
 the same order. So an F8 record CAN name the viewmodel, and mark-007 shows it
 present with the gun on screen. This is what the record was previously unable
 to answer, and it is the round's one solid new fact.
@@ -27560,7 +27583,7 @@ Dam's room primaries and secondaries all sit below `0x20013000`, per the
 marks' own room tables - and it is not reproducible here: 400 consecutive
 frames of Dam gameplay measured `maxdepth=1` and `branch=0`, i.e. a completely
 flat frame, with the viewmodel's nineteen branches at depth 0 like everything
-else. Whatever makes the owner's frames nest is a function of somewhere the
+else. Whatever makes the playtest frames nest is a function of somewhere the
 synthetic input does not reach.
 
 **4. TWO LATENT INTERPRETER DEFECTS FOUND, NEITHER DEMONSTRATED TO FIRE.**
@@ -27585,7 +27608,7 @@ cause and the fix is already written above.
 **UPDATE 2026-09-08 - the `branch=0, maxdepth=1` population was the wrong
 one, and the margin on the cap is now a number.** That reading came from a
 scene with no characters in it. Replaying `dam-seam-02.input` at room 111 -
-the owner's own scene - measures `branch=6, maxdepth=7, refused=0` on 232 of
+the reported scene itself - measures `branch=6, maxdepth=7, refused=0` on 232 of
 599 frames, and an F8 mark on one of those frames reports **max-call-level 1
 against max-walk-depth 7**. The arithmetic is exact and it is the whole
 finding: 1 + 6 = 7, so every level of walker recursion past the first is a
@@ -27607,7 +27630,7 @@ environment variable.
 **5. TWO INSTRUMENTS WERE LYING, AND ARE FIXED.**
 
   * `sl_cam`'s `pos=` is `player->pos`, an intro-camera field. Over the
-    owner's 12255-frame session it holds 133 distinct values, **all of them
+    playtest's 12255-frame session it holds 133 distinct values, **all of them
     from before frame 531**, and reports `16659.31,480.98,19463.86` unchanged
     at all eight marks, whose eyes are hundreds of units apart. Anyone
     locating a player from that line gets a confident wrong answer. An
@@ -27642,7 +27665,7 @@ Dam that is a chain of tail transfers into the game heap, and everything after
 the first one - props, characters, room geometry, the first-person viewmodel -
 executed underneath and could not appear.
 
-MEASURED on a `dam-seam-02` replay at room 111, the owner's scene: 136
+MEASURED on a `dam-seam-02` replay at room 111, the reported scene: 136
 submissions, of which **41 were at walker depth 1 and 95 below it**, and
 **2311 of the frame's 3517 triangles** ran under the 95. Room 113's primary
 geometry and 62 segment-5 lists are among them. So an absence read off that
@@ -27661,19 +27684,19 @@ Parked, not done: the report is per-submission, not per-fragment, and a
 segment-5 list is still named by its segment rather than by the object it
 draws. Neither is wanted yet.
 
-## B-107 - Dam water texture/appearance flicker (PARKED 2026-09-09 - CORRECTNESS DEBT, OWNER-DEFERRED)
+## B-107 - Dam water texture/appearance flicker (PARKED 2026-09-09 - CORRECTNESS DEBT, DEFERRED)
 
-STATUS: PARKED. Classification CORRECTNESS DEBT - OWNER-DEFERRED. Gitea #11.
+STATUS: PARKED. Classification CORRECTNESS DEBT - DEFERRED. Gitea #11.
 NOT closed as fixed, and the defect is NOT claimed to have disappeared
-permanently. Owner decision 2026-09-09: removed from the single-player
+permanently. Decision 2026-09-09: removed from the single-player
 coverage sprint's acceptance critical path. If it becomes frequent or
 reproducible on a later mission, REUSE the witness and issue below rather
 than starting over.
 
-OWNER ACCEPTANCE RESULT, 2026-09-09, after `fb2d812f` was built and replayed
+PLAYTEST ACCEPTANCE RESULT, 2026-09-09, after `fb2d812f` was built and replayed
 extensively: the obvious texture-state switch did NOT reliably reproduce.
-Occasional minor flicker may remain. The owner considers it too infrequent
-and too minor to chase now and does not want engineering time spent on it.
+Occasional minor flicker may remain. It is judged too infrequent and too
+minor to chase now, and no engineering time is to be spent on it.
 
 CAUTION ON READING THIS ENTRY. Two different claims below must not be
 conflated. (1) The six-mark CORRELATION between the nested `01000000` call
@@ -27681,12 +27704,12 @@ and the untextured condition was never, on its own, promoted to a
 demonstrated causal mechanism. (2) Separately and independently, a
 source-level mechanism WAS measured - the bitfield-layout defect and its
 4000-tick before/after numbers - and a fix for it landed in `fb2d812f`. The
-residual flicker the owner still sees is NOT explained by either, and the
+residual flicker still seen in play is NOT explained by either, and the
 texture re-decode churn recorded at the end of this entry is an
 uninvestigated candidate.
 
 The same Dam water surface changed appearance as the player moved: sometimes
-textured, sometimes a flat vertex-coloured sheet. Owner run
+textured, sometimes a flat vertex-coloured sheet. Playtest run
 `20260909-084608-lvl33`, primary A/B pair mark-005 (bad) / mark-006 (good),
 controls mark-001 (bad) and 002/003/004 (good).
 
@@ -27773,10 +27796,10 @@ The earlier note here that no `GITEA_TOKEN` was available was a true
 observation with a wrong conclusion. The token was correctly set at User scope
 the whole time; Windows delivers setx/GUI environment changes only to
 processes started AFTER the change, so the long-running editor handed every
-shell and subagent a stale environment block. Resolved by reading the store
+shell and child process a stale environment block. Resolved by reading the store
 directly instead of relying on inheritance - `tools/windows/gitea-token.ps1`.
 
-WITNESS, retained: owner run `20260909-084608-lvl33` under the user's
+WITNESS, retained: playtest run `20260909-084608-lvl33` under the user's
 `.sightline/runs` directory, strongest A/B mark-005 (BAD) against mark-006
 (GOOD), controls mark-001 (BAD) and mark-002/003/004 (GOOD). These captures
 are the reason a later investigation would not need to start from nothing.
@@ -27785,7 +27808,7 @@ are the reason a later investigation would not need to start from nothing.
 
 ## B-100 / Gitea #2 — the close-wall see-through wedges ARE the near clip, and the near clip is FAITHFUL. Near-Z is CLOSED. 2026-09-09
 
-Owner run `20260909-100313-lvl33` (Dam - `LEVELID_DAM` is 33), 18 marks with
+Playtest run `20260909-100313-lvl33` (Dam - `LEVELID_DAM` is 33), 18 marks with
 bitmaps. This round did not produce a production fix, and the reason is a
 measurement, not a shortfall: the mechanism was identified exactly and then
 shown to be what the cartridge does too.
@@ -27873,7 +27896,7 @@ Two independent lines, one from the picture and one from the mechanism.
    filter artefact. mark-001, classified SOLID, carries a 2/3 triangle too
    (seq 772, `w = -13.096`).
 3. `nearwit_note` returns on `nbehind != 0` before classifying. Every one of
-   the owner's close-wall witnesses is in that BEHIND bucket - a wall running
+   the playtest close-wall witnesses is in that BEHIND bucket - a wall running
    past the camera necessarily has a vertex behind the eye - so the all-zero
    INSIDE census over 3007 Dam frames was measuring a population the bug is
    not in. It was not the exoneration it read as, in either direction.
@@ -27903,16 +27926,16 @@ game-side question, and it needs a paired cartridge witness at a comparable
 pose, which run 20260909-100313-lvl33 cannot supply. B-103's ask - a recorded
 stream that walks the player into a wall - is still the blocker for that.
 
-WITNESS, retained: owner run `20260909-100313-lvl33`, marks 003, 004 and 011
+WITNESS, retained: playtest run `20260909-100313-lvl33`, marks 003, 004 and 011
 with their bitmaps. The fit above is reproducible from the mark text alone.
 
-## 2026-09-11 - Dam owner crash (FIXED) and Runway first pass
+## 2026-09-11 - Dam playtest crash (FIXED) and Runway first pass
 
-The owner's Dam replay crash (run 20260911-000454-lvl33) carried a complete
+The playtest Dam replay crash (run 20260911-000454-lvl33) carried a complete
 Win32 report and resolved cleanly against the build's own symbol table:
 lightfixture.c parsed native-word-order room display lists as big-endian and
 handed darken_vertex_in_room a below-heap vertex pointer when AI gunfire broke
-a lamp. Fixed as 94f8158b (Gitea #13, open pending owner replay). Note for the
+a lamp. Fixed as 94f8158b (Gitea #13, open pending playtest replay). Note for the
 next such report: crash.txt + `nm` on the exe was enough; no reproduction was
 needed, and the gbi immediate opcodes being NEGATIVE ints (G_TRI1 -65, G_TRI4
 -79) is a trap for any unsigned native opcode compare.
@@ -27933,12 +27956,12 @@ boot shots (scratchpad rw1/rw2/rw4 of this session, reproducible on any boot):
   #5's effects-texture class by construction - needs its own classification).
 
 Objectives/completion remain untested - they need input, which the no-replay
-discipline forbids; that is the natural next Runway round with an owner run
+discipline forbids; that is the natural next Runway round with a playtest run
 or the recorder (#7).
 
 ## 2026-09-11 - Runway: objective props drew crisp at the far plane (FIXED)
 
-Owner marks 20260911-065439-lvl35: gun emplacements visible untinted at
+Playtest marks 20260911-065439-lvl35: gun emplacements visible untinted at
 10,600-14,400 of a 15,000 far plane. Classified against all four candidate
 mechanisms; the game side (Runway fog row 6000/8000/800, visrange fade,
 fogcull at measured cutoff 14,387) is live and correct and the DL carries the
@@ -27961,7 +27984,7 @@ headless surface 400 PASS. No functional blocker found in what was
 exercised. NOT completed under scripting: the objectives/interaction chain
 (watch objectives page, safe key, building plans, comms hub, completion,
 debrief, progression) - blind key injection cannot navigate a level this
-large reliably; that chain awaits the owner's hands or the recorder (#7).
+large reliably; that chain awaits manual play or the recorder (#7).
 
 THE PERIMETER "STATIC" (B-023's residual look) IS NOT A DATA BUG. Measured
 end-to-end on the treeline canopy, texture 2228 (surface's IA8 64x64,
@@ -27995,7 +28018,7 @@ needs SL_FOG=0.
 
 ## 2026-09-11 - Surface 1 exterior marks: measured faithful, no fix shipped
 
-Owner run 20260911-192055-lvl36, five marks (1 near wall, 2 wall corner,
+Playtest run 20260911-192055-lvl36, five marks (1 near wall, 2 wall corner,
 3/4 the A/B pair, 5 the fuel dome). Worked all three reported defects to a
 measured conclusion; nothing shipped because nothing measured as a native
 divergence. Full evidence in Gitea #10 comment 113.
@@ -28020,7 +28043,7 @@ Surface assets shown at the 960x720 window (3x the N64 320x240 framebuffer),
 which reveals 32x32 textures more starkly per pixel than hardware. The only
 levers to make them LESS blocky than the cartridge - texture upscaling (the
 roadmap subsystem) or a deliberate trilinear/anisotropic divergence - are on
-this round's forbidden-tuning list and need an owner ruling, not a bug fix.
+this round's forbidden-tuning list and need a design ruling, not a bug fix.
 
 A GL mip-consumption change (honour BB LOD-chain requests, trilinear min)
 was written and measured INERT on Surface's magnified walls, then reverted.
@@ -28031,9 +28054,9 @@ Instrument note: SL_MODE_DBG-style want/primlod capture settles "is this the
 water mip-lerp shape" in one teleported run; SL_TRI_ID id colours are fogged
 by default now (use SL_FOG=0).
 
-## 2026-09-11 - B-116: native world-texture enhancement layer (owner-ruled feature)
+## 2026-09-11 - B-116: native world-texture enhancement layer (design-ruled feature)
 
-Owner overruled comment-113's "faithful low-res is acceptable": Sightline
+A design ruling overruled comment-113's "faithful low-res is acceptable": Sightline
 now intentionally enhances low-res world textures. Shipped 6f7293df,
 Gitea #15 (cross-ref #10 comment 115). NOT a fidelity fix - a deliberate,
 SL_TEX_ENHANCE-toggleable presentation divergence.
@@ -28070,7 +28093,7 @@ water exclusion and S/T preservation structural rather than tuned.
 
 CORRECTION to this file's two prior Surface entries (the "measured
 faithful" conclusion and the "byte-proven presentation" framing): the
-owner's ROM captures show the Surface perimeter as individually
+playtest ROM captures show the Surface perimeter as individually
 recognizable snow-dusted conifers; our render showed noise. Both prior
 chains were right about the BYTES and wrong about the CONSUMPTION - the
 false link was "S/T interpretation correct", judged against this
@@ -28107,12 +28130,12 @@ follows its own F3; palettes live inside their own buffers at +1400).
 ## 2026-09-12 - B-118: the trees were in TILE 1 - the LOD_FRACTION
 ## detail-blend was dismissed as "a mip chain with no second level"
 
-STATUS CORRECTION: the owner rejected 474f37db ("nothing seems to be
-resolved") and was right. B-117's shift verdict stands as tile semantics
-but my "conifers" claim is WITHDRAWN - the post-shift wall was noise at
+STATUS CORRECTION: 474f37db was rejected in playtest ("nothing seems to be
+resolved"), correctly. B-117's shift verdict stands as tile semantics
+but its "conifers" claim is WITHDRAWN - the post-shift wall was noise at
 4x frequency, pattern-matched as forest. Lesson repeated from B-117 and
 sharpened: pattern-matching a capture against an expectation is not a
-measurement; only the ROM oracle or the owner's replay is.
+measurement; only the ROM oracle or a playtest replay is.
 
 Fresh witnesses 20260912-051649-lvl36. Mark-001 shift A/B: ON=fine
 streak noise, OFF=blob noise - content dominates. Raw-bytes re-reads
@@ -28133,20 +28156,20 @@ switch. Post-fix: mark-001 renders recognizable snow-dusted conifers;
 marks 003/004 both render the pop section consistently (blank band
 gone); near-wall grain is the authored detail at LOD~0. Dome (mark-002)
 UNCHANGED - residual stays as walked (#10 c117). Dam/facility controls
-sane; water path untouched by construction; liveness x3 PASS. Owner
-replay is final acceptance.
+sane; water path untouched by construction; liveness x3 PASS. A manual
+playtest is final acceptance.
 
 ## 2026-09-12 - B-119: LOD_FRACTION is per pixel, the alpha is the
 ## strip's own, and the c=13 family has a SECOND authored shape
 
-Round input, owner triage of ae77f478: trees improving but not fixed -
+Round input, playtest triage of ae77f478: trees improving but not fixed -
 LOD "switching at incorrect times", tree tops "cardboard" (should be
 sky), dome still off, treeline sections still undraw. Fresh witnesses
 20260912-055925-lvl36 marks 1-6.
 
 What was wrong with ae77f478's estimator, numerically: (1) per-TRIANGLE
 constant where the RDP computes LOD_FRACTION per PIXEL - pops at every
-triangle edge, the owner's "clear at one point, a mess at others";
+triangle edge, the playtest report's "clear at one point, a mess at others";
 (2) measured in TILE-0 texels - the x4-shifted DETAIL - where the RDP's
 LOD is the MAP's (tile 1) density: 4x hot; (3) stale f inherited when
 all edge pairs degenerated; (4) 1/32 quantization stepped visibly.
@@ -28164,7 +28187,7 @@ between tree tips, mark 3). The strip gets a box-generated GL mip
 pyramid + trilinear (authored 64x17 -> 32x9 can't be GL levels). Floor
 = the FA minlevel byte (gbi.h gsDPSetPrimColor), not invented.
 
-THE UNDRAW WAS NEVER CULLING (owner's mark-005 record is the witness):
+THE UNDRAW WAS NEVER CULLING (the playtest mark-005 record is the witness):
 wall tris of room 10's secondary DL contain the centre pixel, all
 vertices in front, CCW - and the pixel is background at depth 1.0.
 ae77f478's mode-8 ALPHA was MODULATE(unit-0 texture x vertex): the gap
@@ -28199,23 +28222,23 @@ fmt=5 32x64 material 200a84e8). Dam water untouched structurally
 accepted B-107/108 pose - darker than the 2026-09-10 witness image
 only because that image predates a05a9f14 (fog stays enabled) and
 965b87cb (wrap period). SL_CC_LODLERP=0 restores ae77f478 wholesale.
-Liveness x3 PASS. Owner replay is final acceptance.
+Liveness x3 PASS. A manual playtest is final acceptance.
 
 ## 2026-09-12 - B-121: the far treeline row overlapped the near row -
 ## painter's order over a z-write-off XLU class, fixed by consuming depth
 
-Owner acceptance recorded first (Gitea #10 comment 123): the treeline
+Playtest acceptance recorded first (Gitea #10 comment 123): the treeline
 LOOK/RESOLUTION strand of B-118/B-119 is closed ("the resolution and
 look of the treeline itself looks good").
 
-The residual, and the owner's OWN two corrections of it, on record:
+The residual, and the playtest report's OWN two corrections of it, on record:
 first "sections of it unload when I stand in certain places", then
 "i'm actually wrong. the treeline doesn't unload. It's the treeline in
 the background that has a wrong zplane and overlaps the treeline in
 front of it." Nothing unloads; the FAR row draws OVER the near row.
 
 Why an exhaustive reproduction of "unload" found nothing: every mark
-faithfully reproduced (owner-BMP overlay confirmed) showed a CONTINUOUS
+faithfully reproduced (playtest-BMP overlay confirmed) showed a CONTINUOUS
 treeline - because the defect is wrong LAYER ORDER, not absence. Once
 re-framed, the fresh witnesses 20260912-184156 marks 1-3 show it
 plainly (mark 2: far conifer tips drawn in front of the near snow berm).
@@ -28249,19 +28272,19 @@ correctly. Dam water/mountains/sky intact at the accepted B-107/108
 pose (c=14 untouched). Facility boots. Liveness: surface many x240,
 dam 700, facility 450 - all survived.
 
-TRADE-OFF disclosed to owner: at the accepted 055925 marks the same
+TRADE-OFF disclosed for review: at the accepted 055925 marks the same
 correct occlusion applies, so the treeline reads slightly shorter/less
 layered than the accepted capture (which partly relied on the buggy
 overlap to look tall). The tree resolution/detail/silhouette is
-unchanged; only cross-row occlusion changed. Owner replay is final -
+unchanged; only cross-row occlusion changed. A manual playtest is final -
 SL_TREE_ZWRITE=0 restores the prior behaviour if preferred.
 
 ## 2026-09-12 - B-122: the dome is drawn TWICE, coplanar - dark then
 ## white - and GL_LESS let the FIRST pass keep every equal-depth pixel
 
-Housekeeping first: owner acceptance of edbfe006 recorded (#10 c125,
+Housekeeping first: playtest acceptance of edbfe006 recorded (#10 c125,
 "That resolved it"); bullet-tracer regression filed as issue #16
-(owner-sequenced AFTER the dome; suspects + kill-switch triage plan on
+(sequenced AFTER the dome; suspects + kill-switch triage plan on
 record, no investigation this round).
 
 Fresh dome witnesses 20260912-200311 marks 1-4 (all room 7; 1-3 one
@@ -28303,13 +28326,13 @@ bunker grid walls correct (no white-out regression), snow ground
 textured, treeline overlap fix HOLDS at 184156-m2 with the accepted
 look intact, Dam water/mountains/sky identical at the accepted pose,
 Facility boots. Liveness: surface 420, dam 420, facility 450 - PASS.
-Owner replay is final acceptance.
+A manual playtest is final acceptance.
 
 ## 2026-09-12 - B-123: the depth buffer out-resolved the cartridge -
 ## 24-bit split authored coplanar ties that 10-bit screen-Z cannot express
 
-Owner on ce53f12f: "Dome looks a little better... still not acceptable
-yet." Fresh witnesses 20260912-203549 marks 1/2 (mark 3 = the owner's
+Playtest report on ce53f12f: "Dome looks a little better... still not acceptable
+yet." Fresh witnesses 20260912-203549 marks 1/2 (mark 3 = the playtest
 tracer witness, attached to issue #16 c129 without investigation:
 two solid gold rectangular slabs by the muzzle path, pose banked).
 
@@ -28317,7 +28340,7 @@ What still differed (diagnosis before code): residual checker (i) plus
 scattered dark distribution (iii) - clean half-quad TRIANGLES among the
 dark shapes, one at the crown under the crosshair.
 
-ZMODE checked FIRST per the round brief: both passes om_l c8102078 -
+ZMODE checked FIRST per the round's prescribed order: both passes om_l c8102078 -
 zmode OPA both, no DECAL requested. Decal semantics are not the fix.
 
 The measured mechanism, completing B-122's: the two passes' clip rows
@@ -28344,12 +28367,12 @@ white marble with the slit assembly as one coherent arc + open sky
 slit; 200311 mark 1 angle consistent. Protections: treeline overlap fix
 holds at 184156-m2 with the accepted look; Dam water identical at the
 accepted pose; Runway boots and renders; Facility boots. Liveness
-surface/dam/facility/runway 420 - PASS. Owner replay is final.
+surface/dam/facility/runway 420 - PASS. A manual playtest is final.
 
 ## 2026-09-12 - B-124: the dome's two skins are resolved by COARSE DEPTH,
 ## and B-123's 16-bit request was inert - an FBO makes the quantization real
 
-Owner rejected b9c95a11 as complete (dome "still not acceptable"; the
+b9c95a11 was rejected in playtest as complete (dome "still not acceptable"; the
 "residual checker is fixed" claim is WITHDRAWN). Fresh witnesses
 20260912-222555 marks 1-8: 1-2 outside (dark-patch aim / white aim),
 3-5 inside looking up, 6-8 tracer attempts from the deck (banked to
@@ -28399,12 +28422,12 @@ cull the inside away). Protections under global 16-bit depth: treeline
 clean; Facility boots. Liveness dam/facility/surface/runway 420 PASS.
 NOTE: run directory 20260912-055925 no longer exists on disk, so the
 old accepted-look mark could not be re-shot; 184156-m2 stands as the
-accepted-treeline control. Owner replay is final.
+accepted-treeline control. A manual playtest is final.
 
 ## 2026-09-13 - B-125: the dome's two skins are NOT ties at any depth width -
 ## the RDP compare's TOLERANCE resolves them, emulated for authored redraws
 
-Owner rejected 33a21f02 as complete: "mostly white, BUT weird dark
+33a21f02 was rejected in playtest as complete: "mostly white, BUT weird dark
 diagonal/hash markings across the white shell, resembling residual z-plane
 fighting". Fresh witness 20260912-230216 mark-001 (room 7, eye -6500.434
 490.775 -21601.814, theta 327.300 verta 6.950; centre 80 82 83 at window
@@ -28436,8 +28459,8 @@ Q2 +4.52e-5, Q3 -1.94e-5, Q4 +2.75e-5 window units = +1.8, +3.0, -1.3,
 +1.8 sixteen-bit buckets. Not sub-bucket. The difference is a pyramid
 over each quad (zero on its four edges), so 16 bits gave solid dark cores
 where |D| > 1 bucket and a lattice where |D| ~ 1 - plus GPU interpolation
-noise where D -> 0 near the edges. Fable's "16 bits makes them ties
-again" is CORRECTED: it made some pixels tie. No storage width can make
+noise where D -> 0 near the edges. The earlier "16 bits makes them ties
+again" claim is CORRECTED: it made some pixels tie. No storage width can make
 these ties; Case A stands, and the answer is a compare TOLERANCE.
 
 The RDP compare (reference behaviour; the corpus documents only the
@@ -28512,18 +28535,18 @@ eat nearer geometry), the dome's left flank white, the accepted treeline
 intact. Dam fly-in (water, sky, wall, jetty, towers; the mountains' blue
 specks are pre-existing, same in the B-124-era control) and Facility
 bottling room (walls, stairs, railings, floor) sane. Liveness surface/
-facility/dam 400 PASS. Owner replay is final.
+facility/dam 400 PASS. A manual playtest is final.
 
 Residual note: at the second exterior angle the slit region shows a
 small dark triangle with a lighter sliver beside it - the dark skin
 where the white one has no geometry, crisp now rather than dithered. If
-the owner's ROM view shows that edge differently, it is the next
+the ROM view in playtest shows that edge differently, it is the next
 witness; nothing here tuned it.
 
 ## 2026-09-13 - B-126: B-125's hardware-magnitude tolerance bled level-wide -
 ## the tolerance is now the re-triangulated quad's own tent difference
 
-Owner replay of 327fa80b: "a big fail. A lot of textures are
+Playtest replay of 327fa80b: "a big fail. A lot of textures are
 bleeding/zplane fighting with others in front of them" (run
 20260913-002517, marks 1-2). The marks' own records - which now carry a
 per-triangle redraw flag - named the mechanism directly. At mark 1 (room
@@ -28543,7 +28566,7 @@ The correction: the hardware magnitude is not imported at all.
   already drawn by this submission) is a PLAIN draw - its depths are
   bit-identical to the first pass's and GL_LEQUAL already gives the tie
   to the later pass. This is the road/sky/second-material case, and it
-  is exactly the pre-B-125 rendering the owner had accepted for them.
+  is exactly the pre-B-125 rendering already accepted in playtest for them.
 - Only a RE-TRIANGULATED quad gets a tolerance, and precisely its own:
   for the redraw triangle (p, q, r) whose edge (p, r) was never drawn, s
   is the vertex both drawn edges (p, q) and (q, r) had opposite them in
@@ -28568,7 +28591,7 @@ gores, the slit wedge where the white skin is absent; the deck view's
 railing in front of the dome, the treeline, the distant huts sane;
 222555-002's bunker, stairs and snow sane (the 200311 run has been
 pruned from disk since the previous round). Liveness surface/facility/
-dam 400 PASS. Owner replay is final.
+dam 400 PASS. A manual playtest is final.
 
 Lesson, recorded because it cost a replay: a tolerance that is right
 for the hardware's compare is wrong for an emulation that applies it to
@@ -28580,7 +28603,7 @@ number.
 ## 2026-09-13 - B-127: the redraw tolerance must be taken at the diagonals'
 ## TRUE crossing - the midpoint form under-covered a band per quad
 
-Owner replay of ad56b69a: "Dome is nearly good. However, there are a
+Playtest replay of ad56b69a: "Dome is nearly good. However, there are a
 couple areas ... that open rectangular patches in the dome depending on
 where I am standing and looking. The areas are very narrow, but it seems
 consistent" (run 20260913-054107 mark-001, room 7, eye -5914.693 443.976
@@ -28608,24 +28631,24 @@ the tolerance is the larger of that and the midpoint form, plus four
 this IS the tents' maximum difference over the quad (zero at the corners,
 extremal at the overlay's one interior vertex).
 
-Validated at the owner's exact held view (a temporary env-gated verta
+Validated at the playtest mark's exact held view (a temporary env-gated verta
 hold on the teleport, removed before commit): the dome fully white where
 the rectangle was; SL_Z_REDRAW=0 at the same view shows the gores (the
 view is right, the path is what resolves it). Shipping binary: the
 230216 dome mark coherent, the 002517 road mark clean; liveness
-surface/facility/dam 400 PASS. Owner replay is final.
+surface/facility/dam 400 PASS. A manual playtest is final.
 
-Owner also reconfirms: tracers still wrong (#16, untouched, next).
+The playtest also reconfirms: tracers still wrong (#16, untouched, next).
 
 ## 2026-09-13 - B-128: the bullet tracer's rainbow was a STALE tmem-map hit -
 ## a load is a range, a later load overwrites what it covers, and tile 1 of
 ## a mip chain is a level of its own block
 
-Owner: "Dome looks good. We can close that issue. Still have the weird
-bullet tracers ... shoot and it will happen every 2-3 shots on average"
-(#10 closed at c142; #16 the tracer). Reproduced by bounded scripted
+Playtest report: "Dome looks good. We can close that issue. Still have
+the weird bullet tracers ... shoot and it will happen every 2-3 shots on
+average" (#10 closed at c142; #16 the tracer). Reproduced by bounded scripted
 firing (a held F posted to the window queue, one F8) at the 20260912-
-222555 mark-006 pose; no owner mark needed.
+222555 mark-006 pose; no playtest mark needed.
 
 The beam (gunfire.c sub_GAME_7F061E18, item 5) is drawn with
 flareimage3: RGBA32 16x32, level=6, an authored mip chain, which
@@ -28677,21 +28700,21 @@ unresolved 99..674 -> 0 (50 remain: same-address pairs, plain modulate
 -> 0 (its chains were misses -> the same mip path either way). The
 B-127 dome and road poses, Dam and Facility: no visible change (A/B
 side by side; pixel diffs are idle-sway frame offsets). Liveness
-facility x3 PASS. Owner replay is final acceptance of #16.
+facility x3 PASS. A manual playtest is final acceptance of #16.
 
 ## 2026-09-13 - TOOLING: cheats and a starting weapon at direct boot
 ## (SL_CHEATS / SL_WEAPON, play.ps1 -Cheats / -Weapon), and a ROM oracle
 ## for whatever is in Bond's hand (tools/native/romweapon.py)
 
-Owner acceptance of B-128 first (#16 closed): "All seems fixed". New
+Acceptance of B-128 first (#16 closed): "All seems fixed". New playtest
 report in the same message: "The sniper rifle scope seems to be missing
-textures" (run 20260913-175358-lvl36 marks 1-2), and the direction: "You
-are going to need to use cheats to unlock weapons and load the sniper
-rifle at the beginning of the level. And build a tool around that so we
-can keep using it going forward."
+textures" (run 20260913-175358-lvl36 marks 1-2), and the requirement: use
+cheats to unlock weapons and load the sniper rifle at the beginning of
+the level, and build a tool around that so it can be reused going
+forward.
 
 The sniper rifle is minutes into Surface, so no direct boot could show
-it; replaying the owner's run reached frame 5815 and stopped (window
+it; replaying the playtest run reached frame 5815 and stopped (window
 closed by the stream), which sl_teleport.c already records as the wrong
 instrument. src/native/sl_cheat.c, on the teleport's pattern (native,
 polled from the shim, inert unless named, everything through the game's
@@ -28714,7 +28737,7 @@ own state and calls):
 
 play.ps1 -Cheats <list> -Weapon <name> hands the strings over on the same
 env table as -TeleportMark. Measured: -Level surface -Weapon sniper -Cheats
-allguns,maxammo -TeleportMark <mark-001> boots standing at the owner's
+allguns,maxammo -TeleportMark <mark-001> boots standing at the playtest
 mark with the sniper rifle up (8/392) in ~80 frames; without the teleport
 the request fires when Surface's intro ends (~frame 1000) and equips.
 
@@ -28734,7 +28757,7 @@ judged against.
 ## B-121 treeline override took the whole c=13 family, and every first-person
 ## weapon is in it
 
-Owner: "The sniper rifle scope seems to be missing textures" (marks
+Playtest report: "The sniper rifle scope seems to be missing textures" (marks
 20260913-175358 1-2). Reproduced at mark-001 with the new tool. Texture
 census at the pose: rejects 0, plain 0, every viewmodel texture decoded
 (SL_TEX_DUMP: the wood stock, the ribbed section, the I4 lens images). So
@@ -28767,16 +28790,16 @@ keeps its authored render mode. Measured: eyepiece interior 62 -> 18
 (cartridge 0..40); the rifle side by side with the oracle frame matches
 part for part; the B-127 dome and road poses unchanged (treeline still
 two-image, still z-written and alpha-tested); liveness facility x3 PASS.
-Gitea #17 filed with the fix; owner replay is final.
+Gitea #17 filed with the fix; a manual playtest is final.
 
 ## 2026-09-13 - OBSERVATION (Gitea #18, not a fix request): Surface 1 ground
 ## bullet decals appear only once the shot room has been visited
 
-Owner acceptance of B-129 first (#17 closed: "That looks fixed"). Then:
-"when i shoot the ground it seems like it only shows bullet decals when
-i was near the spot i shot ... If i walk over to that area and shoot, i
-get decals. If i return to the original spot and shoot the far spot
-again, i get decals now." Filed at the owner's direction, no fix.
+Acceptance of B-129 first (#17 closed: "That looks fixed"). Then the
+playtest report: "when i shoot the ground it seems like it only shows
+bullet decals when i was near the spot i shot ... If i walk over to
+that area and shoot, i get decals. If i return to the original spot and
+shoot the far spot again, i get decals now." Filed as an observation by direction, no fix.
 
 Lead from the source, UNMEASURED: a decal needs a BACKGROUND hit
 (chrprop.c:1155-1231 - explosionCreateBulletImpact under gotbghit; the
@@ -28792,11 +28815,11 @@ loading is lazier (a divergence) is the open question; the oracle is
 romweapon.py's direct-boot path with Z presses against the same shot
 natively. Nothing in the tree was changed for this.
 
-## 2026-09-13 - Surface 1 - SPRINT-ACCEPTED (owner decision 2026-09-13)
+## 2026-09-13 - Surface 1 - SPRINT-ACCEPTED (decision 2026-09-13)
 
 Surface 1 joins Dam, Facility and Runway as an accepted mission. The
 accepted fixes are PROTECTED - a later round that changes their behaviour
-must say so and get the owner's replay again:
+must say so and get an acceptance playtest again:
 
 - treeline appearance: the two-image LOD blend (B-119/B-121), the
   alpha-cutout of the canopy silhouettes, and the depth ordering of the
@@ -28807,7 +28830,7 @@ must say so and get the owner's replay again:
 - the sniper scope eyepiece (B-129: the treeline override scoped to the
   two-image blend, every weapon keeps its authored render mode).
 
-Gitea #10, #16 and #17 are CLOSED on owner acceptance.
+Gitea #10, #16 and #17 are CLOSED on playtest acceptance.
 
 Gitea #18 (ground bullet decals appear only once the shot room has been
 visited) stays OPEN BY DESIGN as a parked observation. It is NOT a fix
@@ -28815,11 +28838,11 @@ request and is not to be investigated during the Bunker 1 rounds unless
 Bunker shows the same behaviour becoming load-bearing for its mission
 path.
 
-## 2026-09-13 - Bunker 1 first pass (owner rescope: textures, models,
+## 2026-09-13 - Bunker 1 first pass (rescope: textures, models,
 ## triggers - not objectives), and the spawn-room quad the cartridge culls
 
 BUNKER 1 COVERAGE (windowed direct boots at Agent, cheats invincible +
-invisible per owner direction, bounded scripted pad input on SL_INPUT
+invisible per design direction, bounded scripted pad input on SL_INPUT
 streams for the walk from spawn, SL_TELEPORT_* for the per-room surveys,
 SL_SHOT windows with 360-degree sweeps at every stop, ~60 boots, zero
 crashes; headless bunker1/facility/surface 400 PASS). Guards and AI were
@@ -28857,7 +28880,7 @@ witness. A candidate rule - cull only triangles wholly inside the frustum
 (the population the in-line microcode path provably culls; the clipper
 overlay's source is not in the reference) - was built, removed the Bunker
 quad, and STILL turned the Surface dome's right half dark at the
-surviving owner mark (20260913-002517 mark-002): the dome's back-wound
+surviving playtest mark (20260913-002517 mark-002): the dome's back-wound
 half is fully on screen and the cartridge draws it. So the hardware's
 behaviour on those draws is not a constant screen-winding rule, the Dam
 massif marks have rotated out and cannot be re-measured, and the
@@ -28893,7 +28916,7 @@ non-Agent direct-boot completion would record as Agent. Parked.
 ## 2026-09-13 - Pause/equipment menu: one W or S tap and one wheel notch
 ## moved the selector several items (Gitea #20, LOAD-BEARING, fix shipped)
 
-OWNER-REPORTED on Bunker 1, level-independent. MEASURED windowed with
+REPORTED IN PLAYTEST on Bunker 1, level-independent. MEASURED windowed with
 posted WM_KEYDOWN/WM_KEYUP pairs (60 ms) and WM_MOUSEWHEEL notches, and a
 temporary per-poll probe (removed before commit) of the stick handed to
 the game and g_curWatchItemIndex - physical : pulses : selector steps at
@@ -28912,7 +28935,7 @@ once, latched by watch_stick_y_prev_active until the stick has sat inside
 +/-0xF for a frame (:1113-1120, :687-696, :1122-1129). 80 sits in the
 first band: 2 steps on the pulse's first frame, +1 per further frame.
 
-TWO LATCHES, NOT ONE - the coordinator's recon read the equipment page as
+TWO LATCHES, NOT ONE - an earlier recon read the equipment page as
 latching at 0x2E, and that is the OPTION pages' latch (sub_GAME_7F0A5088
 /50C4 :651-660, watch_stick_y_nav_ready, re-armed :1489-1503); the
 equipment page never reads it. The distinction matters because 0x2E..0x45
@@ -28945,27 +28968,27 @@ fixes this and its length could not. Also: the watch's page driver
 (sub_GAME_7F0A6A80) does not arm its latches until the watch has raised,
 ~3 s after Esc - a scripted page change sent earlier is silently lost.
 
-## 2026-09-13 - Bunker 1 - SPRINT-ACCEPTED under the owner's coverage scope
+## 2026-09-13 - Bunker 1 - SPRINT-ACCEPTED under the coverage scope
 
-Owner decision 2026-09-13 ("Bunker is good"): Bunker 1 joins Dam, Facility,
-Runway and Surface 1 as sprint-accepted, under the COVERAGE scope the
-owner set for it - textures, models, rooms, doors and triggers covered;
+Decision 2026-09-13 ("Bunker is good"): Bunker 1 joins Dam, Facility,
+Runway and Surface 1 as sprint-accepted, under the COVERAGE scope set
+for it - textures, models, rooms, doors and triggers covered;
 objectives, debrief and progression were NOT required for this pass and
 were not driven. AI was bypassed by the cheats and is not validated.
 
 Gitea #19 (the spawn-room quad the cartridge culls; cull-policy debt)
 REMAINS OPEN as parked correctness debt. It is not fixed and this
-acceptance does not claim it is. It is not to be pursued unless the owner
-explicitly asks; the measurement and the reverted candidate rule are on
+acceptance does not claim it is. It is not to be pursued unless explicitly
+requested; the measurement and the reverted candidate rule are on
 the issue and in the first-pass entry above.
 
-The Bunker pre-owner workflow is now the STANDARD for every further
+The Bunker pre-playtest workflow is now the STANDARD for every further
 single-player level: the local `native-level-coverage` procedure (a
 per-machine workflow file, argument = level alias; not part of the tracked
 tree). The procedure lives there, not here; a change to how levels are
 covered is a change to that file.
 
-## 2026-09-13 - Gitea #20 CLOSED on owner acceptance ("Pause menu is fixed.",
+## 2026-09-13 - Gitea #20 CLOSED on playtest acceptance ("Pause menu is fixed.",
 ## accepted at 76e9404e; comment id 159, state closed read back)
 
 ## 2026-09-13 - Silo first pass (native-level-coverage, alias `silo` -> stage
@@ -29011,7 +29034,7 @@ WALK (scripted SL_INPUT from the natural spawn, verified by eye= lines):
 same stream and seed reached different positions on different launches
 (f2639: (-128,5177) th 343 vs (-107,4742) th 292), so per-VI record
 consumption is wall-clock dependent and a leg beyond ~6 rooms cannot be
-planned - teleport is the instrument, as the skill says.
+planned - teleport is the instrument, as the procedure says.
 
 TELEPORT SWEEPS (SL_TELEPORT_* + a 180-record turn = 360+ degrees after
 the settle, shots every 12 frames, contact sheets reviewed): 72 (both
@@ -29067,25 +29090,25 @@ shade, cartridge unmeasured); the satellite's panel texture (blue mottle,
 cartridge unmeasured); the black doorway alcove face beside 27's door
 (keypad decal draws on it dimly - dark vertex colour, not a hole).
 
-OWNER HANDOFF: play.ps1 -Level silo -Cheats invincible,invisible,allguns,
+PLAYTEST HANDOFF: play.ps1 -Level silo -Cheats invincible,invisible,allguns,
 maxammo (or without cheats for the AI/combat pass the cheats skipped).
 Watch: the silo walkways with the wall at your back (the two-frame hole),
 kerb end faces, the satellite panels, the lifts (not exercised here), the
 keyed doors (no key was collected), and objective flow (not driven).
-Sprint acceptance is the owner's replay; nothing here is "accepted".
+Sprint acceptance is the acceptance playtest; nothing here is "accepted".
 
 ## 2026-09-14 - Silo intro: "the camera clips into the wall during the spin"
-## (owner report, run 20260914-001327-lvl20) - measured as the B-100 near-guard
+## (playtest report, run 20260914-001327-lvl20) - measured as the B-100 near-guard
 ## path FILLING where the cartridge draws the scene; was parked on Gitea #2
 ## (comment 164); tools/native/romintro.py added as the intro oracle.
-## DISPOSITION 2026-09-14 (later the same day): the owner REJECTED the parked
+## DISPOSITION 2026-09-14 (later the same day): a playtest REJECTED the parked
 ## state on a fresh run (20260914-073701-lvl20 mark-001: "the camera still
 ## clips into / behind the wall directly behind Bond ... overrides Bond / the
 ## intended ROM scene") - reclassified LOAD-BEARING presentation bug, ACTIVE
-## owner-acceptance blocker, and FIXED the same round: see the resolution at
+## acceptance blocker, and FIXED the same round: see the resolution at
 ## the end of the next entry (fixing SHA there).
 
-REPRODUCTION (direct boot, stage 20, Agent, 960x720 windowed as the owner's
+REPRODUCTION (direct boot, stage 20, Agent, 960x720 windowed as the playtest
 run, SL_CHEATS invincible,invisible,allguns,maxammo, scratch eeprom, shots
 every 5 over the intro): the intro is the stationary type-6 camera (mode 1)
 for ~500 frames, then the swirl (mode 3) down silo A into Bond's head. In the
@@ -29114,7 +29137,7 @@ the swirl window, flat = dominant-colour fraction > 0.35: near guard ON 17 of
 55 flat; SL_NEARSAT=0 0 of 55, and those frames match the cartridge frame for
 frame EXCEPT a ~75 px fill-colour sliver at the right screen edge in 6 frames
 (native f845-857 ~ cartridge f1471-1481) where the cartridge draws the wall
-to the edge. So the two owner facts now bracket the RSP's rule for an
+to the edge. So the two playtest facts now bracket the RSP's rule for an
 eye-crossing triangle from both sides: it opens no hole at a touched wall
 (ad772496, still true here) AND it does not draw the unbounded sub-near sweep
 the guard cone keeps (this witness). FIRST WRONG STAGE: triangle emission,
@@ -29129,15 +29152,15 @@ only measured. gmain.s:505-513 OR the sign of w into each vertex's clip code
 before the AND-reject at :784-794, so a trivial reject of the fill triangles
 is the obvious candidate - NOT demonstrated, and a guess at an overlay is
 exactly the confident-wrong-answer class rule 7 warns about. Every candidate
-I can state either brings back the accepted hole class (a near cut on this
+that can be stated either brings back the accepted hole class (a near cut on this
 population) or is that guess. Flipping the default to SL_NEARSAT=0 is not a
-fix: it trades a 17/55 fill for the ad772496 / Dam-bridge holes the owner
-accepted as fixed. No renderer change, no Silo constants, no permanent
+fix: it trades a 17/55 fill for the ad772496 / Dam-bridge holes accepted
+as fixed in playtest. No renderer change, no Silo constants, no permanent
 instrumentation.
 
 CONTROLS: no production change, so the Dam intro / facility liveness controls
 were not needed; the build was rebuilt (0 objects recompiled) before the
-reproduction. Gitea #2 comment 164 (readback: open, 18 comments). Owner
+reproduction. Gitea #2 comment 164 (readback: open, 18 comments). Playtest
 handoff: replay `play.ps1 -Level silo -Cheats invincible,invisible,allguns,
 maxammo` and watch the last ~2 s of the swirl; SL_NEARSAT=0 shows what the
 cartridge shows there, minus the right-edge sliver. Next: obtain the clipper
@@ -29176,10 +29199,10 @@ Whatever the cartridge does with it is in the clipper overlay (gmain.s
 lbl_1710), not in the reject. Witness (2), ad772496: v0 {+x,+y} and v2
 {-x,-y,near} have an empty AND whatever v1 carries - would have stayed drawn;
 not the failing witness. Witness (3) and the Dam/Surface controls were not
-run: stopped at (1) as instructed.
+run: stopped at (1) as the round specified.
 
 RECORDED FOR THE NEXT READER: the RSP Programmer's Guide (rsp-vector-isa
-area) is not on disk this session (reference/ holds two .cht files) and its
+area) was not on disk at the time (reference/ holds two .cht files) and its
 page table does not list VCH/VCL, so the byte-to-side assignment of vcc after
 vch is a READING, not a citation, and the two readings disagree on whether
 the fifth unscaled flag in 0x703 is NEAR (z <= -w) or FAR (z >= w) - one of
@@ -29192,15 +29215,15 @@ one oracle, one attempt - the fill stays parked on #2 (comments 164, 167).
 RESOLUTION 2026-09-14 - FIXED, SHA 9e70e7e5 ("[P1] gfx: honour the cull
 bits on the eye-crossing fan so the Silo intro does not draw the wall across
 the viewport"); Gitea #2 comment 169 (readback: open, 20 comments), left open
-for the owner's replay. The
-owner's fresh rejection (run 20260914-073701-lvl20, mark-001, camera mode 1,
+for an acceptance playtest. The
+fresh playtest rejection (run 20260914-073701-lvl20, mark-001, camera mode 1,
 eye (64.970,-1711.131,2324.588), room 26) reopened this as an ACTIVE
-acceptance blocker, and the bounded polygon inspection the owner authorised
+acceptance blocker, and the bounded polygon inspection authorised for it
 (one temporary per-triangle dump in emit_tri, removed before commit) named
 the cause the trivial-reject attempt could not: the fill is a BACK FACE.
 
 The one cheap toggle first: under SL_VI_CATCHUP=0 the swirl is deterministic
-in pumped frames (f1533-1749; the owner's eye pairs with f1645), so the same
+in pumped frames (f1533-1749; the playtest mark's eye pairs with f1645), so the same
 55-shot window (every 4 frames) runs under every policy. Flat frames: SL_CULL
 default 16/55; SL_CULL=1 (hardware sense everywhere) 0/55; SL_CULL=3 (draw
 ONLY what sense 1 drops) shows the pink fill in every filled frame - the fill
@@ -29236,12 +29259,12 @@ flat before, 0/55 after; per-frame diff against the default build is 0.0% on
 every frame that was not filled (38 of 55) and 63-91% on the 17 filled ones;
 paired cartridge frames (romintro.py ticks 1480-1500 every tick) show Bond,
 the catwalk, the far wall and the pink right-edge wall where the fixed build
-does. (iv) the owner's mark pose (f1645): the frame is the scene, not the
+does. (iv) the playtest mark pose (f1645): the frame is the scene, not the
 wall. (v) Dam intro, 48 shots: bit-identical with and without the rule.
 (vi) Surface windowed boot, 20 shots: sane; census fail=0, rejects 0.
 (vii) build.ps1 clean; test.ps1 silo 400 PASS, facility 400 PASS (liveness).
 
-TWO THINGS TO KNOW BEFORE READING THE OWNER'S BMP AGAIN. (1) The grey slab
+TWO THINGS TO KNOW BEFORE READING THE PLAYTEST BMP AGAIN. (1) The grey slab
 in mark-001.bmp itself (left third: two vertical rods, a small label) is NOT
 the defect: it is a large non-room model in the silo centre (front faces at
 eye distance 170-330, 64x64 texture), and the cartridge draws it in the same
@@ -29257,10 +29280,10 @@ same position, so its wall edge lands past the screen edge. Under the old
 default those two frames were a full-frame back face. Parked as a
 pose-pairing residue, not a rendering rule.
 
-OWNER REPLAY OF 9e70e7e5 (run 20260914-142035-lvl20): "99 percent better.
+PLAYTEST OF 9e70e7e5 (run 20260914-142035-lvl20): "99 percent better.
 Still see a little blue as we are spiralling in." The mark (pumped 1461) is
 the same end pose as before, scene correct; the blue is the residue above,
-now owner-visible, so it stayed on the ACTIVE strand and was measured to its
+now visible in play, so it stayed on the ACTIVE strand and was measured to its
 cause the same day. NOT FIXED: the cause is outside the renderer.
 
 THE RESIDUE, MEASURED (every rendered frame, f1561-1699 under
@@ -29290,7 +29313,7 @@ that wall's line passes 2 units from the eye and the eye is on its BACK
 side; sight lines to the right of the edge run parallel to the wall and
 leave the level - the wedge is the void past the wall's end, and the
 renderer now draws exactly what the RSP would draw for THAT camera. From
-the owner-mark matrix and the f1645 dump the wall plane in world space runs
+the playtest-mark matrix and the f1645 dump the wall plane in world space runs
 (42,-1722,2315)-(194,-1722,2378) with interior normal (-0.385,0,0.923):
 native eye f1609 +2.4 inside, f1617 -0.7 OUTSIDE, f1645 +0.01 (on the
 plane); the cartridge at the same x sits +5.8 (c1474) and +2.4 (c1486)
@@ -29324,12 +29347,12 @@ objective, on the trace harness's own terms: SL_TRACE_OUT + nativediff.py
 against silo-sweep-00.sltrace with its tick stream, player entity, to name
 the first tick Bond's position leaves the emulator's.
 
-## 2026-09-14 - Silo: SPRINT-ACCEPTED under owner scope; remaining intro-blue
+## 2026-09-14 - Silo: SPRINT-ACCEPTED under the coverage scope; remaining intro-blue
 ## / player-state divergence parked on Gitea #21
 
-Silo - SPRINT-ACCEPTED under owner scope (2026-09-14: "the intro still shows
-a little blue while in the intro, but i think we can just make sure that
-issue is created and move on to frigate automated testing"); the remaining
+Silo - SPRINT-ACCEPTED under the coverage scope (decision 2026-09-14: the
+intro still shows a little blue; that issue is to be filed and work moves
+on to Frigate automated testing); the remaining
 intro-blue / player-state divergence is parked on Gitea #21 (correctness
 debt, OPEN / PARKED, does not block Frigate; #2 comment 174 cross-references
 it and keeps the renderer history only). The next step stays as recorded
@@ -29341,8 +29364,8 @@ above (SL_TRACE_OUT + nativediff.py, player entity); nothing was resumed.
 ## Gitea #22); the lower-deck backdrop holes are parked with a witness (#23)
 
 FRIGATE COVERAGE, run by hand from the local native-level-coverage
-procedure (owner direction mid-round: teleport-only, no scripted walk; the
-coordinator committed that into step F as c5c17c71). Repo gates: clean tree
+procedure (design direction mid-round: teleport-only, no scripted walk;
+committed into step F as c5c17c71). Repo gates: clean tree
 at c5c17c71 == origin, master 31e3ad44. build.ps1; headless test.ps1 frigate
 400 PASS and facility 400 PASS (liveness only). Windowed direct boots at
 Agent with SL_CHEATS invincible,invisible,allguns,maxammo on a scratch eeprom
@@ -29399,7 +29422,7 @@ frame: room 47, cmds=8613 vtx=6369 tris=3680, decoded 987. The new
 tlut16= counter reads 362 per 460-frame run (the sea, drawn every frame)
 and 0 on Dam/Facility/Runway/Surface/Silo/Caverns.
 
-FIRST WRONG STAGE - FIXED: B-130, the sea. Owner: "the water looks green
+FIRST WRONG STAGE - FIXED: B-130, the sea. Playtest report: "the water looks green
 instead of blue like the rom". Native sea-region mean at the boat pose
 (8.3,25.7,19.5) hue 159; cartridge (romintro.py stage 26, ticks 1300/1500)
 (8.8,26.4,56.9)/(8.0,26.0,56.2) hue 218. Provenance: the sea is sky.c's
@@ -29420,7 +29443,7 @@ self-test fixtures (695 checks). Witness at the same deterministic pose
 (SL_VI_CATCHUP=0 f1305): on (8.2,26.2,56.6) - within 1 unit per channel of
 the cartridge; the on/off diff is confined to rows >= 319 (sea + its strip
 along the hull). Controls: tlut16=0 on six other levels; frigate/facility
-liveness PASS. Gitea #22, owner replay pending.
+liveness PASS. Gitea #22, acceptance playtest pending.
 
 PARKED (Gitea #23): rooms 20 and 24 (lower deck) show the sea/sky backdrop
 across a wide arc where neighbouring walls should be; also the room-19
@@ -29432,7 +29455,7 @@ the cartridge draws the same is UNMEASURED - the Frigate recordings under
 tools/trace/inputs need the harness's savestate/front-end replay, which a
 naive loader this round did not reproduce (it replayed stages 9/33).
 
-OWNER ITEM "the bridge looks a little strange with the overhangs":
+PLAYTEST ITEM "the bridge looks a little strange with the overhangs":
 measured, no defect demonstrated. From the bow (teleport (0,200,-8000)
 theta 11, C-down look-up, F8 mark): the black curved shape and the pale
 env-mapped triangle in front of the bridge are a segment-5 PROP list
@@ -29454,7 +29477,7 @@ outline (cutout edge, cartridge unmeasured); the cheat banner renders
 recorded only); the random intro camera differs from the cartridge's
 (seeded, as Dam #1); the seas in the room sheets predate 2e47da80.
 
-SKILL DEFECTS NOTICED (skill not edited): (1) the Gitea comments endpoint
+PROCEDURE DEFECTS NOTICED (procedure not edited): (1) the Gitea comments endpoint
 loop in the older search scripts never terminated on this run - a single
 `?limit=100` fetch per issue does; (2) SL_TELEPORT_VERTA is overridden to
 -4 by the intro-end camera mode switch - pitch has to come from the stream
@@ -29464,7 +29487,7 @@ verify with the theta line; (4) the shot window on the shim's VI counter
 hits odd frames only under SL_VI_CATCHUP=0 (First==Last windows can miss);
 (5) headless runs print no renderer census - controls need windowed runs.
 
-OWNER HANDOFF: play.ps1 -Level frigate -Cheats invincible,invisible,
+PLAYTEST HANDOFF: play.ps1 -Level frigate -Cheats invincible,invisible,
 allguns,maxammo (or without cheats for the AI/hostage/combat pass the
 cheats skipped). Watch: the sea from the boat and decks (should be deep
 blue with a faint wave texture; SL_TLUT16=0 shows the old green), the lower
@@ -29472,15 +29495,15 @@ decks (rooms 20/24 stairwell foot and engine corridor: any view into open
 sky/sea through a wall - F8 it, #23), the helicopter in front of the bridge
 (black body, reflective canopy - F8 any wrong-looking face), the lifebuoy
 edges, the keyed doors (no key collected), hostages and the tracking-bug
-objective (not driven). Sprint acceptance is the owner's replay; nothing
+objective (not driven). Sprint acceptance is the acceptance playtest; nothing
 here is "accepted".
 
-## 2026-09-14 - Frigate: SPRINT-ACCEPTED under owner scope; #22 closed on
-## owner acceptance; #23 remains parked correctness debt
+## 2026-09-14 - Frigate: SPRINT-ACCEPTED under the coverage scope; #22 closed on
+## playtest acceptance; #23 remains parked correctness debt
 
-Frigate - SPRINT-ACCEPTED under owner scope, 2026-09-14 ("Frigate is done and
-we do not need to do anything else here"). Gitea #22 (the green sea, B-130,
-fix 2e47da80) closed on owner acceptance (comment 180, state read back
+Frigate - SPRINT-ACCEPTED under the coverage scope, decision 2026-09-14
+(Frigate is done; no further work needed there). Gitea #22 (the green sea, B-130,
+fix 2e47da80) closed on playtest acceptance (comment 180, state read back
 closed). Gitea #23 (lower-deck backdrop through the walls in rooms 20/24,
 cartridge unmeasured) remains OPEN / PARKED correctness debt (comment 182);
 it does not block level progression and no further Frigate work is
@@ -29489,7 +29512,7 @@ scheduled this sprint. Next level: Surface 2.
 ## 2026-09-14 - Surface 2 first pass (native-level-coverage run by hand, alias
 ## `surface2` -> stage 43, teleport-only): 35 standable rooms swept from their
 ## floors, census clean, sky/snow/treeline palette matches the cartridge at the
-## spawn pose, no first wrong stage demonstrated; owner replay pending
+## spawn pose, no first wrong stage demonstrated; acceptance playtest pending
 
 SURFACE 2 COVERAGE, run by hand from the local native-level-coverage
 procedure (followed step for step, no change to it). Repo gates: clean
@@ -29532,7 +29555,7 @@ bunker entrance tunnel from room 15 (portal 97 at the origin, door pad 6).
 SWEEPS (SL_TELEPORT_* + a 185-record turn after a 260-record lead-in, shots
 every 6 frames over f150-470, 54-frame sheets). Registered == requested for
 every stop. From the bounds centre: 1,2,3,4,5,6,7,8,9,11,12,13,16,17,18,19,
-20,21,22,23,24,25,26,30. From an audited alternate point (owner feedback:
+20,21,22,23,24,25,26,30. From an audited alternate point (playtest feedback:
 two centres had put Bond inside the air duct and inside the helicopter;
 every remaining point was then checked against the cartridge prop list,
 romprops.py stage 43 tick 1300, 124 props): 10 (centre registers 16, the
@@ -29546,7 +29569,7 @@ stage 43 -> 90, front-end menu edges, timer frozen) - the exit trigger; the
 frames before the transition show the corridor (metal walls, ceiling
 lights, steps) and the back of the bunker door. NOT standable: 0 (empty
 bounds), 33/34/35 (the air-duct shaft interior; the XZ tile there registers
-as room 14, and the F8 mark taken at that point before the owner's feedback
+as room 14, and the F8 mark taken at that point before that feedback
 shows no floor geometry under the camera - inside the duct volume, not room
 coverage). Seen and sane: snow terrain with tyre-track paths, every
 treeline, both hut pairs inside and out (orange doors, windows showing the
@@ -29582,21 +29605,21 @@ driven (consoles not destroyed, cameras not shot, helicopter not disabled,
 keyed doors not opened, keys not collected); the tunnel exit ends the
 level but success/failure flow, debrief and progression were not examined.
 
-OWNER HANDOFF: play.ps1 -Level surface2 -Cheats invincible,invisible,
+PLAYTEST HANDOFF: play.ps1 -Level surface2 -Cheats invincible,invisible,
 allguns,maxammo (drop the cheats for the AI/combat pass). Watch: the huts
 inside and out (windows, doors, furniture), the comms building (stairs,
 balcony, the ground-floor machinery, the upstairs consoles), the fenced
 yard, the duct housing, the helipad, treeline corners, and the tunnel
-(entering it ends the level). Sprint acceptance is the owner's replay;
+(entering it ends the level). Sprint acceptance is the acceptance playtest;
 nothing here is "accepted".
 
-## 2026-09-15 - Surface 2 owner replay: "the ground is lighting up in patches
+## 2026-09-15 - Surface 2 playtest: "the ground is lighting up in patches
 ## as I walk" - the RDP interpolates shade and fog in screen space and GL
 ## interpolated them perspective-correct (B-131, FIXED 9dd35b33, Gitea #24);
 ## the teleport ran every Dam/Surface 2 capture under the intro fog row
-## (tooling, FIXED 69850d27); owner replay pending
+## (tooling, FIXED 69850d27); acceptance playtest pending
 
-OWNER MARKS: run 20260914-234420-lvl43, mark-001 (frame 2443, eye
+PLAYTEST MARKS: run 20260914-234420-lvl43, mark-001 (frame 2443, eye
 -10681.1,166.0,-25429.6 theta 84.9 verta -23.7, centre snow 62 5b 5b, a hard
 brightness step across the snow ahead) and mark-002 (frame 3001, eye
 -10950.4,166.0,-25395.0 theta 72.0, a smoother band). Both on the spawn
@@ -29608,7 +29631,7 @@ units apart in one triangle.
 
 FIRST FINDING - A TOOLING DEFECT, fixed first (69850d27): reproducing the
 mark by teleport gave a bright, barely fogged floor (near snow 150-180)
-where the owner's frame was dark (~100). The owner run's events file shows
+where the playtest frame was dark (~100). The playtest run's events file shows
 zfar 8000 -> 2000 and far-fog 40000 -> 10000 at the intro swirl; a
 teleported run's never did. The game loads a level's fog row twice on the
 way into FP - CAMERAMODE_INTRO loads the CINEMA row
@@ -29619,7 +29642,7 @@ the two levels with a cinema row (Dam and Surface 2, bgfog.c id+900:
 Surface 2 cinema farfog 8000 / nearfog 6000 / maxvis 8000 vs the play row's
 2000 / 2500 / 3055) every teleported capture drew under the intro fog. The
 teleport now runs the SWIRL step's own fogLoadLevelEnvironment(stage, 0); a
-teleported run's events now match the owner's. CAVEAT for the record: the
+teleported run's events now match the playtest run's. CAVEAT for the record: the
 Surface 2 coverage sweeps above (2026-09-14) and every Dam -TeleportMark
 measurement before this commit rendered under the cinema fog row; geometry,
 textures and props stand, fog-dependent readings there do not. The Surface
@@ -29653,7 +29676,7 @@ the mark, a 28-record C-up hold reaches verta -21.4 repeatably):
   plateau at 121..132 and a diagonal crease; the fixed native reads 54 ->
   125, plateau 98..104, no crease - the cartridge's shape, the residual
   offset being the cartridge's darker 240-line output.
-- THE OWNER'S WITNESS (coordinator direction): plain boot, intro ends at the
+- THE PLAYTEST WITNESS (directed for the round): plain boot, intro ends at the
   spawn, C-up 14 records then a 40-record forward push under
   SL_VI_CATCHUP=0 (deterministic; half a pad read per pumped frame, so the
   press sits at record ~700 for frame ~1400), a shot every other frame.
@@ -29697,27 +29720,27 @@ mark's G channel as "z_ndc interpolated to 0.9529 vs true 0.9586" was a
 1-LSB quantisation artefact (one G count is ~12 fog counts there); the
 claim was replaced by the frame-level profiles and the walk witness above.
 
-OWNER HANDOFF: play.ps1 -Level surface2 -Cheats invincible,invisible,
+PLAYTEST HANDOFF: play.ps1 -Level surface2 -Cheats invincible,invisible,
 allguns,maxammo - walk the spawn valley looking down; the snow should shade
 as one smooth gradient that does not step or re-pattern as Bond moves.
 $env:SL_SHADE_LINEAR=0 shows the old patches for comparison. Gitea #24.
-Sprint acceptance is the owner's replay; nothing here is "accepted".
+Sprint acceptance is the acceptance playtest; nothing here is "accepted".
 
-## 2026-09-15 - Surface 2 owner replay of c2791546: "nope, still not good" -
+## 2026-09-15 - Surface 2 playtest of c2791546: "nope, still not good" -
 ## B-131 was NOT the fix; the on-foot walk shows the near floor JUMPING the
 ## step a floor vertex crosses the near plane, the cartridge is continuous;
 ## first wrong stage is the clip population (B-132, 1eb65fbd), level
-## residual open; owner replay pending
+## residual open; acceptance playtest pending
 
-OWNER REPLAY (run 20260915-075530-lvl43, the fixed binary - its log carries
+PLAYTEST (run 20260915-075530-lvl43, the fixed binary - its log carries
 "sl_shade: linear program ready"): the ground brightness is still wrong at
 the DEFAULT pitch, the ground under / in front of Bond changes as he walks.
 B-131 is retained (it corrects the interpolation rule, measured against the
 cartridge at a static pose) but it only magnified the real defect and must
 not be described as the fix.
 
-THE WITNESS, ON FOOT (owner instruction, overriding teleport-only for this
-bug): plain boot with cheats, the owner's launch env (no overrides), intro
+THE WITNESS, ON FOOT (design direction, overriding teleport-only for this
+bug): plain boot with cheats, the playtest launch env (no overrides), intro
 ends at the spawn, one continuous forward push at the default pitch under
 SL_VI_CATCHUP=0 (deterministic; the shim consumes half a pad read per
 pumped frame, so the press sits at record ~700 for frame ~1400), SL_SHOT
@@ -29781,27 +29804,27 @@ CONTROLS: headless surface2 / facility / runway / silo / dam 400 PASS; Dam
 and Silo intro control frames pixel-identical (max 1) to the previous
 build; Runway and Facility frames sane; census fail 0, rejects 0, tlut16 0.
 
-OWNER HANDOFF: play.ps1 -Level surface2 -Cheats invincible,invisible,
+PLAYTEST HANDOFF: play.ps1 -Level surface2 -Cheats invincible,invisible,
 allguns,maxammo on 1eb65fbd - walk the spawn valley at the default pitch:
 the ground ahead should no longer jump in brightness as Bond moves (a slow
 smooth swell is the cartridge's own). If the overall level still reads
 wrong, that is the recorded residual, not the jumps - say so and F8 it.
 Gitea #24 (rewritten). Nothing here is "accepted".
 
-## 2026-09-15 - Surface 2 owner replay of 675234dc: ground residual
-## OWNER-PARKED as playable; NEW: the sniper tower's wooden platform flickers
+## 2026-09-15 - Surface 2 playtest of 675234dc: ground residual
+## PARKED as playable; NEW: the sniper tower's wooden platform flickers
 ## while standing still - the native ignores G_CULL_BACK on depth-writing
 ## draws and the zero-thickness platform's back face fights its front face
 ## (Gitea #25 - was parked behind B-114 here; SUPERSEDED the same day, see the
-## next entry: the owner ruled it the acceptance blocker and it is FIXED)
+## next entry: a ruling made it the acceptance blocker and it is FIXED)
 
-GROUND (Gitea #24): owner, verbatim: "the ground still illuminates
-unevenly, but it's playable so we can park that for now." OWNER-PARKED as
+GROUND (Gitea #24): playtest verdict: the ground still illuminates
+unevenly, but it is playable, so it is parked for now. PARKED as
 playable; the residual (near-floor level 4-17 above the cartridge on some
 steps of the spawn walk, the jumps gone) stays open as correctness debt.
 No further ground measurement this round.
 
-TOWER (owner run 20260915-082213-lvl43, marks 001 - the underside from
+TOWER (playtest run 20260915-082213-lvl43, marks 001 - the underside from
 inside the frame, verta +17.45 - and 002 - standing on the platform
 looking down, verta -72.4; "flickers"): STATIONARY FLICKER, measured:
 teleport to mark-002's pose with the C-up held to the pitch clamp (eye and
@@ -29821,21 +29844,21 @@ depth, on the premise that the depth buffer removes a closed mesh's far
 side; a two-sided zero-thickness plane's back face is coincident, not
 behind. ONE BOUNDED MEASUREMENT: the same pose under SL_CULL=1 - largest
 consecutive-frame difference 0.40, the stable lit top face. CONTROL:
-Surface 1 (owner-accepted, the same background) at the same tower pose
+Surface 1 (accepted in playtest, the same background) at the same tower pose
 flickers identically (mean 38, 78%) - shared, pre-existing; Surface 1 is
 the regression control for the fix. Gitea search: no prior issue (#19 is
 the same class - a back-facing quad the cartridge culls).
 
-PARKED, NOT FIXED (historical - overridden the same day by the owner's
+PARKED, NOT FIXED (historical - overridden the same day by the
 ruling and the next entry, which fixes it): the semantic fix - honour
 G_CULL_BACK on opaque room draws - is the room-scoped hardware sense that
 shipped as the default in
-B-113 and was retreated in B-114 after the owner's Dam replay (the massif
+B-113 and was retreated in B-114 after the Dam playtest (the massif
 loses most of its faces under sense 1 and the complementary set under
 sense 2; the corpus is silent on how Rare's microcode evaluates the cull
 bits per triangle). Changing the default trades this flicker for that
 hole, so no code change this round; two measurement rounds spent, the
-claim not narrowed. Owner-facing runtime mitigation (not a default):
+claim not narrowed. User-facing runtime mitigation (not a default):
 $env:SL_CULL=5 (room geometry under the hardware sense) or SL_CULL=1
 removes the tower flicker on both surfaces; Dam under either shows the
 B-114 massif holes. Scratch sheets (session): surface2\T2-flips.png
@@ -29853,7 +29876,7 @@ default and #25 and #19 close together.
 ## on the cartridge, and the tower's planks are the lit top. The default
 ## cull policy becomes the hardware sense on every draw (SL_CULL=1).
 
-OWNER RULING (2026-09-15, same day as the entry above): the uneven ground
+RULING (2026-09-15, same day as the entry above): the uneven ground
 (#24) is parked as playable; the sniper-tower platform flicker (#25) is
 the ONE acceptance blocker and must be fixed before moving on.
 
@@ -29902,7 +29925,7 @@ point to 0.1.
   140 the centre wedge, theta 175 the left slab) are ABSENT on the
   cartridge. dam\3way-r121.png (native mode 4 / native sense 1 /
   cartridge, four rows). B-114's "the cartridge shows this same mountain
-  whole" was an inference from the owner's reaction to sense 1 measured
+  whole" was an inference from the playtest reaction to sense 1 measured
   against mode 4's own frame; it was never a cartridge measurement, and
   it is false. Sense 2's "complementary" loss is sense 2 being wrong.
 
@@ -29914,7 +29937,7 @@ point to 0.1.
   on the LEFT and dark grey on the RIGHT (surface2\rom-dome.png) - the
   very picture 33a21f02 and #19 recorded as sense 1 "turning the dome's
   mirrored half dark" and rejected. Mode 4's all-white dome (the
-  owner-accepted look) is the wrong one. Sense 1.
+  look accepted in playtest) is the wrong one. Sense 1.
 
   Bunker 1 #19 grille quad (teleport -1363 340 2132 theta 313, room 29):
   gone under the new default, present under mode 4 (surface2\
@@ -29960,8 +29983,8 @@ ACCEPTANCE, measured on the new build:
   default are pixel-identical to the SL_CULL=1 runs (max diff 0); census
   clean on both.
 - Surface 2 spawn valley glance: terrain intact (surface2\V-B19-sheet.png).
-- Bunker 1 spawn: as above - #19's quad is gone; may close after owner
-  replay.
+- Bunker 1 spawn: as above - #19's quad is gone; may close after an
+  acceptance playtest.
 - Liveness: test.ps1 surface2 / surface / dam / facility 400 PASS.
 
 WHAT THIS CHANGES ELSEWHERE, stated rather than hidden: sense 1 now
@@ -29969,8 +29992,8 @@ applies to every draw, so anywhere mode 4 was drawing back faces over a
 scene - the Dam interior wedge (#10's residual), the archives slab, the
 Surface dome's outer skin's far half - now renders as the cartridge does.
 The dome entries B-122..B-125 measured the two skins against an all-white
-target; the cartridge target is half dark, and if the owner reports the
-dome "changed" on Surface 1 that is this fix working. Owner replay is
+target; the cartridge target is half dark, and if a playtest reports the
+dome "changed" on Surface 1 that is this fix working. A manual playtest is
 final for #25, #19 and the dome.
 
 Scratch (session, not committed): surface2\ TWdef-*.ppm, TW4-*.ppm,
@@ -29982,16 +30005,16 @@ threeway.py, runs\20260915-095031 (massif mark). Cartridge frames under
 %TEMP%\sightline-oracle\ (dam-r121k, dam-r121-t70/140/175, s2-tower,
 s1-dome, dam-intro).
 
-## 2026-09-15 - Surface 2: SPRINT-ACCEPTED by owner; #25 closed on owner
-## acceptance; #24 remains owner-parked/playable correctness debt
+## 2026-09-15 - Surface 2: SPRINT-ACCEPTED in playtest; #25 closed on playtest
+## acceptance; #24 remains parked/playable correctness debt
 
-Surface 2 - SPRINT-ACCEPTED by owner, 2026-09-15 ("Surface 2 is accepted
-and i am ready to move onto bunker2"). Gitea #25 (the sniper tower platform
+Surface 2 - SPRINT-ACCEPTED in playtest, 2026-09-15 ("Surface 2 is accepted";
+next level Bunker 2). Gitea #25 (the sniper tower platform
 flicker, fix caaf6d89: SL_CULL default 1, the cartridge culls what sense 1
-culls) closed on owner acceptance (comment 208, state read back closed).
+culls) closed on playtest acceptance (comment 208, state read back closed).
 Gitea #24 (the ground brightness residual on the on-foot walk; B-132
 1eb65fbd removed the near-plane jumps, level residual open) remains OPEN /
-OWNER-PARKED as playable correctness debt (state read back open); no
+PARKED as playable correctness debt (state read back open); no
 further Surface 2 measurement this sprint. The SL_CULL=1 default is the
 renderer baseline going forward: a missing face on a later level is checked
 against the authored cull bits, the winding and the cartridge before it is
@@ -30000,7 +30023,7 @@ called a cull regression. Next level: Bunker 2.
 ## 2026-09-15 - Bunker 2 first pass (native-level-coverage run by hand, alias
 ## `bunker2` -> stage 27, teleport-only): 66 standable rooms swept from their
 ## floors, census clean, two cartridge pairings match, no first wrong stage
-## demonstrated; owner replay pending
+## demonstrated; acceptance playtest pending
 
 BUNKER 2 COVERAGE, run by hand from the local native-level-coverage
 procedure (followed step for step, no change to it). Repo gates: clean
@@ -30011,7 +30034,7 @@ spelling and no alias was added. build.ps1 (240 objects); headless test.ps1
 bunker2 400 PASS, facility 400 PASS (liveness only). Windowed direct boot at
 Agent. CHEATS: the probe boot ran under invincible,invisible,allguns,maxammo
 (`sl_cheat: activated cheat 2 cheat 10 cheat 3 cheat 4  (append-sp=1)`);
-owner decision the same day, relayed mid-round: NO allguns (it hides mission
+decision the same day, applied mid-round: NO allguns (it hides mission
 equipment in the watch menu), so every sweep, re-capture and door press ran
 under invincible,invisible,maxammo (`sl_cheat: activated cheat 2 cheat 10
 cheat 4  (append-sp=1)`). Nothing captured under allguns was re-used except
@@ -30130,29 +30153,29 @@ debrief and progression were not examined; the keyed doors (cells, safe,
 exit, glass panels) were not opened; the 15/21 stairwells and 3/4 stairs
 were stood on, not walked.
 
-OWNER HANDOFF: .\tools\windows\play.ps1 -Level bunker2 -Cheats invincible,
+PLAYTEST HANDOFF: .\tools\windows\play.ps1 -Level bunker2 -Cheats invincible,
 invisible,maxammo (drop the cheats for the AI/combat pass). Watch: the
 cells and cell-block corridor, the big office and its safe, the dark crate
 hall, the mainframe room and the control room consoles, the main hall (the
 black wall screen is the cartridge's), the balcony, the drone-gun wing and
 the dark hazard corridors, the exit corridor's glass doors and stairs, and
 the exit door (going through it ends the level). Sprint acceptance is the
-owner's replay; nothing here is "accepted".
+acceptance playtest; nothing here is "accepted".
 
 Scratch (session, not committed): bunker2\ r01..r68, r65b, r67b, i06, i44,
 i35, i49, s06, s44, d36 logs and *-sheet0.png, probe.log, romprops27.txt,
 points-all.txt, plan.py, verify.py, b2.ps1, tele-b2.ps1, batch.ps1,
 sheet.ps1; cartridge frames under %TEMP%\sightline-oracle\b2-hall, b2-r44.
 
-## 2026-09-15 - Bunker 2 owner replay of 0f07002b: "LOD issues on doors and
+## 2026-09-15 - Bunker 2 playtest of 0f07002b: "LOD issues on doors and
 ## props like crates" - not a model LOD, not a texture level: the near-fog
 ## distance FADE switches props to the translucent render path (B-133, FIXED
-## as an owner-requested presentation divergence, D-004, Gitea #26); owner
-## replay pending
+## as a specified presentation divergence, D-004, Gitea #26); acceptance
+## playtest pending
 
-OWNER RULING (2026-09-15, Bunker 2 replay of 0f07002b), verbatim: "the level
-is mostly good, but there are LOD issues on doors and props like crates that
-I want resolved even if the ROM does the same thing." The ONE acceptance
+RULING (2026-09-15, Bunker 2 playtest of 0f07002b): the level is mostly
+good, but the LOD issues on doors and props like crates are to be
+resolved even if the ROM does the same thing. The ONE acceptance
 blocker; cartridge parity is explicitly NOT the criterion.
 
 WITNESSES: run 20260915-120832-lvl27, marks 1/2 (the 53/54 corridor door at
@@ -30193,8 +30216,8 @@ neither is what switches here):
   into a word whose RDP alpha equation has no texel term. That is a real
   native inexactness on the fade path (the cartridge's crates are dark and
   faded, the native's were ghost boxes - romtele.py stage 27 at mark 3's
-  pose, %TEMP%\sightline-oracle\b2-m3), but it is not what the owner ruled
-  on and it is unreachable under the default below. PARKED on #26.
+  pose, %TEMP%\sightline-oracle\b2-m3), but it is not what the ruling
+  covers and it is unreachable under the default below. PARKED on #26.
 
 THE RULE (B-133, src/game/propobj.c chrobjFogVisRangeRelated, native only,
 __sgi verbatim): a prop is either fully visible (alpha 1.0) or culled
@@ -30202,7 +30225,7 @@ __sgi verbatim): a prop is either fully visible (alpha 1.0) or culled
 Derived, not tuned: the band contributes nothing the eye sees but the path
 switch, and the only play-relevant value in the function is the cull. No
 constant, no per-prop, per-level or resolution term. The "scale the switch
-distance by output height / 240" rule the coordinator proposed was
+distance by output height / 240" rule proposed during the round was
 considered and rejected: it moves the switch outward (1000 -> 3000 on this
 level) but the artefact stays wherever the switch lands. Props now pop out
 where they used to reach alpha 0 - the same distance as before (Bunker 2
@@ -30212,7 +30235,7 @@ multiplies the same value into chrfadealpha; the death/spawn fade in
 chr->fadealpha is untouched).
 
 KILL SWITCH (project rule 5): SL_PROP_FADE=1 restores the cartridge's
-translucent fade exactly. Default 0 is the owner's ruling. Recorded as
+translucent fade exactly. Default 0 is the ruling. Recorded as
 D-004 in docs/divergences.md (the documented exception to its rule 3).
 
 STATE: render-only. The value feeds PropType / env alpha / draw-pass flags;
@@ -30234,7 +30257,7 @@ mk3-crates-ab.png, walk12-sheet.png):
 - mark 3 / 4: the far crates draw as opaque plank crates; kill switch: ghost
   boxes with the floor through them.
 - mark 6: the mainframe column solid; kill switch: a ghost outline.
-- mark 1 -> mark 2 forward push (owner-specified movement repro, 220
+- mark 1 -> mark 2 forward push (the specified movement repro, 220
   records, 29 shots f240-f660): no pop - the door keeps its presentation
   from 1445 units all the way in (the guard opens it mid-walk).
 - Controls: Facility (near-fog row NULL, the gate is dead there) and
@@ -30248,12 +30271,12 @@ mk3-crates-ab.png, walk12-sheet.png):
   mark 6: cmds 11416 -> 11485, tris 3187 -> 3182. bunker2 / facility 400
   PASS.
 
-GITEA #26 filed (owner-requested presentation divergence; symptom,
+GITEA #26 filed (specified presentation divergence; symptom,
 witnesses, mechanism, fix, kill switch, acceptance, the parked B-119
 inexactness, cross-reference to #10's "visibility range" strand), read back
-open, 4911 body bytes. Stays OPEN pending owner replay.
+open, 4911 body bytes. Stays OPEN pending an acceptance playtest.
 
-OWNER HANDOFF: .\tools\windows\play.ps1 -Level bunker2 -Cheats invincible,
+PLAYTEST HANDOFF: .\tools\windows\play.ps1 -Level bunker2 -Cheats invincible,
 invisible,maxammo. Watch: the crate hall from its doors, long corridors
 with a closed door at the far end, the main hall from the balcony and the
 floor, guards at range. SL_PROP_FADE=1 in the shell reproduces the old
@@ -30264,13 +30287,13 @@ mk1{new,old}L, mk1a, mk3a, mk3nl, walk12, fac{N,O}, surf{N,O} logs and
 the sheets named above; markrun.ps1, sgi_proof.py, gitea_b133.ps1, i26.md;
 cartridge frames %TEMP%\sightline-oracle\b2-m3.
 
-## 2026-09-15 - Bunker 2 owner report: "the throwing knife up close doesn't
+## 2026-09-15 - Bunker 2 playtest report: "the throwing knife up close doesn't
 ## seem centred with the crosshair and goes to the right" - MEASURED: Rare's
 ## authored right-hand launch, parallel to the aim ray, no convergence; the
 ## cartridge lands right by the same amount; no native divergence; no
-## production change (owner to decide on a toggle-able convergence)
+## production change (a toggle-able convergence left for decision)
 
-OWNER REPORT (Bunker 2 replay, 2026-09-15): "When using the throwing knife
+PLAYTEST REPORT (Bunker 2 playtest, 2026-09-15): "When using the throwing knife
 up close to an enemy, it doesn't seem centred with the crosshair and goes to
 the right of the target. Not sure if there is a way to adjust the trajectory
 to be better." Scope this round: measurement and provenance only.
@@ -30330,10 +30353,10 @@ pixels (x*1.5, y*3 - the 320x220 view at y 10 is the native 960x660 at y
 embedded) matches within the tick-sampling of the two clocks. THE
 CARTRIDGE LANDS RIGHT OF THE CROSSHAIR BY THE SAME AMOUNT: this is Rare's
 authored hand-offset launch, not a native divergence. The crosshair is a 2D
-overlay drawn from the same crosshair_angle the throw reads; the owner's
+overlay drawn from the same crosshair_angle the throw reads; the playtest
 marks show it at the projection centre (480,355-360). No Gitea issue.
 
-PROPOSAL, for the owner to decide (NOT implemented): a toggle-able
+PROPOSAL, for decision (NOT implemented): a toggle-able
 convergence - in generate_player_thrown_knife (and generate_player_thrown_
 object for grenades/mines, the same shape) replace the parallel direction
 by normalize(aim_point - hand_origin) where aim_point = eye + aim_dir * D,
@@ -30343,7 +30366,7 @@ and lands on it at close range, at the cost of a slight leftward skew
 beyond D. STATE IT TOUCHES: throw_speed_vec -> the projectile's velocity ->
 projectile physics (position, bounce, embed, who it hits), all of which
 IS simulated and trace-hashed state (the character/prop pool); it would be
-a D-005 divergence, toggle default = cartridge unless the owner rules
+a D-005 divergence, toggle default = cartridge unless a ruling says
 otherwise, and it must not touch the +5 up bias or Bond's velocity term
 if the throw's feel is to stay recognisable. No trace-verify claim is made
 for anything here (nothing changed).
@@ -30354,38 +30377,38 @@ ammoheldarr 0x1130, equipallguns 0x11ec), rom-knife-sheet.png,
 rom-knife-stuck-zoom.png; cartridge frames %TEMP%\sightline-oracle\
 b2-knife5.
 
-## 2026-09-15 - Bunker 2: SPRINT-ACCEPTED by owner; #26 closed on owner
+## 2026-09-15 - Bunker 2: SPRINT-ACCEPTED in playtest; #26 closed on playtest
 ## acceptance; throwing-knife trajectory intentionally preserved as
-## cartridge behaviour (OWNER ACCEPTED; DO NOT CHANGE)
+## cartridge behaviour (ACCEPTED; DO NOT CHANGE)
 
-Bunker 2 - SPRINT-ACCEPTED by owner, 2026-09-15 ("Bunker2 is accepted and
-throwing knife trajectory can be left alone. ROM does the same thing and I
-don't want to change that."). Gitea #26 (B-133 / D-004, fix 414dd490: a
+Bunker 2 - SPRINT-ACCEPTED in playtest, 2026-09-15 ("Bunker2 is accepted";
+decision: the throwing knife trajectory is left alone, since the ROM does
+the same thing). Gitea #26 (B-133 / D-004, fix 414dd490: a
 prop is fully visible until the MaxVisRange cull, the translucent
 distance-fade band removed; kill switch SL_PROP_FADE=1 restores the
-cartridge fade) closed on owner acceptance (comment 215, state read back
+cartridge fade) closed on playtest acceptance (comment 215, state read back
 closed, 674 body bytes). The B-119 single-image mip-alpha inexactness on
 the fade path is reachable only under the kill switch and stays parked
 debt; it does not keep #26 open and was not investigated.
 
 Throwing-knife close-range parallax (measured in df230ed2: Rare's authored
 right-hand launch parallel to the aim ray, the cartridge lands right by the
-same amount): SOURCE/CARTRIDGE-PARITY; OWNER ACCEPTED; DO NOT CHANGE. No
+same amount): SOURCE/CARTRIDGE-PARITY; ACCEPTED; DO NOT CHANGE. No
 production change, no toggle, no Gitea issue, no further measurement. The
 toggle-able convergence proposal in the previous entry is withdrawn by the
-owner's ruling and is NOT unresolved debt.
+ruling and is NOT unresolved debt.
 
 Next level: Statue (alias `statue` -> stage 22).
 
 ## 2026-09-15 - Statue first pass (native-level-coverage run by hand, alias
 ## `statue` -> stage 22, teleport-only): 26 of 27 rooms swept from their
 ## floors, the 27th is the level-exit region, census clean, three cartridge
-## pairings match, no first wrong stage demonstrated; owner replay pending
+## pairings match, no first wrong stage demonstrated; acceptance playtest pending
 
 STATUE COVERAGE, run by hand from the local native-level-coverage
 procedure (followed step for step, no change to it). Repo gates: clean
 tree at df230ed2 (the throwing-knife measurement) == origin, master
-31e3ad44; the Bunker 2 closeout (aa415ef8) and the skill's cheat-policy
+31e3ad44; the Bunker 2 closeout (aa415ef8) and the procedure's cheat-policy
 correction (e4538802) landed first. Alias check: tools/trace/sltrace/
 levelboot.py "statue": 22; play.ps1 resolves -Level through levelstage.py
 (prints 22), so `statue` is the canonical spelling and no alias was added.
@@ -30395,8 +30418,8 @@ invincible,invisible,maxammo - `sl_cheat: activated cheat 2 cheat 10
 cheat 4  (append-sp=1)` from the exe under play.ps1's environment and,
 read back once, from `.\tools\windows\play.ps1 -Level statue -Cheats
 invincible,invisible,maxammo` itself (bounded with SL_FRAMES=300, scratch
-SL_SAVE / SL_NOCAPTURE_DIR / SL_RUN_DIR). No allguns anywhere. NOTE for the
-owner: play.ps1 boots Secret Agent (difficulty 1) by default; the sweeps
+SL_SAVE / SL_NOCAPTURE_DIR / SL_RUN_DIR). No allguns anywhere. NOTE for
+playtest review: play.ps1 boots Secret Agent (difficulty 1) by default; the sweeps
 below ran at Agent (0) - all five objectives are diff>=0 either way.
 
 PROBE (SL_MISSION_DBG/MAP/EVERY, 1500 frames): stage=22 difficulty 0,
@@ -30533,7 +30556,7 @@ exit region ends the level but success/failure flow, debrief and
 progression were not examined; no walking anywhere; no door press (the
 only doors are the gates, closed by script).
 
-OWNER HANDOFF: .\tools\windows\play.ps1 -Level statue -Cheats invincible,
+PLAYTEST HANDOFF: .\tools\windows\play.ps1 -Level statue -Cheats invincible,
 invisible,maxammo (drop the cheats for the AI/combat pass; add -Difficulty
 0 for Agent). Watch: the spawn field and the gates, the Lenin face relief
 and the hammer-and-sickle pedestal (16), the colonnade and head reliefs
@@ -30541,8 +30564,8 @@ and the hammer-and-sickle pedestal (16), the colonnade and head reliefs
 (19), the shed (27), the eastern park's statues and giant face block (1-4),
 the obelisk from range (5/17), the sky and fog-to-black horizon at every
 long sightline, and the helicopter enclosure once the script opens the
-gates (standing in it ends the level). Sprint acceptance is the owner's
-replay; nothing here is "accepted".
+gates (standing in it ends the level). Sprint acceptance is the acceptance
+playtest; nothing here is "accepted".
 
 Scratch (session, not committed): statue\ r01..r27, r25b, r20b, r11g,
 r11p, r10x, r10y, cal11, cal11b, k05, k12, k25, p11, p11b logs and
@@ -30551,18 +30574,18 @@ summary-*.txt, plan.py, census.py, st.ps1, tele-st.ps1, batch.ps1,
 sheet.ps1, gitea_st.ps1, c26close.md; cartridge frames under
 %TEMP%\sightline-oracle\st-p11, st-p11b, st-r05, st-r12.
 
-## 2026-09-15 - Statue: SPRINT-ACCEPTED by owner; no additional fixes
-## required; automated pre-owner pass remained clean (no issue, no work)
+## 2026-09-15 - Statue: SPRINT-ACCEPTED in playtest; no additional fixes
+## required; automated pre-playtest pass remained clean (no issue, no work)
 
-Statue - SPRINT-ACCEPTED by owner, 2026-09-15 ("Statue is accepted without
+Statue - SPRINT-ACCEPTED in playtest, 2026-09-15 ("Statue is accepted without
 any additional fixes needed."); no additional fixes required; automated
-pre-owner pass remained clean. The efedbb76 first pass stands as the record:
+pre-playtest pass remained clean. The efedbb76 first pass stands as the record:
 26 of 27 rooms swept from their floors, room 10 covered from its fade window
 as the level-exit region, census clean on 41 runs, three cartridge pairings
 matching, no first wrong stage demonstrated, no production change. No Gitea
 issue exists for Statue and none is created; the observed-not-measured notes
 in that entry (room 7's near mound, room 17's obelisk sliver) are closed by
-the owner's ruling and are NOT unresolved debt. No further Statue
+the acceptance ruling and are NOT unresolved debt. No further Statue
 measurement, pairing, actor investigation or presentation question.
 
 Next level: Archives (alias `archives` -> stage 24).
@@ -30571,7 +30594,7 @@ Next level: Archives (alias `archives` -> stage 24).
 ## `archives` -> stage 24, teleport-only): 58 of 65 rooms swept from their
 ## floors, 7 helper volumes recorded with their XZ mapping, room 64 is the
 ## level-exit region, census clean on 72 logs, the one cartridge pairing
-## matches, no first wrong stage demonstrated; owner replay pending
+## matches, no first wrong stage demonstrated; acceptance playtest pending
 
 ARCHIVES COVERAGE, run by hand from the local native-level-coverage
 procedure (followed step for step, no change to it). Repo gates: clean
@@ -30586,8 +30609,8 @@ cheat 2 cheat 10 cheat 4  (append-sp=1)` read back once from
 `.\tools\windows\play.ps1 -Level archives -Cheats invincible,invisible,
 maxammo` itself (bounded with SL_FRAMES=300, scratch SL_SAVE /
 SL_NOCAPTURE_DIR / SL_RUN_DIR, -NoConsoleCapture) and from every direct exe
-launch under play.ps1's environment. No allguns anywhere. NOTE for the
-owner: play.ps1 boots Secret Agent (difficulty 1) by default; the sweeps ran
+launch under play.ps1's environment. No allguns anywhere. NOTE for
+playtest review: play.ps1 boots Secret Agent (difficulty 1) by default; the sweeps ran
 at Agent (0), where objective c (the black box) is "not at this difficulty".
 
 PROBE (SL_MISSION_DBG/MAP/EVERY, 1500 frames): stage=24 difficulty 0,
@@ -30746,7 +30769,7 @@ moving walls not opened (script-controlled), no key door tried, the exit
 region ends the level but success/failure flow, debrief and progression were
 not examined; no walking anywhere; no door press.
 
-OWNER HANDOFF: .\tools\windows\play.ps1 -Level archives -Cheats invincible,
+PLAYTEST HANDOFF: .\tools\windows\play.ps1 -Level archives -Cheats invincible,
 invisible,maxammo (drop the cheats for the AI/combat pass; add -Difficulty
 0 for Agent, 2 for 00 Agent's black box). Watch: the interrogation room and
 its dialogue (14), the office over it (10), the glass-partitioned offices
@@ -30756,7 +30779,7 @@ its windows (1-8), the safe room (5), the library ground floor and reading
 room (43-50), the gallery ring and skylight (51-58), Natalya's room (52),
 the moving walls (62/63 from 10/13/12/17), the courtyard (9), and the east
 exterior once the window is jumped (standing in 64 ends the level). Sprint
-acceptance is the owner's replay; nothing here is "accepted".
+acceptance is the acceptance playtest; nothing here is "accepted".
 
 Scratch (session, not committed): archives\ r01..r65 (r09, r14, r36, r55,
 r61 from batch A; r02-r08, r18-r20, r22, r26-r35, r41, r43-r50, r64, r65
@@ -30766,11 +30789,11 @@ pair35.png, probe.log, romprops24.txt, points-*.txt, summary-*.txt,
 plan.py, census.py, ar.ps1, tele-ar.ps1, batch.ps1, sheet.ps1,
 statue-close.md; cartridge frames under %TEMP%\sightline-oracle\ar-r35.
 
-## 2026-09-15 - Archives: SPRINT-ACCEPTED by owner; no additional fixes
-## required; automated pre-owner pass remained clean (no issue, no work)
+## 2026-09-15 - Archives: SPRINT-ACCEPTED in playtest; no additional fixes
+## required; automated pre-playtest pass remained clean (no issue, no work)
 
-Archives - SPRINT-ACCEPTED by owner, 2026-09-15 ("Archives passed"); no
-additional fixes required; automated pre-owner pass remained clean. The
+Archives - SPRINT-ACCEPTED in playtest, 2026-09-15 ("Archives passed"); no
+additional fixes required; automated pre-playtest pass remained clean. The
 322b44c0 first pass stands as the record: 58 of 65 rooms swept from their
 floors, 7 helper volumes recorded with their XZ mapping, room 64 covered
 from its fade window as the level-exit region, census clean on 72 logs, the
@@ -30778,7 +30801,7 @@ one cartridge pairing matching, no first wrong stage demonstrated, no
 production change. No Gitea issue exists for Archives and none is created;
 the observed-not-measured notes in that entry (the office window decals,
 the teleport-fired objective-a HUD line, the attic chr in 61) are closed by
-the owner's ruling and are NOT unresolved debt. No further Archives
+the acceptance ruling and are NOT unresolved debt. No further Archives
 measurement, pairing, safe/key-4, moving-wall, attic-volume, actor or
 window-jump investigation.
 
@@ -30789,7 +30812,7 @@ Next level: Streets (alias `streets` -> stage 29).
 ## floors, room 2 recorded as the treeline backdrop volume with its XZ
 ## mapping, three cartridge pairings match (two authored voids and the end
 ## gateway), census clean on 63 logs, no first wrong stage demonstrated;
-## owner replay pending
+## acceptance playtest pending
 
 STREETS COVERAGE, run by hand from the local native-level-coverage
 procedure (followed step for step, no change to it). Repo gates: clean
@@ -30800,14 +30823,14 @@ levelboot.py "streets": 29; play.ps1 resolves -Level through levelstage.py
 build.ps1 (240 objects, 0 recompiled); headless test.ps1 streets 400 PASS,
 facility 400 PASS (liveness only). Gitea searched first: no Streets issue
 exists; the open parked issues (#24 #23 #21 #19 #18 #15 #14 #9 #8 #7 #6 #5
-#4 #3 #2) were not touched - #14's Runway tank drive test stays the owner's.
+#4 #3 #2) were not touched - #14's Runway tank drive test stays a manual playtest item.
 CHEATS: every run under invincible,invisible,maxammo - `sl_cheat: activated
 cheat 2 cheat 10 cheat 4  (append-sp=1)` read back once from
 `.\tools\windows\play.ps1 -Level streets -Cheats invincible,invisible,
 maxammo` itself (bounded with SL_FRAMES=300, scratch SL_SAVE /
 SL_NOCAPTURE_DIR / SL_RUN_DIR, -NoConsoleCapture; `survived 300 pumped
 frames`) and from every direct exe launch under play.ps1's environment. No
-allguns anywhere. NOTE for the owner: play.ps1 boots Secret Agent
+allguns anywhere. NOTE for playtest review: play.ps1 boots Secret Agent
 (difficulty 1) by default; the sweeps ran at Agent (0), where objective a
 (contact Valentin) is "not at this difficulty".
 
@@ -30954,14 +30977,14 @@ FIRST WRONG STAGE: none demonstrated. No production change this round.
 NOT PROVEN: AI and combat bypassed (invisible/invincible); the story not
 driven - Valentin not contacted (Agent difficulty hides objective a), no
 dialogue met, Ourumov/Natalya not pursued, civilians not counted; the tank
-not entered or driven (Streets' tank is the same seam as #14, the owner's
-Runway drive test is pending - not repeated here); no mine triggered, no
+not entered or driven (Streets' tank is the same seam as #14, whose
+Runway drive playtest is pending - not repeated here); no mine triggered, no
 barricade rammed, no vehicle interaction; the level end (the tank through
 the room-55 gateway) not exercised, so success/failure flow, debrief and
 progression were not examined; no walking anywhere; body armour and the
 grenade launcher not picked up.
 
-OWNER HANDOFF: .\tools\windows\play.ps1 -Level streets -Cheats invincible,
+PLAYTEST HANDOFF: .\tools\windows\play.ps1 -Level streets -Cheats invincible,
 invisible,maxammo (drop the cheats for the AI/combat pass; add -Difficulty
 0 for Agent, 1 or 2 for Valentin's objective). Watch: the spawn alley (7),
 the tank courtyard and its gates (8), the passage east of it and the
@@ -30972,8 +30995,8 @@ the kerbs (4, 6, 21-24, 38, 39, 43, 48), the barricades and jeeps (25-29,
 35, 45, 49, 50), the three minefields (32, 41, 51), the far street and the
 end gateway (54, 55), and the treeline behind the courtyard (2 is reached
 only to the hedge). The tank: model, textures, turret and tracks drew
-complete and opaque from the courtyard; driving it is the owner's test.
-Sprint acceptance is the owner's replay; nothing here is "accepted".
+complete and opaque from the courtyard; driving it is a manual playtest item.
+Sprint acceptance is the acceptance playtest; nothing here is "accepted".
 
 Scratch (session, not committed): streets\ r01..r55 (points-a: 1-19;
 points-b1: 20-28; points-b2: 29-37; points-c1: 38-46; points-c2: 47-55),
@@ -30983,11 +31006,11 @@ propnames.py, plan.py, census.py, ar.ps1, tele-ar.ps1, batch.ps1,
 sheet.ps1, nocap\ (the play.ps1 cheat-proof streams); cartridge frames
 under %TEMP%\sightline-oracle\st-r09, st-r17, st-r55.
 
-## 2026-09-15 - Streets: SPRINT-ACCEPTED by owner; no additional fixes
-## required; automated pre-owner pass remained clean (no issue, no work)
+## 2026-09-15 - Streets: SPRINT-ACCEPTED in playtest; no additional fixes
+## required; automated pre-playtest pass remained clean (no issue, no work)
 
-Streets - SPRINT-ACCEPTED by owner, 2026-09-15 ("Streets are acceptable.");
-no additional fixes required; automated pre-owner pass remained clean. The
+Streets - SPRINT-ACCEPTED in playtest, 2026-09-15 ("Streets are acceptable.");
+no additional fixes required; automated pre-playtest pass remained clean. The
 297a33af first pass stands as the record: 54 of 55 rooms swept from their
 floors, room 2 recorded as the treeline backdrop volume with its XZ
 mapping, three cartridge pairings matching (the room-9 and room-17 floor-
@@ -30996,8 +31019,8 @@ on 63 logs, no first wrong stage demonstrated, no production change. No
 Gitea issue exists for Streets and none is created; the observed-not-
 measured notes in that entry (the prop-built grid blocks, the on-foot
 room-55 non-ending, the r19/r54 guards at the camera) are closed by the
-owner's ruling and are NOT unresolved debt. The tank drive remains the
-separate existing #14 seam (the owner's Runway test), not a Streets
+acceptance ruling and are NOT unresolved debt. The tank drive remains the
+separate existing #14 seam (the Runway playtest), not a Streets
 blocker. No further Streets rerun, tank, Valentin, minefield, objective,
 void or room-55 investigation.
 
@@ -31012,7 +31035,7 @@ Next level: Depot (alias `depot` -> stage 30).
 ## repaired (c6e3ad16) after Depot's large-tile yards registered the
 ## warehouse next door from 12 of 19 stops, census clean except one
 ## texture-decode rejection parked as #27, one cartridge pairing matches;
-## owner replay pending
+## acceptance playtest pending
 
 DEPOT COVERAGE, run by hand from the local native-level-coverage
 procedure (followed step for step, no change to it). Repo gates: clean
@@ -31249,7 +31272,7 @@ provoked; no walking anywhere; the safe door (key 2) and the office's
 door 43 (key 4) not pressed; the train cars' end openings show a dark
 vestibule that was not paired; no pickup collected.
 
-OWNER HANDOFF: .\tools\windows\play.ps1 -Level depot -Cheats
+PLAYTEST HANDOFF: .\tools\windows\play.ps1 -Level depot -Cheats
 invincible,invisible,maxammo (drop the cheats for the AI/combat pass;
 -Difficulty 1 or 2 for objectives a-d). Watch: the spawn yard and the
 gate (7, 9), the main yard and the gatehouse (8), the container rows
@@ -31262,7 +31285,7 @@ hangar and the office block inside it (37, 39-42, the safe in 42), the
 platform and the train (38, 89 - the cars' armour, doors, the gantry),
 and the train interior (83-87). Boarding the train through door 46/47
 ends the level. The sky: any colour flicker in the yards is #27's
-territory. Sprint acceptance is the owner's replay; nothing here is
+territory. Sprint acceptance is the acceptance playtest; nothing here is
 "accepted".
 
 Scratch (session, not committed): depot\ r01..r89 (points-a/-a2/-a3:
@@ -31275,10 +31298,10 @@ batch.ps1, sheet.ps1, gitea-file.ps1, i27.md, nocap\ (the play.ps1
 cheat-proof streams); cartridge frames under %TEMP%\sightline-oracle\
 dp-r05.
 
-## 2026-09-15 - Depot and Train: SPRINT-ACCEPTED by owner; no additional
+## 2026-09-15 - Depot and Train: SPRINT-ACCEPTED in playtest; no additional
 ## fixes required; no retrospective Train pass
 
-Depot (alias `depot` -> stage 30) - SPRINT-ACCEPTED by owner, 2026-09-15
+Depot (alias `depot` -> stage 30) - SPRINT-ACCEPTED in playtest, 2026-09-15
 ("Depot is good."), at/through f97f96d9; no additional fixes required. The
 f97f96d9 first pass stands as the record: 40 of 89 rooms swept from their
 floors, 49 helper volumes recorded with their XZ mapping, room 84 the
@@ -31293,14 +31316,14 @@ reopened by this ruling and is not chased until a level supplies the
 visible consumed witness. No further Depot rerun, sky, cache, safe,
 mainframe or train-boarding investigation.
 
-Train (alias `train` -> stage 25) - SPRINT-ACCEPTED by owner, 2026-09-15
-("I tested Train too and that is good."), by the owner's own manual test.
-No automated pre-owner pass was run for Train and none is run
-retrospectively: the owner's replay IS the acceptance, and a retrospective
-sweep would create work for a level the owner has already ruled on. No
+Train (alias `train` -> stage 25) - SPRINT-ACCEPTED in playtest, 2026-09-15
+(Train was tested and found good), on a manual playtest alone.
+No automated pre-playtest pass was run for Train and none is run
+retrospectively: the manual playtest IS the acceptance, and a retrospective
+sweep would create work for a level already ruled on. No
 Gitea issue exists for Train and none is created.
 
-Next level: Control (alias `control` -> stage 23). The owner's lvl23 run
+Next level: Control (alias `control` -> stage 23). The lvl23 playtest run
 reports a remote-mine pickup that cannot be collected (mark-001, room 78);
 that blocker is the first objective of the Control round, ahead of the
 sweep.
@@ -31308,7 +31331,7 @@ sweep.
 ## 2026-09-15 - Control: "I can't pick up the remote mines" is the Max Ammo
 ## cheat refusing a mines-only ammo crate, on the cartridge too (Gitea #28)
 
-OWNER REPORT (run 20260915-204906-lvl23, mark-001, `SL_CHEATS=invincible,
+PLAYTEST REPORT (run 20260915-204906-lvl23, mark-001, `SL_CHEATS=invincible,
 maxammo`, difficulty 1): stage 23, room 78 (registered 78), eye (-4806.9,
 13.6, -2325.6) theta 6.6 verta -39.4, a green crate on the cave floor under
 the crosshair, HUD 28 | 777.
@@ -31358,18 +31381,18 @@ PRODUCTION: nothing changed on the pickup path (rule 5). Shipped: the
 read-only inventory witness (src/native/sl_inv_dbg.c, inert unless
 SL_INV_DBG is set).
 
-OWNER DECISION (proposed on #28, not shipped): the JP/EU rule behind a
+DECISION (proposed on #28, not shipped): the JP/EU rule behind a
 runtime toggle defaulting to the US behaviour, if the routine cheat set
 should keep mine crates collectable. Until then the pickup test is run
 WITHOUT maxammo: `.\tools\windows\play.ps1 -Level control -Cheats
 invincible,invisible -TeleportMark <mark-001.txt>`; `-Weapon remotemine`
-is a pre-grant, not the test. Owner replay pending.
+is a pre-grant, not the test. Playtest pending.
 
 ## 2026-09-15 - Jungle weapon reports: the AR33 "blinding" muzzle flash was
 ## the star flash's point table half in ROM order (FIXED e6c94eb4, #29); the
 ## RC-P90 casings measure equal to the cartridge (PARKED #30, witness shipped)
 
-Both reports came from the owner's Jungle session; both were measured at a
+Both reports came from a Jungle playtest session; both were measured at a
 fixed pose in Control (room 78, the mine mark) with `-Weapon <name>`, one
 bounded Z press, a shot every frame, and the same burst on the cartridge
 (scratch romfire.py: All Guns + Max Ammo poked from boot, the A-cycle to the
@@ -31399,7 +31422,7 @@ numVertices * 4 (shared: every first-person star flash). AFTER: the star
 draws at the muzzle, the region away from it brightens +24% (the
 cartridge's +30% muzzle light), no whiteout; KF7 control (generic flare)
 unchanged. Routing: G-Z Models.txt added under models-animation. Gitea #29
-(fix shipped, owner replay pending).
+(fix shipped, playtest pending).
 
 RC-P90 casings. The new read-only `SL_CASING_DBG=1` witness (392e60d2,
 src/native/sl_casing_dbg.c: g_Casings pos/vel/rotation scale/floor per
@@ -31417,7 +31440,7 @@ sizes (9-13 vs 8-10 px). One bounded Jungle burst (native, stage 37 spawn):
 the same physics under the game's own catch-up - the level runs heavy, so
 g_ClockTimer is 3 and the casing crosses the view in 3-4 rendered frames.
 No first wrong state demonstrated; NOT tuned. PARKED as Gitea #30 pending
-an owner F8 mark on the frame that looks wrong.
+a playtest F8 mark on the frame that looks wrong.
 
 ALSO measured on the way (not a defect): the game ticks once per VI
 natively with g_ClockTimer 1 (B-091) against the cartridge's once per two
@@ -31427,7 +31450,7 @@ is equal - a comparison of casing records has to be made per VI.
 ## 2026-09-15 - Control first pass (alias `control` -> stage 23, teleport-only):
 ## 70 of 91 rooms swept from their floors, 21 helper volumes mapped, room 28
 ## is the level-exit region, the remote-mine crate collects without maxammo
-## (#28), no first wrong stage demonstrated in the level; owner replay pending
+## (#28), no first wrong stage demonstrated in the level; playtest pending
 
 Procedure: the local native-level-coverage procedure. Gates: build.ps1; test.ps1
 -Level control -Frames 400 PASS and -Level facility -Frames 400 PASS
@@ -31519,7 +31542,7 @@ c6e3ad16 lookup, SL_CULL=1 and the B-133 no-fade untouched.
 
 OBSERVED, not defects: the intro subtitle "Bond: Wait here in the lift,
 Natalya. I'll secure the area." stays on the HUD for the whole of every
-teleport run (the owner's own 19929-frame mark has none - the teleport
+teleport run (the playtest's own 19929-frame mark has none - the teleport
 skips the intro's clock); at lift 29 the cartridge's HUD reads
 "Trevelyan: Too slow, James!" within ~90 ticks of arrival while the
 native run kept the intro line for its 300 VIs there - a script trigger,
@@ -31534,7 +31557,7 @@ level end was reached only by teleport into 28); the drone guns and
 cameras not provoked; the double doors and key doors not pressed; no
 walking; Trevelyan's lift line not examined.
 
-OWNER HANDOFF: `.\tools\windows\play.ps1 -Level control -Cheats
+PLAYTEST HANDOFF: `.\tools\windows\play.ps1 -Level control -Cheats
 invincible,invisible,maxammo` (drop the cheats for the AI/combat pass).
 THE MINE CRATE: replay the mark WITHOUT maxammo -
 `.\tools\windows\play.ps1 -Level control -Cheats invincible,invisible
@@ -31550,7 +31573,7 @@ cavern and its lifts (22-29; 28 ends the level), the bays and the hall
 (1-10), the mainframe corridors (33, 44, 47, 58), the control room and
 mezzanine (45-49, 59, 60, 69, 70), the dark upper galleries (34, 38,
 54-56, 61, 62, 66-68 - the cartridge's), the keypad door 155 and the
-double doors. Sprint acceptance is the owner's replay; nothing here is
+double doors. Sprint acceptance is the manual playtest; nothing here is
 "accepted".
 
 Scratch (session, not committed): control\ r01..r91, r19b, r29s, cal01,
@@ -31562,14 +31585,14 @@ batch.ps1, sheet.ps1, gitea-file.ps1, i28/i29/i30.md; cartridge frames
 and records under %TEMP%\sightline-oracle\ct-mineA, ct-mineB, ct-ar33,
 ct-p90, ct-r29, ct-r61-63, ct-r61-250.
 
-## 2026-09-15 - Control owner replay on bad4642c: weapons and remote mines
-## resolved per owner; the tinted-glass panes drew see-through / black - B-119's
+## 2026-09-15 - Control playtest on bad4642c: weapons and remote mines
+## resolved per playtest; the tinted-glass panes drew see-through / black - B-119's
 ## LOD-family precedence had discarded the pane's opacity addend since 2026-09-12
-## (B-138, FIXED 9b2d8c6a, Gitea #31); owner replay pending
+## (B-138, FIXED 9b2d8c6a, Gitea #31); playtest pending
 
-OWNER RULING on bad4642c: "The weapons and remote mine issues are resolved."
+PLAYTEST RULING on bad4642c: "The weapons and remote mine issues are resolved."
 (#28 the mines-only crate under maxammo, #29 the AR33 star flash, #30 the
-RC-P90 casings - closed by the owner's word as far as this round goes; #28's
+RC-P90 casings - closed by the playtest ruling as far as this round goes; #28's
 toggle decision still open.) NEW: "the glass at those markers aren't
 working right. I don't think they are ever supposed to be fully
 transparent. Might need to double check with the rom for values."
@@ -31622,7 +31645,7 @@ traverses) showed through. Discriminators: SL_ALPHA_EQ=0 changed nothing
 pane translucent magenta, =2 (texture dropped) solid magenta - the
 texture's alpha was the only alpha in force; SL_TEXGEN_LOD 0/1/2 moved
 nothing (not a mip-level question). A regression from B-119 (2026-09-12);
-Facility's panes were owner-validated before it (2026-08-28) and had
+Facility's panes were playtest-validated before it (2026-08-28) and had
 carried the same 40% since.
 
 FIX 9b2d8c6a (B-138, src/gfx/sl_gfx_dl.c): the single-image mip variant
@@ -31635,7 +31658,7 @@ windowed doors' calculatedopacity; ordinary props on the same word carry
 prim alpha 0 and are unchanged (measured: the mainframe cabinet, lockers
 and desks share the word under SL_GLASS_MARK).
 
-AFTER (scratch glass-before-after.png: owner mark / fixed teleport /
+AFTER (scratch glass-before-after.png: playtest mark / fixed teleport /
 cartridge, all three marks): every pane an unbroken dark reflective sheet
 with the env map's blocky reflection - mark 2 near-identical to the
 cartridge frame, mark 3 region 42 vs the cartridge's 32, mark 1 the stair
@@ -31658,13 +31681,13 @@ HUD at mark 2 reads "Boris: Don't mind me, I just look after the
 computers." (a script line; the native run kept the intro subtitle -
 same class as the Trevelyan lift line, script boundary).
 
-OWNER HANDOFF (glass): `.\tools\windows\play.ps1 -Level control -Cheats
+PLAYTEST HANDOFF (glass): `.\tools\windows\play.ps1 -Level control -Cheats
 invincible,invisible,maxammo -TeleportMark <run>\mark-001.txt` (and
 -002, -003) - the panes should be dark reflective sheets like the
 cartridge's; the mezzanine pane (tint 150 / cull 300) and the corridor
 panes (300 / 600) grade with distance, the rest are opaque beyond 10
 units by their records. Facility's lab windows are the second witness.
-Never "accepted" here; sprint acceptance is the owner's replay.
+Never "accepted" here; sprint acceptance is the manual playtest.
 
 Scratch (session, not committed): control\ glass-mark-00{1,2,3}.png,
 rom-glass-{1,2,3}.png, gfix{1,2,3}.png, glass-before-after.png,
@@ -31673,19 +31696,19 @@ facg-rom.png, pair-archives-glass.png, pane-tex.png, texdump2\, romglass.py,
 g1w/g1l/g1a/g1t/g3w/gfix*/facg*/arcg* logs; cartridge frames under
 %TEMP%\sightline-oracle\ct-glass{1,2,3}, fac-glass{500,250}, ar-glass.
 
-## 2026-09-16 - Jungle and Control: SPRINT-ACCEPTED by owner; #28/#29/#30/#31
-## closed on owner acceptance; #27 remains parked
+## 2026-09-16 - Jungle and Control: SPRINT-ACCEPTED in playtest; #28/#29/#30/#31
+## closed on acceptance; #27 remains parked
 
-OWNER RULING, 2026-09-16: "I think control and the weapon issues are fixed. We
-can move onto the next level."
+PLAYTEST RULING, 2026-09-16: control and the weapon issues are fixed; move
+on to the next level.
 
-Jungle - SPRINT-ACCEPTED by owner, 2026-09-16; AR33 flash fix (e6c94eb4)
+Jungle - SPRINT-ACCEPTED in playtest, 2026-09-16; AR33 flash fix (e6c94eb4)
 accepted; RC-P90 presentation accepted / no further change.
 
-Control - SPRINT-ACCEPTED by owner, 2026-09-16; remote-mine cartridge
+Control - SPRINT-ACCEPTED in playtest, 2026-09-16; remote-mine cartridge
 behaviour accepted (the US ROM's Max Ammo refusal of a mines-only crate is
 preserved, no JP/EU toggle, no production change on the pickup path); Gitea
-#28, #29, #30, #31 closed on the owner's ruling with one acceptance comment
+#28, #29, #30, #31 closed on the playtest ruling with one acceptance comment
 each (ids 228, 230, 232, 234; state closed read back); tinted-glass fix
 9b2d8c6a (B-138) accepted. The parked portal-disable residue noted under
 B-138 is not investigated. #27 remains OPEN / PARKED, untouched.
@@ -31697,7 +31720,7 @@ Next level: Caverns (alias `caverns` -> stage 39).
 ## floors, 8 recorded as hovering / helper volumes with their XZ mapping,
 ## room 63 is the level-exit region, the room 23/24 darkness pairs with the
 ## cartridge, census clean on 80 logs, no first wrong stage demonstrated;
-## owner replay pending
+## playtest pending
 
 Procedure: the local native-level-coverage procedure, followed by hand. Gates: build.ps1 (242 objects, 0
 recompiled at c6f24743); test.ps1 -Level caverns -Frames 400 PASS and -Level
@@ -31829,7 +31852,7 @@ reached only by teleport into 63); the key doors, lift doors and the
 remaining airlocks not pressed; no walking; no weapon or ammo pickup
 tested; the 22 tinted panes not audited individually.
 
-OWNER HANDOFF: `.\tools\windows\play.ps1 -Level caverns -Cheats
+PLAYTEST HANDOFF: `.\tools\windows\play.ps1 -Level caverns -Cheats
 invincible,invisible,maxammo` (drop the cheats for the AI/combat pass; the
 autogun in corridor 55 is live). Watch: the start lift and the concrete
 tunnels (62, 1-7), the flooded inlet cavern and its catwalks (8-10, 16),
@@ -31840,7 +31863,7 @@ cartridge's), the control-room block (38-50), the storage and
 master-control rooms (41, 42), the outlet pump room (51, 53), the long
 corridor and its autogun (55), the end cave and exit lift (59, 60, 63), the
 tinted panes wherever they stand, the iris doors. Sprint acceptance is the
-owner's replay; nothing here is "accepted".
+manual playtest; nothing here is "accepted".
 
 Scratch (session, not committed): caverns\ r01..r63, r08b/r09b/r10b/r16b/
 r16c/r24b/r26b..r30b/r32b..r35b, cal01, door99, w16/w29/w30, n23, probe,
@@ -31849,37 +31872,38 @@ points-a/b.txt, summary-a/b.txt, plan.py, census.py, propnames.py,
 ar.ps1, tele-ar.ps1, batch.ps1, sheet.ps1, closeout.ps1; cartridge frames
 under %TEMP%\sightline-oracle\cv-r23.
 
-## 2026-09-16 - Caverns and Cradle: SPRINT-ACCEPTED by owner; no additional
+## 2026-09-16 - Caverns and Cradle: SPRINT-ACCEPTED in playtest; no additional
 ## fixes; no retrospective Cradle pass
 
-OWNER RULING, 2026-09-16: "Caverns is accepted and so is cradle."
+PLAYTEST RULING, 2026-09-16: "Caverns is accepted and so is cradle."
 
-Caverns (alias `caverns` -> stage 39) - SPRINT-ACCEPTED by owner, 2026-09-16,
+Caverns (alias `caverns` -> stage 39) - SPRINT-ACCEPTED in playtest, 2026-09-16,
 at/through 34959abb (the first pass above: 55 of 63 rooms swept from their
 floors, 8 helper volumes, room 63 the level-exit region, census clean on 80
 logs, no first wrong stage demonstrated, no production change). No further
 change; the room 23/24 darkness stands as authored (cartridge pair).
 
-Cradle (alias `cradle` -> stage 41) - SPRINT-ACCEPTED by owner, 2026-09-16,
-owner-tested manually. No native-level-coverage pass was run for Cradle and
-none is scheduled retrospectively (owner ruling); the acceptance rests on the
-owner's own replay, not on a sweep, contact sheet or census from this side.
+Cradle (alias `cradle` -> stage 41) - SPRINT-ACCEPTED in playtest, 2026-09-16,
+tested manually. No native-level-coverage pass was run for Cradle and
+none is scheduled retrospectively (ruling); the acceptance rests on the
+manual playtest alone, not on a sweep, contact sheet or census.
 Nothing is recorded here as proven about Cradle's rooms or textures beyond
-the owner's word.
+the playtest verdict.
 
-Next level: Aztec (alias `aztec` -> stage 28). The owner reports a crash
+Next level: Aztec (alias `aztec` -> stage 28). A playtest reports a crash
 playing through Aztec (run 20260916-074840-lvl28); that crash is the BLOCKER
 ahead of the Aztec first pass.
 
-## 2026-09-16 - Aztec crash (owner run 20260916-074840-lvl28): ACCESS
+## 2026-09-16 - Aztec crash (playtest run 20260916-074840-lvl28): ACCESS
 ## VIOLATION reading 0x04000000 in the walker's vertex load - B-139, fixed
 ## 32083e8b (consumer semantic + witness + crash pose); producer of the unset
-## segment NOT demonstrated; Gitea #32 OPEN pending owner replay; the Aztec
-## pre-owner sweep NOT run (owner ruling: manual testing)
+## segment NOT demonstrated; Gitea #32 OPEN pending playtest; the Aztec
+## pre-playtest sweep NOT run (ruling: manual testing)
 
-OWNER: "I got a crash playing through aztec." Then, once the fix shipped:
-"If the crash is fixed, I'll continue testing. I think the automated might
-not be worth it here." So this entry is the crash, not a coverage pass.
+PLAYTEST REPORT: "I got a crash playing through aztec." Then, once the fix
+shipped, the ruling: manual testing continues once the crash is fixed; the
+automated coverage pass is not worth it here. So this entry is the crash,
+not a coverage pass.
 
 BINARY IDENTITY: the crashing exe was the HEAD build (build\win32\
 sightline.exe of 2026-09-16 00:38, after the last source commit 9b2d8c6a
@@ -31899,7 +31923,7 @@ four 16-byte loads of a variable-length copy from the operand into g_vbuf
 (0x1671500), i.e. the OP_VTX handler's `memcpy(&g_vbuf[v0], src, n*16)`.
 Stale stack words: dorottex (model.c:4441, the first-person star flash),
 sub_GAME_7F061E18 (gunfire.c:1454), texSelect - the game's build of that
-frame; the owner was firing. Session seams (env): SL_BOOT_LEVEL=28,
+frame; the player was firing. Session seams (env): SL_BOOT_LEVEL=28,
 SL_BOOT_DIFFICULTY=1, SL_CHEATS=invincible,maxammo (no invisible), windowed
 960x720, seed 6e9b909. `events` holds only the record-1 env/zfar lines and
 `log` has no mission/room lines (SL_MISSION_DBG was off), so the artefacts
@@ -31943,9 +31967,9 @@ FIX (32083e8b, B-139, native only):
 
 PRODUCER: NOT DEMONSTRATED. Which object had segment 4 unset is unknown.
 Bounded rounds, every one clean (zero unresolved loads, no fault):
-1. the owner's recording replayed through SL_INPUT (+.move/.vis/.spec):
+1. the playtest recording replayed through SL_INPUT (+.move/.vis/.spec):
    diverges at census frame 181 (tris 762 vs 760) and runs to its end -
-   the owner's own ruling that replays do not reproduce a session, struck
+   the standing ruling that replays do not reproduce a session, struck
    as a mechanism after this one run;
 2. a teleport into every one of the 92 sl_map rooms with a 437-degree turn
    (the class-wide check of the consumer's table: every model class in
@@ -31955,7 +31979,7 @@ Bounded rounds, every one clean (zero unresolved loads, no fault):
    displays - the one producer in the tree that emits a literal
    gSPVertex(0x04000000) is the monitor quad, propobj.c:7226, with segment
    4 set two words earlier), cheats invincible,invisible,maxammo;
-4. a visible fight there under the owner's exact cheats (guards' lasers,
+4. a visible fight there under the playtest run's exact cheats (guards' lasers,
    a death).
 Noted debt, not the cause: get_ptr_allocated_block_for_vertices (chr.c:1177,
 the vtxallocator behind dorottex) is declared void and returns dynAllocate's
@@ -31974,11 +31998,11 @@ was demonstrated; the next fault of this class, if any, will not crash -
 it will drop the batch and print the producer.
 
 GITEA: #32 filed and read back (state open; the title is cut at Gitea's
-255-character limit, the classification and "owner replay pending" are in
-the body). No prior Aztec issue existed (search q=aztec empty); #13 (Dam)
+255-character limit, the classification and the pending-playtest status are
+in the body). No prior Aztec issue existed (search q=aztec empty); #13 (Dam)
 was the same consumer class with a different producer.
 
-NOT RUN (owner ruling): the Aztec native-level-coverage pass - no
+NOT RUN (ruling): the Aztec native-level-coverage pass - no
 coverage claims, no census aggregate, no contact-sheet review, no door
 or pickup tests, no objective observation are recorded for Aztec. What
 the crash rounds happened to show (a spawn corridor, the monitor hall, the
@@ -31986,7 +32010,7 @@ launch bay with the shuttle hanging over Bay-4, the exhaust bay's "Exhaust
 bay opening." subtitle on entry, a tinted pane in room 62 seen through
 from the control side) is incidental and is not a coverage result.
 
-OWNER HANDOFF: `.\tools\windows\play.ps1 -Level aztec -Cheats
+PLAYTEST HANDOFF: `.\tools\windows\play.ps1 -Level aztec -Cheats
 invincible,invisible,maxammo`. The crash was a display-list vertex load
 naming segment 4 with the segment unset while firing (frame 13397 of a
 Secret Agent run); it can no longer fault. Watch for: a prop, weapon flash
@@ -31995,42 +32019,42 @@ log will carry `sl_vtx: fN UNRESOLVED load ...` naming the list, and the
 `sl_dl:` heartbeat will show rej= nonzero; press F8 there. Any new
 crash.txt carries a [teleport] section: `play.ps1 -Level aztec
 -TeleportMark <run>\crash.txt` goes straight to it. Guard behaviour and
-combat bypassed / not validated by this side.
+combat bypassed / not validated by these rounds.
 
 Scratch (session, not committed): aztec\ replay.ps1, vq.ps1, ar.ps1,
 tele-ar.ps1, batch.ps1, sheet.ps1, mkpoints.py, plan.py, census.py,
 propnames.py, gitea-file.ps1, i32.md, points-a/b.txt, summary-a/b.txt,
-romprops28.txt, rec\ (a copy of the owner's recording), faultrun\, the
+romprops28.txt, rec\ (a copy of the playtest recording), faultrun\, the
 r01..r92 / r??b / cal01 / fire23 / laser23 / vis23 / r66b-d / r62g logs and
 sheets.
 
 ## 2026-09-16 - Full Game Native Coverage, Single Player: COMPLETE - Aztec and
-## Egypt SPRINT-ACCEPTED by owner; all 20 missions accepted; #32 closed
+## Egypt SPRINT-ACCEPTED in playtest; all 20 missions accepted; #32 closed
 
-OWNER RULING, 2026-09-16: "Ok, i fully played through the rest of single
-player and I think it's acceptable." This is the FINAL acceptance of the
+PLAYTEST RULING, 2026-09-16: the rest of single player was fully played
+through and is acceptable. This is the FINAL acceptance of the
 remaining campaign and of the whole single-player campaign.
 
-Aztec (alias `aztec` -> stage 28) - SPRINT-ACCEPTED by owner, 2026-09-16,
-owner-played through on the native build with the B-139 consumer fix
+Aztec (alias `aztec` -> stage 28) - SPRINT-ACCEPTED in playtest, 2026-09-16,
+played through manually on the native build with the B-139 consumer fix
 (32083e8b); the access violation did not recur. Gitea #32 CLOSED on the
 successful playthrough (comment id 237, read back state closed). The
 producer of the unset segment 4 remains undemonstrated and stays recorded
 above (B-139) as historical correctness debt; no further investigation is
-scheduled. No native-level-coverage pass was run for Aztec (owner ruling);
-the acceptance rests on the owner's replay.
+scheduled. No native-level-coverage pass was run for Aztec (ruling);
+the acceptance rests on the manual playtest.
 
-Egypt (alias `egypt` -> stage 32) - SPRINT-ACCEPTED by owner, 2026-09-16,
-owner-played. No native-level-coverage pass was run for Egypt and none is
-scheduled retrospectively; the acceptance rests on the owner's replay, not
-on a sweep, contact sheet or census from this side.
+Egypt (alias `egypt` -> stage 32) - SPRINT-ACCEPTED in playtest, 2026-09-16,
+played manually. No native-level-coverage pass was run for Egypt and none is
+scheduled retrospectively; the acceptance rests on the manual playtest, not
+on a sweep, contact sheet or census.
 
-All 20 missions are now SPRINT-ACCEPTED by the owner on the native build:
+All 20 missions are now SPRINT-ACCEPTED in playtest on the native build:
 Dam, Facility, Runway, Surface 1, Bunker 1, Silo, Frigate, Surface 2,
 Bunker 2, Statue, Archives, Streets, Depot, Train, Jungle, Control, Caverns,
 Cradle, Aztec, Egypt.
 
-ACCEPTANCE STATEMENT: the complete single-player campaign is owner-played
+ACCEPTANCE STATEMENT: the complete single-player campaign is manually played
 and acceptable on the native build for the scope of this sprint.
 
 This is not a claim of pixel-perfect or behavioural parity with the
@@ -32041,9 +32065,9 @@ recorded dispositions unchanged.
 Full Game Native Coverage - Single Player: COMPLETE.
 
 ## 2026-09-16 - Full-campaign demo build: every single-player mission, the whole
-## cheat menu unlocked (none active), Multiplayer closed; owner-testable exe
+## cheat menu unlocked (none active), Multiplayer closed; playtest-ready exe
 
-OWNER POLICY (verbatim scope): all 20 single-player missions selectable,
+POLICY (verbatim scope): all 20 single-player missions selectable,
 Aztec and Egypt without their unlock requirements; MULTIPLAYER visible but
 dimmed and rejected at the shared activation seam; every canonical menu
 cheat unlocked and selectable; NO cheat active on a clean boot. Otherwise the
@@ -32085,7 +32109,7 @@ carried in `$DEMO_DEFS` to the src/game AND src/platform compiles and into
                 keyboard, pad and mouse (all N64 A edges) fall through to
                 Single Player exactly as Rare's one-controller case does;
                 the 0x70 dim in the constructor is the front end's own
-                unavailable shade. OWNER-VERIFIED on this build.
+                unavailable shade. PLAYTEST-VERIFIED on this build.
   debrief       the Facility-only "terminal debrief" override is REMOVED;
                 the demo walks the campaign on with Rare's own arm.
 
@@ -32100,7 +32124,7 @@ SAVE ISOLATION, unchanged and reused: the demo binary ignores SL_EEPROM /
 SL_EEPROM_RW and forces %LOCALAPPDATA%\sightline\demo\eeprom.bin
 (sl_demo_save_path, src/platform/sl_ultra_shim.c). Clean profile = that
 file absent (the previous Facility-demo save was moved to session scratch,
-the file was left absent after this round's runs); the owner's normal
+the file was left absent after this round's runs); the existing normal
 %LOCALAPPDATA%\sightline\eeprom.bin was sha256-identical and mtime-identical
 before and after every demo run of this round.
 
@@ -32113,7 +32137,7 @@ The bare core after `-Demo` is build\win32\sightline.exe (needs SL_ROM and
 the staged DLLs beside it; play.ps1 launches it, and the -Demo build ignores
 play.ps1's SL_EEPROM_RW).
 
-WHAT THIS SIDE MEASURED before the owner took over testing (scratch
+WHAT WAS MEASURED before manual testing took over (scratch
 demo\ sheets, driver: drive.ps1 / launch.ps1 / mptest.ps1 over PostMessage
 keys + SendInput mouse, SL_MISSION_DBG menu lines, SL_SHOT frames): on the
 clean demo save, Mission Select drew all twenty names; Dam, Control, Aztec
@@ -32123,11 +32147,11 @@ briefing) into first-person gameplay (stage 33 / 23 / 28 / 32, cameramode
 Enter and a real mouse click on the MULTIPLAYER row both produced an A edge
 and fell through to Mission Select (menu 7), never MENU_MP_OPTIONS (14); the
 NORMAL build under the same driver with a scratch save reached
-MENU_MP_OPTIONS (14) from the MULTIPLAYER row. NOT measured this side (owner
-ruling "I can do the rest of the testing"): a cheat toggled on and off
+MENU_MP_OPTIONS (14) from the MULTIPLAYER row. NOT measured here (ruling:
+the rest of the testing is manual): a cheat toggled on and off
 through the menu, the normal build's Mission Select gating on screen (the
 preprocess identity above is the evidence for it), and the packaged exe's
-fresh-directory launch. Left to the owner.
+fresh-directory launch. Left to the manual playtest.
 
 No trace-verify claim. No Gitea issue: no defect in the existing demo
 implementation was demonstrated.
@@ -32135,7 +32159,7 @@ implementation was demonstrated.
 ## 2026-09-16 - Demo follow-up: "mouse doesn't work in the cheat menu" - the cheat
 ## page was not in the native pointer set (shared front end, not demo-specific)
 
-OWNER REPORT on Sightline-Full-Campaign-Demo.exe (972b21cc): "mouse doesn't
+PLAYTEST REPORT on Sightline-Full-Campaign-Demo.exe (972b21cc): "mouse doesn't
 work in the cheat menu."
 
 PROVENANCE, one discriminator, both builds, same driver as the Multiplayer
@@ -32183,7 +32207,7 @@ Repackaged at the SAME artifact path, build\demo\Sightline-Full-Campaign-Demo.ex
 (sha256 82f8d9bb881ca9cfca321d4560fbadfbe972ca3244dfaa2ed6a77dcffd251058,
 payload id 1e36fbd06f5fe9ffcc583e9c938d37ac). The demo save
 (%LOCALAPPDATA%\sightline\demo\eeprom.bin) was deleted after the runs so the
-owner's first launch is fresh; the owner's normal save was byte- and
+next playtest launch is fresh; the existing normal save was byte- and
 mtime-identical throughout. Scratch: demo\cheattest.ps1, cheat-{normal,demo}-
 {before,after}\, watch-demo\, unlocked.eep.
 
@@ -32196,12 +32220,12 @@ mtime-identical throughout. Scratch: demo\cheattest.ps1, cheat-{normal,demo}-
 START STATE: sightline/full-campaign-demo at f970123d == origin, master
 2b68bc63 == origin/master, tree clean, no worktrees, no `dev` branch.
 
-OWNER ARTEFACTS ABSENT. The brief named three runs - 20260916-125027-lvl27
+PLAYTEST ARTEFACTS ABSENT. The bug report named three runs - 20260916-125027-lvl27
 (Bunker 2 crash), 20260916-122634-lvl33 (Dam mark), 20260916-123122-lvl35
 (Runway mark). None exists under ~/.sightline/runs (only 125247-lvl22,
 125646-lvl24, 125937-lvl29, 130256-lvl30, 130712-lvl25 from today) nor under
 %LOCALAPPDATA%\sightline. Every item below was reconstructed from the
-owner's words and the existing witnesses; no crash.txt and no Dam/Runway
+report's wording and the existing witnesses; no crash.txt and no Dam/Runway
 mark were available.
 
 ------------------------------------------------------------------------
@@ -32213,7 +32237,7 @@ two PP7 pickups 204 at -708/-728,27,4459; ops-manual objective object 270
 at -710,56,4487), opening onto the big office 27/29 with two desk clusters:
 DESK1 38 / TV1 75 / KEYBOARD1 45 at (-1041..-1102, 3889..3920) and
 (-1389..-1467, 4207..4270), MAINFRAME1 48 at -705,94,3936 (romprops.py
-stage 27, tick 1300, 168 props; the brief's "rooms 37/39-42, safe in 42" is
+stage 27, tick 1300, 168 props; the report's "rooms 37/39-42, safe in 42" is
 Depot's office block, not Bunker 2's). Five bounded teleported runs on
 f970123d, all with SL_CRASH_LOG armed, all "survived", crash file empty:
   a  (-1090,4100) th 185, KF7 30 rounds into the near monitor (maxammo):
@@ -32226,9 +32250,9 @@ f970123d, all with SL_CRASH_LOG armed, all "survived", crash file empty:
      safe explodes with debris, guard killed, 1100 f.
   e  = d at difficulty 2 (00 Agent, the ops-manual objective live).
 Census clean on every run (rej 0, unknown 0, every reject 0). Nothing here
-says the owner's crash does not exist - it says a desk/monitor/safe
+says the reported crash does not exist - it says a desk/monitor/safe
 explosion in that room, with and without the ammo cheat, at 0 and 2, does
-not fault on this build in five tries. The producer needs the owner's
+not fault on this build in five tries. The producer needs the playtest run's
 crash.txt (B-139 writes it with the resolved region and a [teleport] pose)
 or a recording; nothing was changed in the destruction path. Scratch:
 repair\b2crash.ps1, b2c-{a..e}-sheet.png, bunker2\b2c-*.log.
@@ -32246,7 +32270,7 @@ pocked with blue exactly where the cartridge draws white snow. The
 2026-09-08 captures (scratch shot-dam, ab-dam-on) have NO blotches; the
 09-15 3-way already shows them small - a regression of 09-08..09-15.
 
-KILL-SWITCH A/B FIRST (brief order), all at intro f1216-1224: SL_SHADE_LINEAR=0,
+KILL-SWITCH A/B FIRST (prescribed order), all at intro f1216-1224: SL_SHADE_LINEAR=0,
 SL_CULL=4, SL_NEARSAT=0, SL_CLIPDEPTH=0, SL_ENHANCE=0, SL_TLUT16=0 - the
 blotches survive every one (repair\ab-sheet.png, ab-tlut.png), so none of
 the six suspect commits is the producer. SL_TREE_ZWRITE=0 removes every
@@ -32289,11 +32313,11 @@ theta 90) before/after (repair\rwfix-poses.png, rw-c vs rwfix-c): the
 same blue speckle holes gone; runway rooms 9/10/13 poses whole. Surface 1
 intro + spawn valley: treeline unchanged (repair\surf-sheet.png).
 
-NOT FOUND: the owner's "long malformed/flat polygon crossing the
+NOT FOUND: the reported "long malformed/flat polygon crossing the
 mountain/sky". Not present at the Dam intro window, the massif sweep or
 the four Runway poses on this build. The 09-15 3-way recorded exactly such
 slabs under SL_CULL=4 (the pre-#25 default) and none under SL_CULL=1;
-if the owner's shell still carried an SL_CULL=4/5 mitigation from the #25
+if the playtest shell still carried an SL_CULL=4/5 mitigation from the #25
 round, that is a candidate, but it is a guess and is recorded as one. The
 Runway intro's dark slabs at f1240-1280 are Bond's own hair as the intro
 camera swirls through his head (repair\rwslab-sheet.png) - the cartridge's
@@ -32301,7 +32325,7 @@ own transition, not the backdrop. Runway "malformed/missing faces" beyond
 the holes: none demonstrated at the poses taken.
 
 ------------------------------------------------------------------------
-DEPOT (stage 30) yard floor, owner mark 20260916-130256-lvl30/mark-001
+DEPOT (stage 30) yard floor, playtest mark 20260916-130256-lvl30/mark-001
 (3047.2,166.1,-9276.7 theta 108.5 verta -22.75 room 9): centre 95 00 00,
 the floor red near and white far. Two causes, both FIXED; the audit's
 findings carried forward, not redone.
@@ -32371,7 +32395,7 @@ REGRESSION GATE: build.ps1 (242 objects); test.ps1 default PASS; test.ps1
 -Frames 400 all PASS. No trace-verify claim (no MIPS toolchain on this
 host); src/game untouched this round.
 
-PARKED, recorded not fixed: (1) the Bunker 2 crash - needs the owner's
+PARKED, recorded not fixed: (1) the Bunker 2 crash - needs the playtest run's
 crash.txt; (2) the "long flat polygon" - not reproduced; (3) B-141's
 tail-of-window bytes (RDRAM vs TMEM 256+) and the stale-TLUT colours - a
 TMEM byte model would settle both, out of scope; (4) GRAVELDETAIL carries
@@ -32387,13 +32411,13 @@ surf-*; depot-audit\runs-fix2, runs-b142; cartridge frames under
 %TEMP%\sightline-oracle\dp-mark1, dp-mark1k.
 
 GITEA: #27 updated (consumer identified, both causes, fixes, acceptance;
-retitled; comment 240 read back, OPEN pending owner replay); #33 filed for
-the Bunker 2 crash (not reproduced; needs the owner's crash.txt; OPEN);
+retitled; comment 240 read back, OPEN pending playtest); #33 filed for
+the Bunker 2 crash (not reproduced; needs the playtest run's crash.txt; OPEN);
 #34 filed for the Dam/Runway holes (B-140 shipped; the long polygon not
-reproduced; OPEN pending owner replay). Commits: 1ac4558b (B-140),
+reproduced; OPEN pending playtest). Commits: 1ac4558b (B-140),
 25451654 (B-141 + doc-routing not_covered), ce1f2eec (B-142).
 
-## 2026-09-16 (evening) - Dam owner replay 20260916-203131-lvl33 (marks 1 and
+## 2026-09-16 (evening) - Dam playtest 20260916-203131-lvl33 (marks 1 and
 ## 2): the replay ran the OLD demo core; on HEAD the massif texture is whole
 ## (B-140) and the gate panel pairs with the cartridge; the sky SLIVER is room
 ## 1's trailing Tri4 quad, drawn natively and never on the cartridge - OPEN,
@@ -32402,7 +32426,7 @@ reproduced; OPEN pending owner replay). Commits: 1ac4558b (B-140),
 WHICH BINARY. The run's log names the demo save path; the demo runtime cache
 (%LOCALAPPDATA%\sightline\demo\runtime\) holds no directory for this round's
 payload 28af644b - the newest extracted runtime is 1e36fbd0 (the 12:22 demo,
-f970123d). So the owner replayed the pre-repair demo without B-140/141/142.
+f970123d). So the playtest ran the pre-repair demo without B-140/141/142.
 Census was off in the run (no counters printed), hence the cache evidence.
 Both marks re-taken on HEAD 308da689 (repair\telemark.ps1, difficulty 1,
 teleport poses from the mark files; the teleport verta held this time).
@@ -32411,14 +32435,14 @@ MARK IDENTITY: mark-002 (verta +26.15, eye 15956.1,60.3,5426.1, theta 172.07,
 room 121) is the look-up = the sliver + the massif; mark-001 (eye
 17416.9,60.1,8019.3, theta 194.87, verta -9.1) is the panel.
 
-(B) "MOUNTAIN MISSING TEXTURE" - FIXED on HEAD (B-140). The owner's mark-2
+(B) "MOUNTAIN MISSING TEXTURE" - FIXED on HEAD (B-140). The playtest's mark-2
 ridge band carries the blue detail-blend holes; HEAD at the pose: tris
 textured=2915 plain=0, pal-wrap 0, plain-under-alpha-program=0, detail-blend
 z-upd authored=150; holes gone (repair\m2-ridge-ab.png). The massif's own
 word fc26a004 1ffc93fc is the one-image mip variant - never took the
 treeline override, untouched by B-140.
 
-(C) GATE PANEL BUTTONS - NOT a defect on HEAD. Owner mark-1 centre = the left
+(C) GATE PANEL BUTTONS - NOT a defect on HEAD. Playtest mark-1 centre = the left
 button: a heap model list 20059348 (vertex segment 4), 32x32 CI8 2010fed8,
 fc121824 ff33ffff MODULATEIA, opaque 0c192078, resolved (gl 97), no reject /
 wrap / program leak. Cartridge at the pose (romtele.py stage 33 difficulty 1
@@ -32427,7 +32451,7 @@ right dark olive, both flat blocks - Rare's look. HEAD red 201/36/31 vs
 199/36/31, olive 50/46/39 identical (repair\m1-triple.png,
 m1-panel-zoom.png). The old core showed olive/olive; SL_PAL_WRAP=0 on HEAD
 keeps the red, so B-141 is not what changed it - most likely the button's
-game STATE at the owner's moment (frame 4407); not chased.
+game STATE at the marked moment (frame 4407); not chased.
 
 (A) THE SKY SLIVER - REPRODUCED on HEAD, OPEN. Aimed mark (SL_MARK_CX/CY
 -0.069/0.139): the sliver's only owner is room 1 (the massif) seq 265, DL
@@ -32463,7 +32487,7 @@ vertex load + Tri4 at the list's end; the two triangles drawn in the
 backdrop colour (fully fogged). No shared semantic is identifiable ->
 no code change. Rabbit-hole rule applied after two full cycles.
 
-Gitea #34 updated (comment 249, retitled, read back). Owner handoff:
+Gitea #34 updated (comment 249, retitled, read back). Playtest handoff:
 play.ps1 -Level dam -Difficulty 1 -TeleportMark <run>\mark-002.txt (sliver
 + massif) and mark-001.txt (panel); launch build\demo\Sightline-Full-
 Campaign-Demo.exe sha256 c30143e6... (unchanged - no code changed this
@@ -32478,14 +32502,14 @@ runs-m1 / m2 / m2s / m2pw0 / m1pw0 (marks), romtele_dump.py, romvtx.py;
 cartridge frames under %TEMP%\sightline-oracle\dam-m1, dam-m2, dam-m2* and
 dam-r121-*.
 
-## 2026-09-17 - B-143: Dam owner replay 20260916-232914-lvl33 ran the CURRENT
+## 2026-09-17 - B-143: Dam playtest 20260916-232914-lvl33 ran the CURRENT
 ## core; the sky sliver and the ridge notch (mark 1) are room 1 drawn OUTSIDE
 ## its portal window - the RDP scissor Rare issues per room (B-101, never
-## applied) and the B-112 full-view window (owner-ruled, now off by default);
+## applied) and the B-112 full-view window (design ruling, now off by default);
 ## the gate panel (mark 2) pairs with the cartridge at the same switch state
 
 CORE IDENTITY, and the previous entry's "stale core" conclusion is WRONG. The
-owner launches through tools/windows/play.ps1, which executes
+playtest launches through tools/windows/play.ps1, which executes
 build\win32\sightline.exe (play.ps1:218), never the packaged exe - so the
 absence of a 28af644b directory under the packaged-runtime cache proves only
 that the package was never run. The core that produced the fresh run: mtime
@@ -32498,7 +32522,7 @@ ce1f2eec, all ancestors of b446ee7c). The packaged exe
 build\demo\Sightline-Full-Campaign-Demo.exe
 (c30143e65f71e28f62780e12485345a2920b9aa9097fe3b58192a47be23864a0) carries the
 same strings. The run's log line 2 ("new save ...\sightline\demo\eeprom.bin")
-is the demo core ignoring SL_EEPROM_RW. So the owner's "still not fixed" was
+is the demo core ignoring SL_EEPROM_RW. So the playtest report's "still not fixed" was
 measured ON the fixed core: both marks are renderer questions (branch B).
 
 MARK IDENTITY: mark-001 (frame 10469, eye 16013.6 60.3 5591.5, theta 175.97,
@@ -32518,7 +32542,7 @@ for nibble; no terminator convention exists in the note.
 (3) Clip-code trivial reject: the sliver's three vertices are inside the
 screen box (ndc x -0.55..0.17, y -0.28..0.26, w 986..1242), so gmain.s:784-794
 (AND 0x7030 rejects, OR 0x4343 clips) passes it straight to setup.
-(4) No BE/B0 in any list: the walker counts both as unknown and the owner's
+(4) No BE/B0 in any list: the walker counts both as unknown and the playtest's
 own log prints unknown=0 on every census line of the run.
 So NO interpreter command semantic differs. The cartridge executes the same
 B1; its pixels never reach the screen.
@@ -32546,7 +32570,7 @@ a room-table and visible-room-array dump, --poke16 per tick):
 
 WHY NATIVE DRAWS THEM. Two shared semantics, both needed:
   (a) B-101 (2026-09-08) decoded ED into g_sciss[] and applied it to nothing.
-  (b) B-112 (c7abc45b, 2026-09-10, owner-ruled) replaced every portal window
+  (b) B-112 (c7abc45b, 2026-09-10, design ruling) replaced every portal window
       by the full viewport, so even an applied scissor could not bite: the
       new [rooms] requested-windows lines (sl_game_query.c) show rooms 1/2/23/
       26-29/35 at [1,10]-[319,230] under B-112 and at [1,201]-[28,230] under
@@ -32615,7 +32639,7 @@ PASS. play.ps1 -TeleportMark replays of both fresh marks ran on the new core
 limitation, not this change.
 
 ### MARK 2 - NOT a rendering defect; the panel pairs with the cartridge at
-### the same switch state. Owner decision on what was wrong.
+### the same switch state. Decision pending on what was wrong.
 
 The two blocks are one prop model (heap list 200593e8 / 200592d0, vertex
 segment 4), both faces cc=fc121824 ff33ffff (TEXEL0 x SHADE), 32x32 CI8
@@ -32623,8 +32647,8 @@ segment 4), both faces cc=fc121824 ff33ffff (TEXEL0 x SHADE), 32x32 CI8
 which the game rewrites over time. Measured shades at the right block after a
 B press at the panel (SL_INPUT stream, dl frames after the press): 323232 off
 -> 324332 (+~250) -> 326e32 (+~520) -> 326b32 (+~830) -> 32c832 (+~1120) ->
-323232 with the left block red again (+~1720). The owner's frame (30 s after
-their single B press at read 5461) has the right block at 45.7/183.4/38.7 and
+323232 with the left block red again (+~1720). The playtest frame (30 s after
+its single B press at read 5461) has the right block at 45.7/183.4/38.7 and
 the left at 45.6/45.8/38.6 - the bright phase.
 SAME-STATE CARTRIDGE PAIRING (romtele2.py --press 12, B held 12 ticks at the
 mark pose, shots every 200 ticks): right block 45.4/71.5/37.5 at +100,
@@ -32633,12 +32657,12 @@ mark pose, shots every 200 ticks): right block 45.4/71.5/37.5 at +100,
 native 201.8/36.8/31.3; olive 46.7/46.6/42.4 vs 45.7/45.9/38.7; frame grey
 139 vs 138. So at the bright state the cartridge draws the SAME two flat
 blocks with the same means (177 vs 181 green, 45/45/37 olive) - flat is
-Rare's look; nothing to fix in the renderer. What the owner saw as wrong is
-therefore not established; the one thing that differs is TIMING: on hardware
+Rare's look; nothing to fix in the renderer. What the playtest reported as
+wrong is therefore not established; the one thing that differs is TIMING: on hardware
 the gate cycle (dark -> bright green -> red) completes in ~700 ticks (~12 s),
-while the owner's panel was still bright 30 s after the press and the native
+while the playtest's panel was still bright 30 s after the press and the native
 ramp above reaches bright only after ~1100 dl frames. Recorded as an
-OBSERVATION for the owner (dam2\m2-state-sheet.png), not chased: it is door/
+OBSERVATION for review (dam2\m2-state-sheet.png), not chased: it is door/
 gate logic timing, outside this rendering task, and the native VI-index units
 of the measurement were not shown equal to cartridge ticks.
 
@@ -32658,7 +32682,7 @@ sgi-proof.ps1, m1-*.png, r123-sheet.png, m2-state-sheet.png, notch-zoom-
 triple.png, wit*-*.ppm, runs-*; cartridge frames under
 %TEMP%\sightline-oracle\dam2-*.
 
-OWNER ARTIFACT (B-143): build\demo\Sightline-Full-Campaign-Demo.exe sha256
+PLAYTEST ARTIFACT (B-143): build\demo\Sightline-Full-Campaign-Demo.exe sha256
 6f438b554819754db128258f4d9917f2dd07606073cbc5e8c74d4b5e958d7995, payload
 fcb222b4c384c41b02f319d0b4e6ec75, demo core sha256
 2842233ad77f2da723194a7074711069e177b2de7f7150402c612da980610e0d - the same
@@ -32675,12 +32699,12 @@ retitled. Commits e9f651f0 (scissor, sl_gfx_dl.c + sl_game_query.c) and
 
 ## 2026-09-17 - B-144: the Dam gate panel's frame was flat because B-118's
 ## LOD lerp ran under G_TL_TILE - a regression of accepted Dam by a global
-## renderer change (the owner's hypothesis), fixed; the panel now pairs with
+## renderer change (the hypothesis from playtest review), fixed; the panel now pairs with
 ## the cartridge unpressed and pressed
 
-OWNER REPLAY 20260917-071141-lvl33 (play.ps1 -Level dam -Cheats
+PLAYTEST 20260917-071141-lvl33 (play.ps1 -Level dam -Cheats
 invincible,maxammo, the B-143 core): "the mountain looks good, but the
-security panel is still weird." Mountain marked good by the owner (recorded
+security panel is still weird." Mountain marked good in playtest (recorded
 on #34 - not an acceptance of the level). Mark: eye 17439.7 60.0 8056.5,
 theta 191.72, verta -10.75, room 113, the panel unpressed.
 
@@ -32717,7 +32741,7 @@ FIRST WRONG STAGE. SL_CC_LODLERP=0 - the render tile alone - matched the
 cartridge (top bevel 112 vs 117, inner slope banded), so the two-unit
 LOD_FRACTION lerp B-118 (ae77f478, 2026-09-12) put every c=13 draw on is
 the difference, and accepted Dam (31e3ad44, 2026-09-07) predates it: a
-regression by a global change, exactly the owner's hypothesis. The prop
+regression by a global change, exactly the hypothesis from playtest review. The prop
 list runs `ba001001 00000000` (G_MDSFT_TEXTLOD = G_TL_TILE) and `bb000001
 ffffffff` before its CI image (list read from cartridge RDRAM, dam2\
 paneldl2.txt); with LOD off the RDP computes no per-pixel LOD,
@@ -32765,7 +32789,7 @@ agreed with it; the wall-clock gate timing observation of the previous
 entry stands; the other multi-monitor panels (objid 336 at 7802.6 and
 8699.9) take the same path by construction and were not shot.
 
-OWNER ARTIFACT (B-144): build\demo\Sightline-Full-Campaign-Demo.exe sha256
+PLAYTEST ARTIFACT (B-144): build\demo\Sightline-Full-Campaign-Demo.exe sha256
 e880841e35f5c51925d4164366bee41af9c541d534ffe93dbb936c5635dd3477, payload
 9a5b918c714ee49c4629cae8ce87aee4, demo core sha256
 fb52f89a85c2fc9d98644372aaaf9f50ee9e7ae1114c582b94e4316cb867e698 (== the
@@ -32781,18 +32805,18 @@ panel-tilepoke.png, panel-cull-sheet.png, panel-lodlerp-sheet.png,
 panel-textures.png, paneldl2.txt, ks-*.png, ctl-*.png, texdump*;
 cartridge frames under %TEMP%\sightline-oracle\dam2-p3*.
 
-## 2026-09-17 - Aztec: owner crash in chrlvUpdateAimendsideback (weapons_held
+## 2026-09-17 - Aztec: playtest crash in chrlvUpdateAimendsideback (weapons_held
 ## outside g_Props) NOT reproduced, producer NOT demonstrated - crash.txt now
 ## names the record ([characters], SL_CHR_WATCH); shuttle-exhaust outro
 ## corruption reproduced to its POSE (SL_STAGE_FLAGS) but not its defect;
-## both OPEN (#35, #36); owner ruling "call it there", demo repackaged
+## both OPEN (#35, #36); ruling "call it there", demo repackaged
 
-OWNER: a crash early in Aztec (first said Cradle, corrected) while
-changing weapons; could not reproduce it again (a 30108-frame Aztec
+PLAYTEST REPORT: a crash early in Aztec (first reported as Cradle, corrected)
+while changing weapons; not reproduced in play again (a 30108-frame Aztec
 session on the same core, run 20260917-092312-lvl28, no fault). Then:
 "when the level completes and the shuttle launches, weird corruption
 when it launches from the flames of the jets" (mark-001 of that run).
-Then: "we can call it there and just get an updated demo build."
+Then the ruling: stop there and produce an updated demo build.
 
 CRASH (run 20260917-090450-lvl28). Binary identity: build\win32\
 sightline.exe of 08:03, sha256 fb52f89a85c2fc9d98644372aaaf9f50ee9e7ae1
@@ -32824,7 +32848,7 @@ game thread), a first-person hand-buffer overrun (buffers at 0x201B5E70/
 Not reproduced, bounded, same core/seed/cheats/difficulty, at the pose:
 stand and fire in bursts (1100 f), advance through room 11 firing
 (1700 f), the corridor from spawn with door taps and fire (2800 f), the
-owner's clarified action - next-weapon cycling every 30 frames with a
+report's clarified action - next-weapon cycling every 30 frames with a
 shot per step (1100 f, cycle list w1/w4/w50). Every run clean.
 
 SHIPPED 1e4c6388 (native only, src/game untouched): src/native/
@@ -32860,8 +32884,8 @@ nothing; 0x4000 ran the outro - fade, camera mode 1, eye -3555.1 405.2
 1813.7 room 66 = the mark pose exactly, object_rocket_launch(0x17). In
 that fresh session the exhaust rendered CORRECTLY (28-frame sheet;
 SL_MARK_AT=620 mark). So the defect is session-state dependent (the
-owner's session: level restart at record 16005, 30108 frames). A replay
-of the owner's recording diverged in the first corridor. Candidates, NOT
+playtest session: level restart at record 16005, 30108 frames). A replay
+of the playtest recording diverged in the first corridor. Candidates, NOT
 measured: the decoded-texture cache (tex_acquire) is never flushed across
 a level reload and keys on source address + a hash of the first 256
 bytes; the tmem span map answering tile 1 with an older load. Gitea #36
@@ -32870,29 +32894,29 @@ was reverted (the "cache-slot vs gl" disagreement in marks is a
 reporting artefact: slot = last tex_acquire, gl = the bound name).
 
 ACCEPTANCE (both commits): test.ps1 PASS, aztec 400 PASS, facility 400
-PASS. No trace-verify claim. Owner path: play.ps1 -Level aztec -Cheats
+PASS. No trace-verify claim. Playtest path: play.ps1 -Level aztec -Cheats
 invincible,maxammo; a recurrence's crash.txt is the whole ask.
 
 Scratch (session): aztec2\ run.ps1, replay.ps1, sheet.ps1, gitea.ps1,
 decode_input.py, a1/a3/c1/w1-w3/o1-o5 scripts and logs, inj*.log,
 o1/o2/o5 contact sheets, owner-noise-zoom.png, i-crash.md, i-exhaust.md,
-c35.md, commit1/2.txt, rec\ (copy of the owner's recording).
+c35.md, commit1/2.txt, rec\ (copy of the playtest recording).
 
-## 2026-09-17 - FULL-CAMPAIGN DEMO: OWNER ACCEPTED. One defect ruled in:
+## 2026-09-17 - FULL-CAMPAIGN DEMO: ACCEPTED. One defect ruled in:
 ## the credits roll's cast rows overlapped - the setup-file swap
-## word-swapped the 16-bit CreditsEntry table; fixed (Gitea #37, owner
-## replay pending)
+## word-swapped the 16-bit CreditsEntry table; fixed (Gitea #37,
+## playtest pending)
 
-OWNER RULING: "I accept the demo, but we need to bug the credits roll."
-The full-campaign demo (build\demo\Sightline-Full-Campaign-Demo.exe of the
-previous entry) is OWNER ACCEPTED as of 2026-09-17. Acceptance is of the
+PLAYTEST RULING: the demo is accepted, with the credits roll to be filed
+as a bug. The full-campaign demo (build\demo\Sightline-Full-Campaign-Demo.exe of the
+previous entry) is ACCEPTED as of 2026-09-17. Acceptance is of the
 demo, not of the debt: #35 (Aztec weapons_held crash) and #36 (shuttle-
 exhaust outro corruption) stay OPEN and parked exactly as recorded above;
 nothing on the renderer audits or the accepted rendering work was touched
 this round. No demo-tracking issue exists on Gitea (searched: credits,
 cast, demo, campaign, full, roll, text), so the acceptance is recorded here.
 
-SYMPTOM (owner, no mark on disk - witnessed here): jungle credits scene,
+SYMPTOM (playtest report, no mark on disk - reproduced here): jungle credits scene,
 characters and scene fine, "The Cast" heading coherent, but the cast/role
 entries on the left overlap heavily and are unreadable.
 
@@ -32982,33 +33006,33 @@ SL_CREDITS_EVERY frames while the roll runs, the view rectangle and each
 row's computed x/y (the probe runs on the game's odd pumped frames only -
 use an odd interval).
 
-Gitea #37 OPEN (filed, read back), owner replay of the repackaged demo
+Gitea #37 OPEN (filed, read back), playtest of the repackaged demo
 pending. Scratch (session): credits\ run.ps1, ink.py, pair.py, sheet
 outputs c1-sheet.png (before), f2-sheet.png (after, progression),
 f3-sheet.png (640x480), cast-pair.png (before / cartridge / after / 640),
 p1-p3 and f1-f3 logs, sgi_proof_prop.sh, issue.md; cartridge frames under
 %TEMP%\sightline-oracle\credits-c1.
 
-OWNER ARTIFACT (credits fix, #37): build\demo\Sightline-Full-Campaign-Demo.exe
+PLAYTEST ARTIFACT (credits fix, #37): build\demo\Sightline-Full-Campaign-Demo.exe
 sha256 926860fe06cefe4648b2247ac369706ed7fac63f2c14914da24232d64de3c68e
 (38009749 bytes), payload 7b7da1d6fddec0c2d105aa145a9008c4, demo core sha256
 3617dd9de2d016aefc35128a78a912a45ae984025d4485bbc32ec04c6638d86e (== the
 build\win32\sightline.exe of build.ps1 -Demo). Launched once: runtime
 %LOCALAPPDATA%\sightline\demo\runtime\7b7da1d6fddec0c2d105aa145a9008c4 (8/8
 extracted), extracted core hashes identically and carries "SL_CREDITS_DBG"
-and "B-144 c=13 lerp". The owner's demo save and normal save are untouched
+and "B-144 c=13 lerp". The existing demo save and normal save are untouched
 (same sha256 before and after the launch); the demo save was NOT deleted -
-it is the owner's now.
+it is the save the playtests use now.
 
-## 2026-09-17 - FULL-CAMPAIGN DEMO: OWNER ACCEPTED, credits fix verified
-## by owner replay (Gitea #37 CLOSED). Demo sprint COMPLETE.
+## 2026-09-17 - FULL-CAMPAIGN DEMO: ACCEPTED, credits fix verified
+## by playtest (Gitea #37 CLOSED). Demo sprint COMPLETE.
 
-OWNER RULING on the replayed credits fix: "Ok, that's resolved." The owner
-replayed the repackaged demo (build\demo\Sightline-Full-Campaign-Demo.exe,
+PLAYTEST RULING on the replayed credits fix: "Ok, that's resolved." The
+playtest ran the repackaged demo (build\demo\Sightline-Full-Campaign-Demo.exe,
 sha256 926860fe..., demo core 3617dd9d..., recorded in the previous entry)
 and the cast roll reads as authored. Gitea #37 closed with the acceptance
 comment (id 269), state read back `closed`. The full-campaign demo stands
-OWNER ACCEPTED and the demo sprint is COMPLETE; sightline/full-campaign-demo
+ACCEPTED and the demo sprint is COMPLETE; sightline/full-campaign-demo
 merges to master with this closeout.
 
 Parked, non-blocking, unchanged by this round: #35 (Aztec weapons_held
@@ -33083,7 +33107,7 @@ Three files added, four touched, zero tokens for the IDO build:
   `zoomIn/OutFovPersec = 1.0` rate, counted down in the getter, so the pulse
   is in ticks not polls: x1.21 per notch, ~11 notches sweep the sniper's
   60->7 range; 1 tick (x1.1, 23 notches) reads as no control, 3 (x1.33) too
-  coarse to aim with. Owner's to judge; one constant.
+  coarse to aim with. Left to playtest judgement; one constant.
 - `src/native/sl_game_query.c` - `sl_game_scoped_zoom_active(player)`:
   insightaimmode AND the right-hand item's WEAPONSTATBITFLAG_DISABLE_CROUCH
   bit, the same two-term test as bondview2.c:5359-5361, never a weapon-id
@@ -33224,7 +33248,7 @@ and the cursor menus are the same code path (no change under `menu`).
 
 - No physical controller attached (`sightline input: no gamepad found (0
   joystick(s) seen)`); the pad path is untouched code and inputtest has no
-  pad rows; feel is the owner's.
+  pad rows; feel is for the playtest.
 - The camera's zoom was not driven (`sl_cheat` has no camera name and
   rejects `40`; Surface carries no camera). The query reads the same stat
   bit the docs assign to it.
@@ -33242,13 +33266,13 @@ those inputs MISSING (Space, F, Q, WASD and the mouse still replay). The
 `_peek` reader exists for the recorder to attach to; `_get` consumes and
 must not be used by it.
 
-## 2026-09-17 - Gitea #38 CLOSED on owner acceptance ("So far everything
+## 2026-09-17 - Gitea #38 CLOSED on playtest acceptance ("So far everything
 ## works right", replayed on keyboard and mouse; comment id 301, state closed
 ## read back). Recorder coverage of the actions stays #7 / B-104 debt.
 
 ## 2026-09-17 - #39 Controls: native Invert Mouse Y - one state, one sign
 ## point, mouse only; SL_LOOK_INVERT settled as STICK-ONLY (decision A) -
-## implemented on sightline/qol-controls, OPEN pending owner replay
+## implemented on sightline/qol-controls, OPEN pending playtest
 
 Persistence is #41's; nothing here reads or writes a config, the EEPROM or
 the `.style` sidecar. The setting is reachable this round through the
@@ -33335,7 +33359,7 @@ while held, 2/1 -> weap 5 -> 29 -> 5, wheel -1/+1 -> 29 / 5; watch S/W
 across a watch open/close.
 
 Hardware limitation: no physical controller attached (`no gamepad found`),
-so the pad half is the synthetic harness above; feel is the owner's. The
+so the pad half is the synthetic harness above; feel is for the playtest. The
 windowed runs shared the desktop with a live user: real mouse motion and
 two focus losses (`grab=0`) appear mid-run in c1/c2/c3 after the measured
 pulses; every sign above is read from the isolated single-poll +/-70 pulses
@@ -33347,15 +33371,15 @@ SL_DEMO_BUILD; test.ps1 facility 300 PASS 1/1; inputtest.ps1 22/117
 pre-existing B-096-class failures unchanged in kind and count. `make
 trace-verify` NOT run (no MIPS toolchain; no src/game change).
 
-Owner watch list: (1) feel of the ON state in the hands, aiming included;
+Playtest watch list: (1) feel of the ON state in manual play, aiming included;
 (2) whether the Look Up/Down option in the watch still feels right on a real
 pad (untouched code, not hardware-tested this round); (3) #41 must call
 `sl_mouse_invert_y_set` from the config load and expose the getter in the
 Options menu - the env seed stays as the developer override.
 
-### #39 addendum, same day - the owner's added requirement: Invert Mouse Y
+### #39 addendum, same day - added requirement: Invert Mouse Y
 ### MUST be changeable from the watch; env-only is not player UX. Watch row
-### added; #39 stays OPEN pending owner replay
+### added; #39 stays OPEN pending playtest
 
 Scope correction posted on #39 (read back): the watch-menu control is
 mandatory; persistence across restarts remains #41; direct clicking of the
@@ -33432,20 +33456,20 @@ line in the expansion, so each block replaces an existing blank line.)
 Build: build.ps1 246/246, test.ps1 facility 300 PASS 1/1; final gate
 build.ps1 -Demo then build.ps1 LAST, key lacks SL_DEMO_BUILD.
 
-Owner steps (watch): Esc (or Tab) -> A twice (to GAME OPTIONS) -> W once
+Playtest steps (watch): Esc (or Tab) -> A twice (to GAME OPTIONS) -> W once
 (wraps to INVERT MOUSE Y; or S ten times) -> Enter -> D for ON / A for OFF
 -> Enter -> Esc. The value shows on re-entry; it applies the moment the
 watch closes. Persistence across a restart is #41 (this round the seed is
 `$env:SL_MOUSE_INVERT=1`).
 
-## 2026-09-17 - Gitea #39 CLOSED on owner acceptance (played the #39 build,
+## 2026-09-17 - Gitea #39 CLOSED on playtest acceptance (played the #39 build,
 ## the separate "Invert Mouse Y" watch row included; comment id 322, state
 ## closed read back). Persistence stays #41; clicking the row is #40.
 
 ## 2026-09-17 - #40 UI: direct mouse interaction in the solo watch - hover
 ## highlights, one click acts, page bar clickable, the game's own crosshair
 ## at half size as the pointer - implemented on sightline/qol-controls,
-## OPEN pending the owner's hands-on pass (cursor already owner-verified:
+## OPEN pending the hands-on playtest pass (cursor already playtest-verified:
 ## "cursor works great in the menu")
 
 ### Bounded recon (the eight questions)
@@ -33525,7 +33549,7 @@ m1/m2 logs and sheets).
   once the list settles.
 - `src/native/sl_menu_pointer.c` - `sl_menu_pointer_uv` factored out.
 - `src/platform/sl_input.c` - the watch keeps gameplay's capture once a
-  click has armed it (owner request 2026-09-17: OS cursor hidden, relative
+  click has armed it (requirement 2026-09-17: OS cursor hidden, relative
   mode stays); `watch_pointer_integrate` sums the deltas into the one
   pointer record (window pixels, clamped, per-platform dx/dy sign, never
   the Invert Mouse Y state, seeded from the host cursor's last absolute
@@ -33562,7 +33586,7 @@ m1/m2 logs and sheets).
 
 ### Evidence
 
-Machine-verified (windowed injection BEFORE the owner took the desktop;
+Machine-verified (windowed injection BEFORE manual testing took the desktop;
 scratch qol3\t1..t4 logs, m1/m2 sheets, sheet-cursor.png /
 sheet-cursor-zoom.png): projection vs capture as measured above; hover
 follows rows (t2: rows 2..10 at x 74, values at x 200); value clicks
@@ -33578,13 +33602,13 @@ wheel -> row 2, S x5 -> row 7 (one row per step); t4 (captured mode):
 integrated pointer landed on every injected target exactly, clamp at
 (0,0), the half-size crosshair drawn at the pointer (frames 26-42), #38
 E/R/Ctrl/1/2/wheel and #39 look sign unchanged after the watch (t2).
-One defect found in t4 and fixed after the owner took the desktop:
+One defect found in t4 and fixed after manual testing took the desktop:
 read_pointer invalidated the record every poll while captured, so the
 motion serial never advanced and hover did not follow in captured mode
 (the fix skips read_pointer for the captured watch).
-OWNER-VERIFIED (hands-on, 2026-09-17): "cursor works great in the menu" -
+PLAYTEST-VERIFIED (hands-on, 2026-09-17): "cursor works great in the menu" -
 the small crosshair and its tracking/hover in the watch.
-NOT machine-verified after the last fixes - owner testing in progress:
+NOT machine-verified after the last fixes - manual testing in progress:
 clicks, sliders, page bar, equipment, controller page, abort row, and the
 cursor re-seed on the arming click / after a focus loss.
 
@@ -33599,7 +33623,7 @@ tested); briefing sub-pages have no mouse target; JP/EU offsets mirrored
 from the draw code but untested; the cursor is the sight's own RGBA
 colour (red ring) - the front end's cursor is the same image.
 
-Owner steps: `.\tools\windows\play.ps1` (or the demo package) -> click once
+Playtest steps: `.\tools\windows\play.ps1` (or the demo package) -> click once
 in play to capture -> Esc -> move the mouse: the small crosshair is the
 pointer; hover a Game Options row (highlight follows), click a value
 (changes at once), click and drag the music/fx track, click the page bar
@@ -33608,14 +33632,14 @@ segments, click an equipment row (equips), click the control style's name
 Enter/A/D and the wheel still work as before. Alt-tab: the OS cursor
 returns; the next click re-captures under it.
 
-## 2026-09-17 - Gitea #40 CLOSED on owner acceptance ("I accept the changes.
-## we can move onto the other options" - the watch pointer and the small
+## 2026-09-17 - Gitea #40 CLOSED on playtest acceptance (changes accepted;
+## move on to the other options - the watch pointer and the small
 ## crosshair cursor included; comment id 332, state closed read back).
 
 ## 2026-09-17 - #41 Phase A: unified Options in the front end (Controls /
 ## Cheats / Back), the native settings store, global control defaults -
 ## implemented on sightline/qol-controls (dec235c3, 54360ce1, 75be950a),
-## OPEN pending the owner's pass
+## OPEN pending the playtest pass
 
 Phase A only: the persistent native settings foundation and the Options
 hierarchy the later rounds (#42 sprint toggle, #43 graphics mode, key
@@ -33762,7 +33786,7 @@ Esc/Space back; controller = the same code (no pad attached this round).
 ### Evidence (scratch qol4\, posted-message injection verified against the
 ### game's own witness lines before every press; nothing committed)
 
-Targeting correction (owner report mid-round, "you keep going into mission
+Targeting correction (playtest report mid-round, "you keep going into mission
 select"): the earlier runs (e1, k1 first pass) pressed a fixed number of
 Enters through the auto-advancing boot chain, so one extra Enter landed on
 mode select with the cursor at Rare's default and activated SELECT MISSION
@@ -33803,7 +33827,7 @@ seek-taps, every value set); mouse path m1 (desktop idle, real pointer +
 SendInput clicks, every click on a witnessed highlight: OPTIONS -> 26,
 CONTROLS -> 27, style 2->3, UPRIGHT, HOLD, ON, BACK -> 26, CHEATS on the
 unlocked save -> 21, a cheat row click Invincible OFF -> ON, PREVIOUS ->
-26, BACK -> 6); demo core d1 (build -Demo, scratch config, owner's demo
+26, BACK -> 6); demo core d1 (build -Demo, scratch config, the existing demo
 save sha256 D9F306E2... unchanged): Multiplayer dimmed, Options, CHEATS
 enabled by policy (23 rows), Enter toggles Laser ON, Esc returns.
 Regression R1: E door 0->1, R reload, Ctrl crouch, 2/1 weap 5->29->5, wheel
@@ -33834,7 +33858,7 @@ change).
 - #42 sprint and #43 graphics mode are one table row and one Controls /
   Display row each, on this store; not started.
 
-Owner steps: `.\tools\windows\play.ps1` -> title -> pick a folder -> 3.
+Playtest steps: `.\tools\windows\play.ps1` -> title -> pick a folder -> 3.
 OPTIONS -> 1. CONTROLS: click the style name (cycles), click REVERSE /
 UPRIGHT, HOLD / TOGGLE, OFF / ON; BACK. Start any mission: the pad reads
 the chosen style and Look Up/Down, the mouse the chosen Invert Mouse Y,
@@ -33843,13 +33867,13 @@ the front-end page shows the change next time, and after a restart. The
 file is %LOCALAPPDATA%\sightline\config.ini; deleting it restores the
 defaults (1.2 Solitaire, reverse, hold, off).
 
-## 2026-09-18 - Gitea #41 CLOSED on owner acceptance ("This is accepted. We
-## can move onto the next issue."; comment id 346, state closed read back).
+## 2026-09-18 - Gitea #41 CLOSED on playtest acceptance (accepted; move on
+## to the next issue; comment id 346, state closed read back).
 
 ## 2026-09-18 - #42 Gameplay: native Sprint (Left Shift, held), default OFF,
 ## capped at the cartridge's own diagonal; OPTIONS -> SETTINGS with a tab
 ## strip (CONTROL | GAMEPLAY) - implemented on sightline/qol-controls, OPEN
-## pending the owner's pass
+## pending the playtest pass
 
 One objective: a genuine native SPRINT action plus an opt-in persistent
 gameplay setting. OFF (default): movement identical to the accepted
@@ -33912,8 +33936,8 @@ reaches and never more. Recorded as D-006 in docs/divergences.md.
   run-up ramps identically. `sl_bond_sprint_state()` for the witness.
 - `src/native/sl_game_query.c` - the SL_INPUT_DEBUG action witness gains
   `sprint=<0 off/1 held/2 applied> spd=<speedforwards>/<speedsideways>/<boost>`.
-- OPTIONS -> SETTINGS / CHEATS / BACK (owner correction mid-round: "use tabs
-  in the options menu instead of adding more options"); `MENU_SL_SETTINGS`
+- OPTIONS -> SETTINGS / CHEATS / BACK (design correction mid-round: tabs
+  in the options menu instead of adding more options); `MENU_SL_SETTINGS`
   (renamed from MENU_SL_CONTROLS, bondconstants.h, front.c's four native
   arms, sl_menu_pointer.c's list) is ONE page with a TAB STRIP - `s_tabs[]`
   in `src/native/sl_front_options.c`, a label plus a row list per tab:
@@ -33960,7 +33984,7 @@ Shift injection: SDL's Windows pump releases any Shift whose
 GetKeyState(VK_LSHIFT) is up (WIN_PumpEvents, verified against the SDL
 2.32 source), so a posted WM_KEYDOWN alone lasts one pump; the injector
 shares the game thread's key state (AttachThreadInput + SetKeyboardState)
-and parks the window off-screen so the owner's pointer cannot cross it (a
+and parks the window off-screen so a live user's pointer cannot cross it (a
 real WM_MOUSEMOVE re-synchronises that state). No real input, no foreground.
 
 Deterministic speed (Surface, teleport -10700.6/167.3/-25447 theta 90, the
@@ -34001,7 +34025,7 @@ longer changes movement. Sheets: sheet-p1-all.png (OPTIONS 1. SETTINGS
 again), sheet-p2.png (relaunch ON, then OFF).
 
 Demo core (build -Demo, key carries SL_DEMO_BUILD, scratch SL_CONFIG, the
-owner's demo save sha256 D9F306E2... unchanged): OPTIONS -> SETTINGS ->
+existing demo save sha256 D9F306E2... unchanged): OPTIONS -> SETTINGS ->
 GAMEPLAY tab -> ON (`sprint=1`, wrote) -> OFF (`sprint=0`, wrote).
 
 Regressions after sprinting (the Surface/Facility logs): E/R/Ctrl/1/2/wheel
@@ -34023,7 +34047,8 @@ expansions 0. `make trace-verify` NOT run (no MIPS toolchain).
 
 - MOUSE: exercised once the desktop went idle (110 s measured before the
   run; m1, real pointer + real clicks, every click on a witnessed
-  highlight): OPTIONS -> 26, SETTINGS -> 27, the GAMEPLAY tab (ow=-2
+  highlight): OPTIONS -> 26, SETTINGS -> 27, the GAMEPLAY tab (
+ow=-2
   col=1, 	ab=1), ON (sprint=1, wrote), OFF (sprint=0), the CONTROL tab
   (	ab=0), BACK -> 26 (sheet-m1.png). Posted WM_MOUSEMOVE does not drive
   the pointer layer (as in the #41 round), so this is the one mouse run.
@@ -34036,14 +34061,14 @@ expansions 0. `make trace-verify` NOT run (no MIPS toolchain).
   caps at the un-boosted diagonal (the run-up needs forward input).
 - Rebinding (Left Shift only), a pad binding, stamina: not in scope.
 
-## 2026-09-18 - Gitea #42 CLOSED on owner acceptance ("It feels right to me.
-## We can move onto the next task."; comment id 362, state closed read back).
+## 2026-09-18 - Gitea #42 CLOSED on playtest acceptance (the feel is right;
+## move on to the next task; comment id 362, state closed read back).
 
 ## 2026-09-18 - #43 Phase A: selectable ORIGINAL / MODERN presentation - the
 ## persistent mode, the Settings DISPLAY tab, and the first MODERN enhancement
 ## (mip pyramid + 16x anisotropic filtering on every world texture) -
 ## implemented on sightline/qol-controls (1eda1849, b0aa67e7, defaaa42), OPEN
-## pending the owner's pass
+## pending the playtest pass
 
 One objective: a real, persistent ORIGINAL / MODERN boundary in the native
 renderer, exposed through the tabbed Settings page, with MODERN carrying ONE
@@ -34152,7 +34177,7 @@ accepted build rendered before #43. Not a remake. Recorded as D-007.
   click on a witnessed highlight): OPTIONS -> 26, SETTINGS -> 27, DISPLAY
   tab (`row=-2 col=2`), MODERN (`present=1`), ORIGINAL (`present=0`), BACK
   (`row=4`) -> 26.
-- Demo (build -Demo, key carries SL_DEMO_BUILD, scratch SL_CONFIG, owner's
+- Demo (build -Demo, key carries SL_DEMO_BUILD, scratch SL_CONFIG, the existing
   demo save sha256 D9F306E2... unchanged before and after, no demo
   config.ini created): OPTIONS -> SETTINGS -> DISPLAY -> MODERN (`present=1`,
   `modern-tex=30/4`) -> ORIGINAL (`present=0`, `0/4`).
@@ -34175,7 +34200,7 @@ accepted build rendered before #43. Not a remake. Recorded as D-007.
 
 - MODERN mip-filters alpha-cutout textures too (fences, grilles); a distant
   cutout averages toward translucent under the alpha test. Not yet judged
-  by the owner; the alternative (exclude cutouts from the pyramid, keep
+  in playtest; the alternative (exclude cutouts from the pyramid, keep
   anisotropy) is one eligibility term away.
 - The two-tile water / mip-lerp family keeps ORIGINAL sampling in both modes
   (as the B-116 enhancement does); the B-119 far image keeps its own pyramid
@@ -34193,7 +34218,7 @@ accepted build rendered before #43. Not a remake. Recorded as D-007.
   window sizes; the mag filter for the 2D layer. Lighting, shadows,
   replacement assets, post-processing: out of Phase A by definition.
 
-Owner steps: `.\tools\windows\play.ps1` -> title -> a folder -> 3. OPTIONS ->
+Playtest steps: `.\tools\windows\play.ps1` -> title -> a folder -> 3. OPTIONS ->
 1. SETTINGS -> click DISPLAY on the tab strip -> click MODERN (or ORIGINAL);
 BACK; start Facility and look along the bottling-room catwalk or any
 corridor floor at a glancing angle - MODERN resolves the distant grating
@@ -34201,11 +34226,11 @@ and floor tiles where ORIGINAL sparkles. The choice persists in
 %LOCALAPPDATA%\sightline\config.ini (`presentation_mode=0|1`); deleting the
 key or the file restores ORIGINAL.
 
-## 2026-09-18 - Gitea #43 PARKED / DEFERRED on owner decision; Phase A
+## 2026-09-18 - Gitea #43 PARKED / DEFERRED by decision; Phase A
 ## RETIRED unshipped (474f6691). Not accepted.
 
-The owner compared ORIGINAL against MODERN on Dam and found the
-filtering-only MODERN not meaningfully distinguishable, and does not want to
+A playtest comparison of ORIGINAL against MODERN on Dam found the
+filtering-only MODERN not meaningfully distinguishable; decision: do not
 ship a filtering-only Original / Modern toggle. #43 is PARKED / DEFERRED
 until the dedicated graphics phase, where Modern is to carry substantial
 visible changes (textures, lighting); it stays OPEN as the tracking issue
@@ -34218,8 +34243,8 @@ Removed by explicit forward commit 474f6691 (no history rewrite):
   enum id, `enum sl_presentation_mode`, `sl_presentation_mode()`, and the
   self-test rows for them (34 checks again, the #42 count). A config.ini
   still carrying the key reads it as an unknown key and ignores it; the next
-  write drops it (the owner's own config carried `presentation_mode=1` from
-  the comparison session - harmless).
+  write drops it (the reference play machine's config carried
+  `presentation_mode=1` from the comparison session - harmless).
 - `src/native/sl_front_options.c` - the DISPLAY tab and its `PRESENTATION
   ORIGINAL / MODERN` row, `SR_PRESENT`, the `present=` diagnostic field. The
   strip is `CONTROL | GAMEPLAY` again at the #42-accepted 0x50 pitch (the
@@ -34243,7 +34268,7 @@ docs/divergences.md is marked RETIRED / NOT SHIPPED with the record kept.
 ## 2026-09-18 - #44 Watch: the SIGHTLINE page - a sixth solo-watch page for
 ## the native-only settings (INVERT MOUSE Y, SPRINT); the #39 row moves here
 ## from Game Options - implemented on sightline/qol-controls (7c5ec216), OPEN
-## pending the owner's pass
+## pending the playtest pass
 
 Filed as #44 after a duplicate search over all 43 prior issues (state=all,
 titles and bodies: watch / sightline / native settings / tab / in-game /
@@ -34423,9 +34448,9 @@ every check), so no real pointer, foreground or SendInput was used.
   PRESENTATION anywhere (the same s_tabs[]). CAUTION, measured: the demo
   core saves to `%LOCALAPPDATA%\sightline\demo\eeprom.bin` regardless of
   SL_EEPROM_RW, and closing the watch in a mission commits the folder
-  record (19 bytes of one folder's checksum/flags changed). The owner's
+  record (19 bytes of one folder's checksum/flags changed). The existing
   demo save was restored byte-for-byte from the pristine copy the earlier
-  rounds hashed (sha256 D9F306E2..., the same content as the owner's normal
+  rounds hashed (sha256 D9F306E2..., the same content as the existing normal
   save) and re-verified; the normal config / save were never opened by this
   round (their mtimes predate its first run).
 - Build: build.ps1 -Demo (250/250) then build.ps1 LAST (250/250, key lacks
@@ -34443,9 +34468,9 @@ every check), so no real pointer, foreground or SendInput was used.
   the window (sl_input.c:1857), and TrackMouseEvent yields an immediate
   WM_MOUSELEAVE with the real cursor elsewhere - the same measured limit as
   the #41 / #42 rounds; a real pointer needs an idle desktop, which never
-  came. The code is the #40 machinery (owner-accepted) with two additions
+  came. The code is the #40 machinery (playtest-accepted) with two additions
   (hit_sightline, the sixth segment) built from the same constants the draw
-  uses; the owner's pass is the evidence.
+  uses; the playtest pass is the evidence.
 - The immediate-application witness for Invert Mouse Y is the pad line's
   `minv=` flipping on the poll of the change (the state read_mouse applies
   once per poll, unchanged since #39 / #41, where physical UP -> verta
@@ -34456,7 +34481,7 @@ every check), so no real pointer, foreground or SendInput was used.
   and Enter exercised.
 - JP/EU text offsets mirrored from the draw code, untested.
 
-Owner steps: `.\tools\windows\play.ps1` -> any mission -> Esc -> A (or
+Playtest steps: `.\tools\windows\play.ps1` -> any mission -> Esc -> A (or
 click the SIXTH bar segment): the SIGHTLINE page; W/S (or hover) pick a
 row; Enter then A/D set OFF/ON (or click OFF / ON); Esc. Sprint (Left
 Shift) and mouse inversion change the moment the watch closes; OPTIONS ->
@@ -34475,7 +34500,7 @@ zoom, the rest are display lists and the high-resolution rounds). Not #43
 (the parked ORIGINAL / MODERN graphics mode) and not dependent on it; no
 dependency on modern textures, lighting, MSAA, shadows or replacement assets.
 
-- Owner requirement: a selectable 4:3 / 16:9 / 32:9 aspect; the image must
+- Requirement: a selectable 4:3 / 16:9 / 32:9 aspect; the image must
   NOT stretch horizontally; 16:9 and 32:9 expose a genuinely WIDER horizontal
   view with the vertical composition preserved. Aspect is separate from
   resolution - never hard-code 1920x1080 / 3840x1080; derive the aspect from
@@ -34516,20 +34541,20 @@ dependency on modern textures, lighting, MSAA, shadows or replacement assets.
 - Validation: deterministic same-pose 4:3 / 16:9 / 32:9 comparisons on Dam
   terrain / mountains, a Facility corridor / room, and a props-and-guards
   scene near the widened edges; no stretch, no vertical crop, wider view,
-  no side-frustum loss, no new pop-in, sane LOD, HUD undistorted. Owner
-  replay is the acceptance.
+  no side-frustum loss, no new pop-in, sane LOD, HUD undistorted. A manual
+  playtest is the acceptance.
 
 Status: PARKED - not to be implemented now. #44 (the watch SIGHTLINE page)
 remains the active engineering task; #43 stays parked and independent.
 
-## 2026-09-18 - Gitea #44 CLOSED on owner acceptance ("#44 is accepted.";
+## 2026-09-18 - Gitea #44 CLOSED on acceptance ("#44 is accepted.";
 ## comment id 410, state closed read back). The SIGHTLINE watch page and its
-## mouse targets are accepted on the owner's own replay.
+## mouse targets are accepted in playtest.
 
 ## 2026-09-18 - #46 Controls: persistent keyboard / mouse / controller
 ## gameplay remapping - the binding registry, both editors (front end and the
 ## watch's nested child), controller BUTTON MODE - implemented on
-## sightline/qol-controls (35326dac .. e41d8652), OPEN pending the owner's pass
+## sightline/qol-controls (35326dac .. e41d8652), OPEN pending the playtest pass
 
 Filed as #46 after a duplicate search over all 45 prior issues (state=all,
 titles and bodies: bind, rebind, remap, mapping, keyboard, mouse button,
@@ -34676,10 +34701,10 @@ watch entry point lives on; all three closed, none owned this scope.
     CROUCH          LEFT CTRL    | PAD B          MODE defaults to ORIGINAL)
 
 ### Evidence (scratch qol8\; posted-message injection on the game's own
-### witness lines, window parked off-screen; the OWNER'S GAME WAS RUNNING
+### witness lines, window parked off-screen; an INTERACTIVE GAME WAS RUNNING
 ### the whole round - PID 82072 since 12:19 - so every run used a scratch
 ### link of the compiled objects, found by PID, and nothing was posted to
-### the owner's window; nothing committed)
+### the interactive window; nothing committed)
 
 - Harness (tools/native/inputtest.c): 225 checks, 100 new, the 22
   pre-existing B-096 failures identical in name and detail; settingstest
@@ -34750,18 +34775,18 @@ watch entry point lives on; all three closed, none owned this scope.
 - NO PHYSICAL CONTROLLER (no gamepad found): the ORIGINAL / CUSTOM split,
   the pad steal, trigger capture and the stick never capturing are
   asserted on the harness's synthetic pad (inputtest, the controller
-  section) - not hardware-tested. Feel is the owner's.
+  section) - not hardware-tested. Feel is for the playtest.
 - MOUSE REBINDING IN PLAY (FIRE = MOUSE 4, the old button silent) is
   harness-witnessed only: posted button messages never reach SDL's button
   state with the window parked off-screen, and a real pointer needed an
-  idle desktop that never came (the owner's game ran throughout).
+  idle desktop that never came (an interactive game ran throughout).
 - AIM's middle-button alias is gone from the defaults (two slots per
   device); one capture restores it.
 - A key pressed while a capture waits binds - that is the contract; the
   keyboard's menu navigation is neutral meanwhile, so a stray S cannot
   also move the cursor.
-- The official build\win32\sightline.exe could not be relinked while the
-  owner's game held it (see the round's end for the final build order);
+- The official build\win32\sightline.exe could not be relinked while an
+  interactive game held it (see the round's end for the final build order);
   every windowed run used the scratch link of the same objects.
 - Demo core: `build.ps1 -Demo` compile / link only, NOT run (the demo
   save redirect is parked tooling debt).
@@ -34769,7 +34794,7 @@ watch entry point lives on; all three closed, none owned this scope.
   menu-navigation rebinding, per-weapon binds, macros: out of scope,
   deliberately deferred.
 
-Owner steps: `.\tools\windows\play.ps1`. Before a mission: 3. OPTIONS ->
+Playtest steps: `.\tools\windows\play.ps1`. Before a mission: 3. OPTIONS ->
 1. SETTINGS -> CONTROL -> BINDINGS: the KEYBOARD/MOUSE tab, click (or
 Enter on) an action's PRIMARY or SECONDARY cell, press the key / mouse
 button / wheel direction; Escape cancels, Backspace empties; the
@@ -34786,7 +34811,7 @@ mapping.
 ## world-detail profile for LOD and render visibility"; textures (#47) and
 ## lighting (#48) split into their own parked issues; all three PARKED
 
-On the owner's clarification (2026-09-18) #43 is no longer a broad
+On the scope clarification (2026-09-18) #43 is no longer a broad
 "original / modern graphics modes" roadmap. Title patched, body rewritten
 as the authoritative scope (the old body summarised in a History section;
 the filtering-only Phase A stays RETIRED / NOT SHIPPED, D-007), comment id
@@ -34838,15 +34863,15 @@ scope:
 DISPLAY roadmap model: ASPECT RATIO 4:3 / 16:9 / 32:9 (#45); WORLD DETAIL
 ORIGINAL / MODERN (#43); later, independently, TEXTURES (#47) and LIGHTING
 (#48) - no single "everything" switch. Status: #43, #47, #48 PARKED, no
-implementation, owner replay acceptance later. Critical path unchanged:
-#46 remapping (owner replay), then #45 widescreen. No source change.
+implementation, playtest acceptance later. Critical path unchanged:
+#46 remapping (playtest), then #45 widescreen. No source change.
 
 ## 2026-09-18 - Gitea #47 RE-SCOPED as the texture-sets roadmap issue:
 ## "Graphics: selectable Original / Community HD / user-supplied XBLA
 ## texture sets"; one canonical texture manifest; permission and
 ## no-distribution gates recorded; PARKED
 
-On the owner's definition of the texture roadmap (2026-09-18) the #47
+On the texture roadmap definition (2026-09-18) the #47
 placeholder ("Display: Original / Modern textures (texture quality, packs,
 filtering)", filed earlier the same day) is converted in place rather than
 duplicated: title patched, body rewritten as the authoritative scope (the
@@ -34866,7 +34891,7 @@ issue; no child issues (the body stays readable as one document).
   represented as canonical id -> ORIGINAL provider like the others - no
   special case. COMMUNITY HD = reference
   https://github.com/GhostlyDark/GoldenEye-007-HD (GLideN64 pack by
-  intermissionfb, fonts by GhostlyDark, per the owner's README reading);
+  intermissionfb, fonts by GhostlyDark, per a reading of its README);
   import-time mapping from the pack's identifiers, no renderer dependency
   on its layout. XBLA = user-supplied source only: validate (hashes,
   signatures, structure - mechanism from recon), extract only the needed
@@ -34911,12 +34936,12 @@ issue; no child issues (the body stays readable as one document).
 Graphics roadmap model: WORLD DETAIL ORIGINAL / MODERN (#43); TEXTURES
 ORIGINAL / COMMUNITY HD / XBLA (#47); LIGHTING ORIGINAL / MODERN (#48);
 other renderer options independently later. All future / parked. Critical
-path unchanged: #46 remapping (owner replay), then #45 widescreen. No
+path unchanged: #46 remapping (playtest), then #45 widescreen. No
 source change.
 
-Reserved binding (2026-09-20, #63 / #64 round 6, the owner: "Mark will
-eventually become the button to change textures later, but we can worry
-about that later"): the pad's View / Create button - today MARK, the run
+Reserved binding (2026-09-20, #63 / #64 round 6, design direction: Mark
+eventually becomes the button that changes textures, deferred until
+later): the pad's View / Create button - today MARK, the run
 mark (sl_input.c read_pad) - is reserved for switching texture sets in play
 when #47 ships. Note only; no implementation, no registry change.
 
@@ -34959,28 +34984,28 @@ present.
 - Unchanged: ORIGINAL (user's own ROM), XBLA (user-supplied, never
   distributed), canonical manifest / provider, fallback-to-ORIGINAL,
   independence from #43 / #48 / #45, the modular graphics model. Status
-  PARKED. Critical path unchanged: #46 remapping (owner replay), then #45
+  PARKED. Critical path unchanged: #46 remapping (playtest), then #45
   widescreen. No source change.
 
-## 2026-09-18 - #46 owner replay: "Keybindings persist after restart. Invert
+## 2026-09-18 - #46 playtest: "Keybindings persist after restart. Invert
 ## Mouse Y does not." - FIRST WRONG STAGE was the runtime seed at the first
-## poll: SL_MOUSE_INVERT=1, left in the owner's shell from the #39 steps,
+## poll: SL_MOUSE_INVERT=1, left in the play shell from the #39 steps,
 ## displaced the parsed config every launch (a #41 precedence, not a #46
 ## change); FIXED on sightline/qol-controls, #46 stays OPEN
 
-Owner observation on the rebuilt normal exe (comment id 474 on #46, read
+Playtest observation on the rebuilt normal exe (comment id 474 on #46, read
 back): the BINDINGS UI is present and `bind.*` lines persist; INVERT MOUSE Y
 toggled, exit / restart, returns to its previous state. Recorded as a #46
 acceptance failure (the issue that changed the persistence layer); not
 split.
 
-### The measurement first (owner data, no code read)
+### The measurement first (playtest run data, no code read)
 
-The owner's three real runs today carried `SL_MOUSE_INVERT=1` in their env
+The three real playtest runs today carried `SL_MOUSE_INVERT=1` in their env
 sidecar (`~/.sightline/runs/20260918-142039 / -142432 / -142716-lvlboot/env`,
 every one) while the config loaded `mouse_invert_y=0`
 (`config.ini (loaded) ... mouse_invert_y=0 sprint_enabled=1 ... bind-lines=2`
-in the run log). The #39 owner steps had said "this round the seed is
+in the run log). The #39 playtest steps had said "this round the seed is
 `$env:SL_MOUSE_INVERT=1`", and the PowerShell session kept it.
 
 ### Bounded causal trace (scratch qol9\, the PUBLIC workflow: the real
@@ -34997,14 +35022,14 @@ Control, CLEAN env (A1 / B1, pre-fix HEAD 3c613a84): loaded
 line `minv=1` (the row reads ON). Every stage right: the chain works when no
 variable is set.
 
-The OWNER'S env (C1 / D1, `SL_MOUSE_INVERT=1`, same file at 0, pre-fix):
+The PLAYTEST env (C1 / D1, `SL_MOUSE_INVERT=1`, same file at 0, pre-fix):
 loaded `mouse_invert_y=0` (parse right) -> first poll `minv=1` (WRONG: the
 env displaced the seed at read_env) -> the page line `minv=1` (the UI shows
 ON although the file says OFF) -> Enter, A (OFF) -> `minv=0` and NO
 `settings: wrote` (the store already held 0 while the live state was 1 - the
 toggle changed the file's value by nothing) -> exit -> file still 0 ->
 relaunch: loaded 0, first poll `minv=1`, page `minv=1` - ON again. That is
-the owner's report, reproduced end to end. ON persisted (the file went to
+the playtest report, reproduced end to end. ON persisted (the file went to
 1, and 1 is what the env re-applied anyway); only OFF could never survive,
 which reads from the chair as "it returns to its previous state".
 
@@ -35021,7 +35046,7 @@ override was set in the shell that launched every run. `git diff
 1ccb8b5c..HEAD -- src/platform/sl_input.c src/platform/sl_ultra_shim.c`
 touches the invert path only in the debug line's `padmode` field; the seed
 and the env order are dec235c3 (#41). Independent of #46's code, recorded
-on #46 as instructed.
+on #46.
 
 ### The fix (smallest change at that stage)
 
@@ -35039,7 +35064,7 @@ help say so. No src/game change; no `__sgi` arm touched.
 
 ### Acceptance on the fixed real exe (build.ps1 -Demo then build.ps1 LAST,
 ### `.build_key` without SL_DEMO_BUILD; every run below through play.ps1
-### with `SL_MOUSE_INVERT=1` PRESENT - the owner's environment - unless
+### with `SL_MOUSE_INVERT=1` PRESENT - the playtest environment - unless
 ### marked clean)
 
 - WATCH PATH W1..W4 (Facility): loaded 0, `SL_MOUSE_INVERT=1 ignored ...
@@ -35101,7 +35126,7 @@ help say so. No src/game change; no `__sgi` arm touched.
   build.ps1 LAST (key without it); test.ps1 facility 300 PASS 1/1. `make
   trace-verify` NOT run (no MIPS toolchain; no src/game change).
 
-Owner steps: `.\tools\windows\build.ps1`, then `.\tools\windows\play.ps1` -
+Playtest steps: `.\tools\windows\build.ps1`, then `.\tools\windows\play.ps1` -
 with `$env:SL_MOUSE_INVERT` still in the shell or not, it no longer matters
 (the console prints `SL_MOUSE_INVERT=1 ignored - the persisted config
 governs this session` if it is; `Remove-Item Env:SL_MOUSE_INVERT` clears it).
@@ -35111,17 +35136,17 @@ relaunch: the row shows the value you left and the mouse follows it; the
 bindings, Sprint and the rest persist as before. The file is
 %LOCALAPPDATA%\sightline\config.ini.
 
-## 2026-09-18 - Gitea #46 CLOSED on owner acceptance ("This appears to be
+## 2026-09-18 - Gitea #46 CLOSED on acceptance ("This appears to be
 ## fixed. We can move onto what is next on the list."; comment id 482, state
 ## closed read back). Bindings, both editors, keybinding / Invert Mouse Y /
-## Sprint persistence and the shared setting state are OWNER ACCEPTED on the
-## owner's own replay of the rebuilt normal build (40fbbccb). Next: #45.
+## Sprint persistence and the shared setting state are ACCEPTED in the
+## playtest of the rebuilt normal build (40fbbccb). Next: #45.
 
 ## 2026-09-18 - #45 Display: selectable 4:3 / 16:9 / 32:9 - the renderer's
 ## projection / viewport / 2D seam, the aspect_ratio setting and DISPLAY tab,
 ## the room traversal's wide draw set with the script / spawn tests kept at
 ## 4:3 - implemented on sightline/qol-controls (f73db2c2, 057bf539, b6b0c4cd,
-## 5881dc9a), OPEN pending the owner's pass. Recorded as D-008.
+## 5881dc9a), OPEN pending the playtest pass. Recorded as D-008.
 
 Boundary comment (id 485) posted first: #45 owns only aspect-ratio
 correctness and any culling / visibility changes required for the wider
@@ -35258,7 +35283,7 @@ wanted, is a later split.
   wrong: animation ticks for characters in view, the "magic" off-screen
   travel (a guard standing in the band must walk, not teleport), slot
   recycling, scorch / impact drawing, hit registration on a drawn
-  character. Consequence recorded for the owner: a scripted "spawn
+  character. Consequence recorded for review: a scripted "spawn
   off-screen" placement still means off the 4:3 screen, so at 32:9 a
   character may be placed in a band, in view (the hard rule kept spawn at
   4:3; the alternative is a later decision, not silently taken).
@@ -35319,7 +35344,7 @@ wanted, is a later split.
   filling the content rect; the crosshair at the content centre in aim
   mode at all three (the off-centre alignment holds by construction - the
   sight texrect and the aim ray are the same 4:3 screen-space fact mapped
-  the same way - and is on the owner checklist: aim, move the sight, fire
+  the same way - and is on the playtest checklist: aim, move the sight, fire
   at a near wall).
 - POINTER / HIT-TEST at all three (real pointer on the idle desktop,
   measured 986 s idle before the first real-pointer run): the watch
@@ -35379,13 +35404,13 @@ wanted, is a later split.
 - The theta-240 portal residual above (Rare's in-front-points portal box).
 - Split-screen at 16:9 / 32:9 (gated to 4:3; a per-player content layout
   is a later design).
-- The crosshair off-centre alignment (by construction; owner check).
+- The crosshair off-centre alignment (by construction; playtest check).
 - The mission outro at 32:9; JP/EU text offsets; no physical controller.
 - A user FOV preference: not implemented (the seam exists: k is the one
   horizontal factor; a vertical FOV change would be a game-side value).
 - SL_SCISSOR_DBG (the scissor rectangle witness) stays as a diagnostic.
 
-Owner steps: `.\tools\windows\build.ps1`, then `.\tools\windows\play.ps1
+Playtest steps: `.\tools\windows\build.ps1`, then `.\tools\windows\play.ps1
 -Size 2560x720` (or 1280x720 for 16:9; the size and the aspect are
 separate settings - the selected shape is fitted inside the window with
 bars, never stretched) -> title -> a folder -> 3. OPTIONS -> 1. SETTINGS
@@ -35396,19 +35421,19 @@ stretch. Aim (right mouse), push the sight off-centre, fire at a near wall:
 the impact lands under the sight. 4:3 must look exactly as before; deleting
 `aspect_ratio` from %LOCALAPPDATA%\sightline\config.ini restores it.
 
-## 2026-09-18 - #45 owner replay, round two: "4:3 should basically be the
+## 2026-09-18 - #45 playtest, round two: "4:3 should basically be the
 ## original aspect" - the fit-inside-the-window rule rejected; CORRECTED
 ## CONTRACT (the aspect is the SHAPE at the CURRENT HEIGHT - the window
 ## widens); then "Cursor doesn't reach the visible area of the game. It
 ## stops a bit away from the top edge." and "Window sizes change, but the
-## game is the same size."; then the owner's scope additions (21:9, a FIELD
+## game is the same size."; then the scope additions (21:9, a FIELD
 ## OF VIEW slider with a horizontal cap, the viewmodel, the overlays) -
-## implemented on sightline/qol-controls 89265519 window contract + witnesses, 4b78a715 21:9 / FIELD OF VIEW / cap / viewmodel, OPEN pending the owner's
+## implemented on sightline/qol-controls 89265519 window contract + witnesses, 4b78a715 21:9 / FIELD OF VIEW / cap / viewmodel, OPEN pending the playtest
 ## pass
 
 ### The corrected window contract (sl_gfx_sdl.c sdl_apply_aspect)
 
-The owner launched the first build and saw 16:9 and 32:9 drawn as
+The first build, launched in playtest, drew 16:9 and 32:9 as
 letterboxed strips inside the 4:3 window with the front end shrunk - the
 "fit the selected aspect inside the framebuffer" rule applied to a window
 NARROWER than the shape. Rejected. Now: the selected aspect defines the
@@ -35486,10 +35511,10 @@ window=1680x720 content=0,0 1680x720 safe=360,0 960x720 ... total=106.8`.
 
 ### 21:9
 
-Added as SL_ASPECT_21_9 = 3. The persisted ids are APPEND-ONLY: the owner's
-real config.ini already carried `aspect_ratio=2` (= 32:9, read read-only,
+Added as SL_ASPECT_21_9 = 3. The persisted ids are APPEND-ONLY: an existing
+user config.ini already carried `aspect_ratio=2` (= 32:9, read read-only,
 never modified) when 21:9 was added, so 21:9 took the next id rather than
-the slot between - a renumbering would have silently turned the owner's
+the slot between - a renumbering would have silently turned that user's
 32:9 into 21:9. The DISPLAY row orders the four by width (sl_aspect_by_order
 / sl_aspect_order_of: 4:3, 16:9, 21:9, 32:9 over ids 0, 1, 3, 2); window
 width 720 x 21/9 = 1680; total horizontal at the default 106.8 degrees.
@@ -35635,10 +35660,10 @@ token-identical, non-vacuous, zero #45 tokens in any __sgi expansion.
   roadmap only; the 140-degree cap is the rectilinear answer.
 - The theta-240 portal residual (Rare's in-front-points portal box).
 - Split-screen at wide aspects (gated to 4:3).
-- The scripted spawn-off-screen placement at 4:3 semantics (an owner
+- The scripted spawn-off-screen placement at 4:3 semantics (a design
   decision, recorded above).
 
-## 2026-09-18 - #45 owner replay, round three: "It doesn't look like the top
+## 2026-09-18 - #45 playtest, round three: "It doesn't look like the top
 ## and bottom of the screen work well with 16:9 and higher set at FOV 90" -
 ## a light strip across the top of the window, a dark one along the bottom
 ## (Dam, 16:9 / 21:9). FIRST WRONG STAGE: the sky band's vertical edge
@@ -35672,13 +35697,13 @@ pre-#45 captures on this build. Sheet: sheet-bands.png. The "HUD ammo in
 the dark strip" reading: the ammo counter sits at logical y 177-205, just
 above the bottom letterbox, where the original draws it.
 
-## 2026-09-19 - #45 owner request: "Can we add those settings to the watch
-## too under SIGHTLINE?" -> STRUCTURE CHANGE: the SIGHTLINE watch page
+## 2026-09-19 - #45 requirement: those settings also in the watch under
+## SIGHTLINE -> STRUCTURE CHANGE: the SIGHTLINE watch page
 ## becomes SUB-MENUS - GRAPHICS (parked, dimmed), GAMEPLAY, DISPLAY,
 ## CONTROLS - with BINDINGS moved under CONTROLS. On sightline/qol-controls
 
 The SIGHTLINE page (watch page 5, src/game/options.c) no longer lists its
-settings flat. It presents four action rows in the owner's order - GRAPHICS,
+settings flat. It presents four action rows in the specified order - GRAPHICS,
 GAMEPLAY, DISPLAY, CONTROLS - and each opens a nested child view exactly as
 the #46 BINDINGS child did: a heading, a row list, a BACK row. The children:
 
@@ -35693,7 +35718,7 @@ the #46 BINDINGS child did: a heading, a row list, a BACK row. The children:
 - GRAPHICS: NOTHING ships there yet (#43 WORLD DETAIL / #47 LIGHTING / #48
   TEXTURES are parked), so the row is drawn DIMMED and is unselectable - the
   CHEATS-row convention (the cursor falls past it up and down; the pointer
-  gets no hit). This is a CHOICE the owner can override: the alternative,
+  gets no hit). This is a design CHOICE that can be overridden: the alternative,
   an empty GRAPHICS child holding only BACK, is a one-line table change
   (`SL_WROW_SUBMENU` instead of `SL_WROW_DIMMED`, plus a fifth view).
 
@@ -35721,7 +35746,7 @@ ON, SPRINT ON, 16:9, 95 on the front end's CONTROL / GAMEPLAY / DISPLAY tabs
 and in the watch's DISPLAY child.
 
 Evidence (scratch qol10, keyboard-driven, window parked off-screen; the
-owner was at the desktop): sheet-w6.png / sheet-w6-steps.png (the page with
+desktop was in use): sheet-w6.png / sheet-w6-steps.png (the page with
 GRAPHICS dimmed, every child, the BINDINGS grandchild, 20 row steps one per
 press across all four views, `down/up -> view=N(...) row=R` witnesses),
 sheet-w7.png (the persisted file relaunched: DISPLAY child 16:9 / 95, the
@@ -35739,13 +35764,13 @@ lines, zero #45 tokens in the __sgi expansion. settingstest 93/0,
 displaytest 87/0, inputtest 225 checks / 22 pre-existing B-096 failures
 unchanged (three link stubs added to tools/native/inputtest.c), test.ps1
 PASS. One capture note: the w6 run's shots went black from its 196th frame
-on (the owner was active at the desktop at that moment; the log's witnesses
+on (the desktop was in active use at that moment; the log's witnesses
 and the DL census continued normally) - re-run as w7 with no recurrence;
 recorded as a capture artefact, not a defect.
 
 ## 2026-09-19 - Release infrastructure issue filed (#49): versioned GitHub
 ## releases with a single Windows ZIP artifact. PARKED until #45 is
-## owner-accepted and the QoL branch is merged. Issue administration only:
+## accepted and the QoL branch is merged. Issue administration only:
 ## no tooling, build, packaging or publication script changed.
 
 Issue #49, "Releases: versioned GitHub releases with a single Windows ZIP
@@ -35779,7 +35804,7 @@ here so the implementation round starts from measured facts:
   question against `readme.md:150-151` ("nothing ROM-derived is committed or
   distributed"). Toolchain versions (gcc 16.2.0, SDL2 2.32.10 measured) are
   not pinned; `.build_key` records flags only. v0.1.0 therefore STOPS at two
-  owner rulings (the microcode table; the map) and a provenance file that
+  design rulings (the microcode table; the map) and a provenance file that
   records both input hashes and the toolchain identity - then a detached
   worktree at `90e74995`, never a relabelled newer build.
 - **Launcher / ROM findings.** `sightline.exe` with no environment is
@@ -35814,7 +35839,7 @@ received only this file.
 ## implementation order recorded. Issue administration only: no source,
 ## tool, asset or build script changed; nothing closed; #43-#49 untouched.
 
-Thirteen focused issues, each with owner intent, explicit in / out scope, the
+Thirteen focused issues, each with a stated intent, explicit in / out scope, the
 accepted current behaviour as the default, an acceptance intent, real
 relationships only, and a Home line (front-end SETTINGS tab + watch
 SIGHTLINE sub-menu). Every create and cross-link patch was read back
@@ -35828,7 +35853,7 @@ deadzone rows", #45's HUD safe-area / scale follow-up).
 ### ROADMAP (issue - title - status / tier)
 
 CURRENT
-- #45 - Display: 4:3 / 16:9 / 21:9 / 32:9 + FIELD OF VIEW - OPEN, owner review.
+- #45 - Display: 4:3 / 16:9 / 21:9 / 32:9 + FIELD OF VIEW - OPEN, playtest review.
 
 NEXT - Tier 1, controls completion
 - #50 - Controls: mouse sensitivity and scoped sensitivity - filed.
@@ -35887,9 +35912,9 @@ per-weapon / scoped FOV, or a viewmodel FOV.
   to subtitle, and mission / briefing / objective text readability is inside
   #53's element-by-element audit. Filed only if a need survives that audit.
 - Audio volumes beyond the cartridge's own music / sfx rows: no issue; no
-  owner request on record.
+  requirement on record.
 - Screenshot key / native capture: no user feature and none filed; `SL_SHOT`
-  and the F8 owner mark (#8) are developer evidence tooling.
+  and the F8 playtest mark (#8) are developer evidence tooling.
 - Pause on focus loss / configurable auto-pause: no issue; today focus loss
   disarms the pointer capture and clears the action edge history
   (sl_input.c) and does not pause.
@@ -35902,14 +35927,14 @@ umbrella carries the audit.
 Combined: none. Each group filed as one issue; RESTART and RETURN share #54
 (one seam, the abort sub-state) and no recon has shown they need two.
 
-## 2026-09-19 - #45 owner-accepted and CLOSED ("Aspect Ratio is accepted.");
+## 2026-09-19 - #45 accepted and CLOSED ("Aspect Ratio is accepted.");
 ## #49 (releases) stays parked until the QoL Phase 1 set is scope-frozen for
 ## v0.2.0. Issue administration: comments read back, no body edited.
 
-#45 comment 630 records the owner replay and the shipped scope (4:3 / 16:9 /
+#45 comment 630 records the acceptance playtest and the shipped scope (4:3 / 16:9 /
 21:9 / 32:9, Hor+ FOV, the watch SIGHTLINE sub-menus); state read back
-`closed`. #49 comment 632: "#45 is now owner-accepted." / release
-implementation intentionally parked until the owner-approved QoL Phase 1
+`closed`. #49 comment 632: #45 is now accepted / release
+implementation intentionally parked until the approved QoL Phase 1
 feature set is complete and scope-frozen for v0.2.0. The mouse-sensitivity
 search (state=all: mouse / scoped / aim / ADS sensitivity, mouse look speed)
 found #50 "Controls: mouse sensitivity and scoped sensitivity" already
@@ -35918,7 +35943,7 @@ carrying exactly this scope, so #50 is the issue and no duplicate was filed.
 ## 2026-09-19 - #50 MOUSE SENSITIVITY and SCOPED SENSITIVITY: two persisted
 ## percents at the one gameplay mouse-look seam; rows on the front end's
 ## CONTROL tab and the watch's CONTROLS child; default 100 / 100 = the
-## accepted look bit for bit (D-009). Owner replay pending; #50 stays OPEN.
+## accepted look bit for bit (D-009). Playtest pending; #50 stays OPEN.
 
 ### Recon (file:line at cc3a418a)
 
@@ -36007,7 +36032,7 @@ carrying exactly this scope, so #50 is the issue and no duplicate was filed.
   a pad stick deflection the same N64 stick (43,54) at 100 / 100 and 50 /
   50. Also 300 / 300 -> 18.0 / 54.0 and 10 / 10 -> 0.6 / 0.06 (witness).
 - Windowed (scratch config, window parked off-screen, posted messages and
-  the SL_POINTER_PROBE witness only - the owner was at the desktop): F1
+  the SL_POINTER_PROBE witness only - the desktop was in use): F1
   the CONTROL tab shows the two rows at 100% with BINDINGS and BACK below
   (sheet-f1.png); keyboard: the label -> 110, `+` -> 120, `-` -> 110 (the
   cursor resolved col 2 at x 327.3 and col 0 at 269.8), SCOPED `-` x3 ->
@@ -36026,7 +36051,7 @@ carrying exactly this scope, so #50 is the issue and no duplicate was filed.
   file relaunched shows 120% / 60% on the front end; GAMEPLAY and DISPLAY
   tabs unchanged with BACK at slot 5 (sheet-f2.png).
 - NOT measured here: the hand feel (visibly slower / faster) - a real
-  relative-mouse stream cannot be injected without moving the owner's
+  relative-mouse stream cannot be injected without moving the live
   pointer (SDL raw input; the warp diagnostic would SetCursorPos). The
   front-end pointer probe at 4:3 does not move the front-end cursor (the
   same in qol10 probe43.log: the click landed on the keyboard-highlighted
@@ -36039,7 +36064,7 @@ carrying exactly this scope, so #50 is the issue and no duplicate was filed.
   touched; sl_settings.c's demo path is the config location only).
   `make trace-verify` NOT run (no MIPS toolchain).
 
-### Side tabs (owner hint, recorded for a later round)
+### Side tabs (design hint, recorded for a later round)
 
 The wallet panel's right edge carries three sideways tabs (front.h:
 START y 40..130.5, NEXT 130.5..223, PREVIOUS 223..315, x > 390;
@@ -36054,17 +36079,17 @@ cost of: native sideways labels (textRender ROT_90CW on a native string,
 ~40 lines per tab), a second tab level inside one top-strip tab with the
 strip's own rules (what the side tabs show on GAMEPLAY / DISPLAY; the
 cursor's return slot for the bindings editor), the watch's CONTROLS child
-diverging from the front end's grouping unless it follows, and an owner
-replay of a navigation change to an accepted (#41 / #46 / #45) page. Not
-wired this round; the rows went on the CONTROL tab as briefed.
+diverging from the front end's grouping unless it follows, and a
+playtest of a navigation change to an accepted (#41 / #46 / #45) page. Not
+wired this round; the rows went on the CONTROL tab as specified.
 
-## 2026-09-19 - #50 (owner request, same day): the three range rows as
+## 2026-09-19 - #50 (requirement, same day): the three range rows as
 ## SLIDERS - MUSIC / FX-style bars in the watch's SIGHTLINE children,
 ## 007-mode bars on the front end's CONTROL / DISPLAY tabs; ASPECT RATIO
-## stays a stepped row. Owner replay pending; #50 stays OPEN, #45 not reopened.
+## stays a stepped row. Playtest pending; #50 stays OPEN, #45 not reopened.
 
-Owner (verbatim): "Can you make them sliders like music and fx in the watch?
-Same thing as FOV. Same in the out of game settings menu?" Settings
+Requirement: the range rows become sliders like MUSIC and FX in the watch,
+FOV included, and the same in the out-of-game settings menu. Settings
 semantics, ranges, defaults, keys and the look math of #50 / #45 untouched:
 the sliders are a second way onto the same grid points the `-` / `+` steps
 reach (10-step percents, whole degrees, 91 = the exact original vertical).
@@ -36158,7 +36183,7 @@ reach (10-step percents, whole degrees, 91 = the exact original vertical).
   untouched.
 
 ### Witnesses (MEASURED; scratch qol12, window off-screen, posted keys and
-### SL_POINTER_PROBE only - the owner was at the desktop)
+### SL_POINTER_PROBE only - the desktop was in use)
 
 - Watch (Dam, coverage cheats, scratch config at 100 / 100 / fov 91;
   sheet-w-controls.png, sheet-w-display.png): the CONTROLS child draws
@@ -36195,12 +36220,12 @@ reach (10-step percents, whole degrees, 91 = the exact original vertical).
   build.ps1 (normal) last. `make trace-verify` NOT run (no MIPS toolchain);
   nothing in src/game outside the native arms changed.
 - NOT measured: the hand feel of a drag with a real mouse (needs the
-  owner's pointer); PAL (YINC 15) row spacing - the walk uses YINC, the
+  live pointer); PAL (YINC 15) row spacing - the walk uses YINC, the
   bar's 8 px offsets are framebuffer constants either way.
 
 ## 2026-09-19 - brand merged into the QoL branch; the exe icon wired
-## (tools/windows/sightline.rc + build.ps1 windres step). Owner statement
-## on the brand files recorded.
+## (tools/windows/sightline.rc + build.ps1 windres step). Licensing
+## statement on the brand files recorded.
 
 MERGE: origin/sightline/brand (0a2ca4ad: docs/brand kit subset + the branded
 readme, on top of origin/master c489657c) merged --no-ff into
@@ -36213,10 +36238,10 @@ wiki and the board are live). .gitea/workflows/publish-public.yml came in
 from master's c489657c / acc48586 (publication key kept out of the Actions
 log). docs/brand/sightline.ico present after the merge.
 
-OWNER STATEMENT (2026-09-19, recorded verbatim so the licensing question
+RECORDED LICENSING STATEMENT (2026-09-19, verbatim so the licensing question
 does not get re-asked): "The icon is made by me and can be included in the
 repo." and "all of the assets i shared with you are owned by me." So every
-file under docs/brand/ is the owner's own artwork, committed on that basis;
+file under docs/brand/ is first-party Sightline artwork, committed on that basis;
 docs/brand/README.md's licensing section now says so. Rule 2 (no ROM
 assets) is not touched - nothing in docs/brand is ROM-derived.
 
@@ -36244,7 +36269,7 @@ EXE ICON (build tooling only, no src/ change):
   i.e. SDL_RegisterApp's "first RT_GROUP_ICON becomes the window-class
   icon" path. No SDL_SetWindowIcon added; SDL source is not in the tree,
   so this is the import-table reading, and the window title-bar icon is
-  for the owner's next windowed run to confirm.
+  for the next windowed playtest run to confirm.
 
 EVIDENCE (build\win32\sightline.exe, 9986134 bytes):
 - objdump -h: section 6 .rsrc 0xc490 bytes at 0x01770000; objdump -p:
@@ -36268,14 +36293,14 @@ EVIDENCE (build\win32\sightline.exe, 9986134 bytes):
 - Scratch (session, not committed): brand2\icon-evidence*.ps1,
   extracted-assoc.png, a.o..d.o (the windres path probes).
 
-## 2026-09-19 - #50 CLOSED on owner acceptance ("i approve this already." -
+## 2026-09-19 - #50 CLOSED on acceptance ("i approve this already." -
 ## mouse sensitivity, scoped sensitivity, the slider presentation incl. FOV;
 ## comment 651, state read back closed). #63 FILED: native modern dual-stick
 ## controller profile and device-matched watch model - IMPLEMENTED on
-## sightline/qol-controls, OPEN pending the owner's replay with a real pad.
+## sightline/qol-controls, OPEN pending a playtest with a real pad.
 ## #51 (controller analog tuning) PARKED behind #63 (comment 661).
 
-Owner decision relayed with the brief: the controller sensitivity / deadzone
+Decision: the controller sensitivity / deadzone
 / curve tuning is parked; nothing of it is exposed (the fixed 5000-unit
 inner deadzone and the +/-70 channel arithmetic are the only normalization,
 not user-configurable). Roadmap: #63 -> #51 -> #56 -> PC display modes ->
@@ -36283,12 +36308,12 @@ freeze -> #49 -> v0.2.0.
 
 ### Provenance (STEP 1) - measured, not taken from the prior report
 
-- The owner's ORIGINAL archives, read directly (System.IO.Compression):
+- The ORIGINAL source archives, read directly (System.IO.Compression):
   playstation_5_dualsense.zip (46,429,463 B: license.txt, scene.bin,
   scene.gltf, three tile sets of baseColor / metallicRoughness / normal /
   emissive) and xbox_controller.zip (1,177,932 B: license.txt, scene.bin,
   scene.gltf, material_diffuse.png, material_specularGlossiness.png), both
-  in the owner's Downloads. license.txt verbatim: "Playstation 5 Dualsense"
+  in a local Downloads folder. license.txt verbatim: "Playstation 5 Dualsense"
   by AHarmlessPotato (https://sketchfab.com/AHarmlessPotato),
   https://sketchfab.com/3d-models/playstation-5-dualsense-878c1f882808477ab81c2fe86d5a3936,
   CC-BY-4.0, "Author must be credited. Commercial use is allowed."; "Xbox
@@ -36296,7 +36321,7 @@ freeze -> #49 -> v0.2.0.
   https://sketchfab.com/3d-models/xbox-controller-32d17951703b4e05abed11a1c65f5909,
   CC-BY-4.0, the same requirement; each with the "This work is based on ..."
   credit line. The prior report's facts held. Archives untouched.
-- The owner's PREPARED packages (the modly-bench staging, controller_xbox /
+- The PREPARED packages (the modly-bench staging, controller_xbox /
   controller_dualsense) were regenerated mid-round ("logos only, symbols
   and letters kept") and re-inspected from scratch: all eight ORACLE.json
   SHA-1s MATCH (xbox_basecolor_0.png 43,864 B 3CEDFF8D..., controller_xbox
@@ -36309,11 +36334,11 @@ freeze -> #49 -> v0.2.0.
   btn_ps btn_mute touchpad); every part's mesh local about its pivot (max
   y = 0 = the top surface); bodies span x -394..394 (the 788 GjoypadZ
   width); btn_guide / btn_ps carry extras.sl_authored_part (576 tris each,
-  down from 1276 / 5816 - the owner's plain dome / oval). Trademark scrub
+  down from 1276 / 5816 - the hand-authored plain dome / oval). Trademark scrub
   verified: tile 1002 (dualsense_basecolor_2.png) is ONE flat colour
   (231,225,237), zero pixels below luminance 128; tile 1001 carries only
   the mute glyph; the Xbox tile the A/X/B/Y letters and a plain white
-  disc; the owner's preview_debranded_buttons.png and the in-game frames
+  disc; the supplied preview_debranded_buttons.png and the in-game frames
   (below) show a plain dome and a plain oval. Face layouts checked against
   the part previews (A south / B east / X west / Y north; cross / circle /
   square / triangle likewise).
@@ -36336,7 +36361,7 @@ freeze -> #49 -> v0.2.0.
   ORACLE), metadata.json (asset_id, family, third_party, the parts map
   label -> canonical, authored_parts, debranding, frame, the source oracle
   sha1s), ATTRIBUTION.md (the credit line, the changes, the two
-  owner-authored parts). preview_parts.png NOT committed. The group
+  project-authored parts). preview_parts.png NOT committed. The group
   README.md records the rules; LICENSES/README.md gains the third-party
   row, data/asset-overrides/LICENSE.md the exclusion, readme.md the credit
   bullet and the licensing note, docs/asset-overrides.md the two sections.
@@ -36447,7 +36472,7 @@ freeze -> #49 -> v0.2.0.
   never moves. sl_bedit_pad_dimmed is 0 under MODERN (the rows live, no
   "SELECT CUSTOM" note). SL_INPUT_DEBUG's line gained profile= family=.
 - Default ORIGINAL, documented: a config written before the key existed
-  keeps the pad behaviour its owner accepted and its pad_button_mode keeps
+  keeps the pad behaviour its user accepted and its pad_button_mode keeps
   its meaning (a MODERN default would silently override a user's chosen
   ORIGINAL button mode); rule 5. The key coexists with control_style,
   pad_button_mode, bind.*, mouse_*, sprint, aspect / FOV; a profile change
@@ -36577,8 +36602,8 @@ freeze -> #49 -> v0.2.0.
 - NO PHYSICAL CONTROLLER on this machine: every pad witness is the
   synthetic path (the inputtest stubs and the SDL virtual joystick, whose
   family SDL classified from a real VID:PID). Feel, a real pad's deadzone
-  behaviour, hot-plug of a real device and the physical replay are the
-  owner's. Hot-plug is covered only by the existing event-driven rescan
+  behaviour, hot-plug of a real device and the physical replay are for the
+  playtest. Hot-plug is covered only by the existing event-driven rescan
   (re-classified at open) and the harness's remove / re-attach case.
 - The shoulder / trigger / d-pad / Guide motions are asserted through the
   same pose code as the sticks and face buttons; from the page's top-down
@@ -36590,7 +36615,7 @@ freeze -> #49 -> v0.2.0.
 - The DualSense's face symbols are faint at the page's size (grey on
   lavender in the source texture); the Xbox letters read.
 
-### Owner replay
+### Playtest steps
 
 .\tools\windows\build.ps1; .\tools\windows\play.ps1 -Level facility
 -Cheats invincible,invisible,maxammo with the pad plugged in. Esc ->
@@ -36606,32 +36631,32 @@ hands. Front end: OPTIONS -> SETTINGS -> PAD: PROFILE, CONTROLLER, BINDINGS
 accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
 
 ## 2026-09-20 - #63 defect round 2: the Control Options page under MODERN
-## with the owner's real DualSense showed "CONTROL STYLE / CONTROLLER" and
+## with a real DualSense showed "CONTROL STYLE / CONTROLLER" and
 ## nothing below - no DualSense, no N64 fallback. ROOT CAUSE FOUND AND FIXED
-## at the importer; #63 stays OPEN pending the owner's replay.
+## at the importer; #63 stays OPEN pending a playtest.
 
 ### Reproduction (real pad, this machine)
 
-- The owner's DualSense (USB, 054c:0ce6) was free - no game running - so
+- The attached DualSense (USB, 054c:0ce6) was free - no game running - so
   every run here drove it as a REAL device: "gamepad "DualSense Wireless
   Controller" (1 attached), family PLAYSTATION (sdl type 7)", the same line
-  the owner's own captures show (~/.sightline/runs/20260919-235232 and
+  the playtest captures show (~/.sightline/runs/20260919-235232 and
   -235453: both also show "sl_asset: controllers.dualsense override loaded
-  ... 17 parts" - the model LOADED for the owner, so no fallback was due).
-- The owner's real config.ini (read, never written) copied to scratch as
+  ... 17 parts" - the model LOADED in the playtest, so no fallback was due).
+- The real user config.ini (read, never written) copied to scratch as
   SL_CONFIG: 16:9, fov 5872, control_style 0, sprint on, the bind line.
   Direct boot facility (34), Tab -> watch -> right x2 -> the Control Options
   page (posted keys only; the pad untouched, so it stays the first-attached
-  active pad the page reads). Also the owner's LIVE sequence: boot ORIGINAL
+  active pad the page reads). Also the playtest's LIVE sequence: boot ORIGINAL
   -> watch -> SIGHTLINE -> CONTROLS -> PROFILE latch + right -> MODERN
   ("settings: wrote") -> Esc -> right x3 -> the page.
-- BOTH reproduce the picture the owner described, on b14e7fc2's build: the
+- BOTH reproduce the picture the playtest report described, on b14e7fc2's build: the
   page draws the DualSense, but as a DARK SILHOUETTE - the white shell at
   RGB (69,67,71), the face at (14,15,18), on the (0,40,0) watch face. The
   live switch loads the model on the first frame of the page after the
   toggle ("page profile=modern family=2 model=5 available=1 -> device
   draw"); there is no blank-frame state and no fallback failure. What the
-  owner saw as nothing drawn was the pad at 0.27 brightness.
+  playtest reported as nothing drawn was the pad at 0.27 brightness.
 
 ### Root cause (measured, src/gfx/sl_gfx_dl.c SL_PAD_DBG line)
 
@@ -36648,7 +36673,7 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
   -y); Xbox stored (x, y, z) = geometry (x, -z, y). Rotating the stored
   normals by that permutation puts 106,122 of 106,436 DualSense triangles
   (median dot 1.000) and 42,310 of 42,428 Xbox triangles in agreement with
-  their winding. The package builder (the owner's staging tool, not in this
+  their winding. The package builder (an external staging tool, not in this
   repository) re-based POSITION into the GjoypadZ frame and left NORMAL in
   the source frame; the .gltf nodes carry translations only, so the
   importer faithfully baked the mismatch; the renderer's one light (0,0,1)
@@ -36687,7 +36712,7 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
   measured lighting term. sl_watch_controller_modern now computes the
   decision once and reports it; behaviour unchanged.
 
-### Fallback proven with the real pad (owner-modern config, all three ->
+### Fallback proven with the real pad (user-shaped MODERN config, all three ->
 ### "page profile=modern family=2 model=5 available=0 -> the N64 pad", the
 ### N64 pad with its labels in the frames, sheet-fallback.png)
 
@@ -36696,12 +36721,12 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
   dir (model absent everywhere); the same with a 1,000,000-byte truncated
   dualsense.slmodel in the install dir ("unusable (declared file size does
   not match the file) - drawing the original"). The fallback never failed
-  in the owner's case: the model was available and drew.
+  in the playtest case: the model was available and drew.
 
 ### Evidence (scratch modern2; frames outside the repo)
 
 - r2 (pre-fix, boot MODERN): shots/r2, r2-zoom.png - the dark pad; r3 the
-  same with SL_PAD_DBG (mean(N.L)=-0.134). live-pre3: the owner's live
+  same with SL_PAD_DBG (mean(N.L)=-0.134). live-pre3: the playtest's live
   sequence pre-fix, sheet-live-pre3.png / -last.png - the CONTROLS child
   ORIGINAL -> MODERN, back, the dark pad. r4 (post-fix): r4-zoom.png, the
   lit DualSense. live-post: the live sequence post-fix, sheet-live-post.png
@@ -36719,45 +36744,45 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
 
 ### Not exercised
 
-- The Xbox pad on a real device (the owner's is paired over Bluetooth and
+- The Xbox pad on a real device (the play machine's is paired over Bluetooth and
   was off); its frames are the virtual pad's. The 4x Xbox exposure now
   renders a black pad as mid-grey (108..126) - readable, arguably brighter
-  than life; 2x would give ~55..65. Owner's call; not changed here.
+  than life; 2x would give ~55..65. A design ruling; not changed here.
 - make trace-verify not run (no game-logic change; the importer and a
   debug seam only).
 
-## 2026-09-20 - #63 defect round 3: the same page, still blank for the owner
-## after round 2 (the white DualSense drew for the agent, nothing drew for
-## the owner - no model, no silhouette, no N64 pad; the watch hands showing
+## 2026-09-20 - #63 defect round 3: the same page, still blank in playtest
+## after round 2 (the white DualSense drew in the automated runs, nothing drew
+## in the playtest - no model, no silhouette, no N64 pad; the watch hands showing
 ## through). ROOT CAUSE FOUND AND FIXED in src/native; #63 stays OPEN
-## pending the owner's replay.
+## pending a playtest.
 
-### What the owner's run files said (read, never written)
+### What the playtest run files said (read, never written)
 
 - ~/.sightline/runs/20260920-003933-lvlboot and -004146-lvlboot: env
   SL_WINDOW_SIZE=960x720; config aspect_ratio=1 fov_vertical=5872
   controller_profile=1 bind-lines=1; "aspect 16:9 -> window 960x720 ->
   1280x720"; "controllers.dualsense override loaded ... 17 parts" in both.
-  input.spec LEVEL=boot: the owner booted through the logos and the front
+  input.spec LEVEL=boot: the playtest booted through the logos and the front
   end (menus 5 -> 6 -> 26 -> 27 -> 26 -> 6 -> 7 -> 8 -> 10) into DAM
   (events: level-restart at record 1577, env-rgb 16,48,96), then Esc -> the
   page. The second run switched aspect 16:9 -> 21:9 -> 16:9 -> 4:3 live on
-  the CONTROLS page with the model loaded (the owner looking for it). The
-  owner's screenshot (Pictures/Screenshots/Screenshot 2026-09-20 004021.png,
+  the CONTROLS page with the model loaded (looking for it in play). The
+  playtest screenshot (Pictures/Screenshots/Screenshot 2026-09-20 004021.png,
   taken 48 s into the first run) is the page with the hands drawn and
   nothing else.
 - Both round-2 witnesses (r5, live-post) and every round-1 frame were
-  DIRECT BOOTS OF FACILITY (34); the owner plays Dam (33).
+  DIRECT BOOTS OF FACILITY (34); the playtest ran Dam (33).
 
-### Reproduction (real DualSense; the owner's config copied to scratch with
+### Reproduction (real DualSense; the playtest config copied to scratch with
 ### aspect_ratio=1 as it was at the time of the run)
 
-- Direct boot FACILITY, 960x720 / 16:9 (the owner's exact window and
+- Direct boot FACILITY, 960x720 / 16:9 (the playtest's exact window and
   display line): the white DualSense draws. NOT the size, NOT the aspect,
   NOT SL_SHOT: an on-screen run's PrintWindow(PW_RENDERFULLCONTENT) capture
   of the client area is pixel-identical (0.00% of pixels differ by >= 16)
   to the SL_SHOT frame of the same page (onscreen-printwindow.png).
-- The owner's own path (logos -> front end -> Dam via posted keys) AND a
+- The playtest's own path (logos -> front end -> Dam via posted keys) AND a
   direct boot of DAM at 960x720 / 16:9: the blank page, exactly the
   screenshot. SL_PAD_DBG on Dam: "draw id=5 ... mv=[0.200 0.000 0.000 |
   0.000 0.141 -0.141 | 0.000 0.141 0.141]" against Facility's "[1.000 0.000
@@ -36790,7 +36815,7 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
   stands (mean(N.L)=+0.134 facing=60% on every run here).
 - Why round 2 missed it: every witness was a direct boot of Facility
   (visibility 1.0), where the unbracketed conversion is the identity. The
-  owner's runs said LEVEL=boot and env-rgb 16,48,96 (Dam) from the start.
+  playtest runs said LEVEL=boot and env-rgb 16,48,96 (Dam) from the start.
 
 ### Fix (851ff573's successor, src/native only; no game logic touched)
 
@@ -36811,7 +36836,7 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
 
 ### Post-fix matrix (Dam, direct boot, the page; sheet-dam-matrix.png)
 
-- 960x720 / 16:9 DualSense (the owner's case): mv 1.000, depth 1800,
+- 960x720 / 16:9 DualSense (the playtest case): mv 1.000, depth 1800,
   culled 0%, box 473,249-811,442 in viewport 0,30 1280x660 - the white pad.
 - 640x480 / 16:9 (853x480): box 315,166-540,295 in 853x440.
 - 960x720 / 32:9 (2560x720): box 1113,249-1451,442 in 2560x660 - centred.
@@ -36824,14 +36849,14 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
 ### Evidence (scratch modern3; frames outside the repo)
 
 - o960b: Facility 960x720 pre-fix, the pad drawn (o960b-f1.png).
-  front960f: the owner's path to Dam, the blank page (front960f-f2.png,
+  front960f: the playtest path to Dam, the blank page (front960f-f2.png,
   mv 0.200). dam960-pre: a witness build with the bracket removed, the
   `place` line reading near-culled=100% / box EMPTY. dam960-post,
   dam640-post, dam960-a2-post, dam960-a0-post, dam960-xbox-post: the
   matrix above. dam960-onscreen + onscreen-printwindow.png: SL_SHOT
-  against the composed window. replay: the owner's 003933 stream replays
+  against the composed window. replay: the playtest 003933 stream replays
   byte-for-byte through the front end into Dam (census identical to the
-  owner's log to frame 1561); the watch navigation is native and not in
+  playtest log to frame 1561); the watch navigation is native and not in
   the N64 stream, so the page itself was driven with posted keys.
 - Gates: test.ps1 facility 300 PASS; settingstest 120 / 0; displaytest
   87 / 0; inputtest minv 9 / 0 + 5 / 0, mouse-sens 30 / 0, modern-pad
@@ -36840,28 +36865,28 @@ accepted N64 mapping and the N64 watch page. Nothing here is "accepted".
 
 ### Not exercised
 
-- The owner's live PROFILE switch on Dam (the fix is in the draw, which
+- The playtest's live PROFILE switch on Dam (the fix is in the draw, which
   the switch reaches the same way; round 2 proved the switch path on
   Facility). The Xbox pad on a real device (virtual, as before).
 - make trace-verify not run: no game logic, physics, AI or entity state
   touched (src/native and a debug line in src/gfx).
 
-## 2026-09-20 - #63 defect round 4 (the owner's replay with a real Xbox pad):
+## 2026-09-20 - #63 defect round 4 (the playtest with a real Xbox pad):
 ## the Xbox model did not face the camera, no action labels around the pad,
 ## the N64 CONTROL STYLE still on the page. FIXED; the ORIGINAL / MODERN
-## PROFILE, BUTTON MODE and the CONTROL STYLE setting REMOVED (owner
+## PROFILE, BUTTON MODE and the CONTROL STYLE setting REMOVED (design
 ## decision); BUTTON LAYOUT and STICK LAYOUT added (their naming and preset
-## questions filed as Gitea #64). #63 stays OPEN pending the owner's replay.
+## questions filed as Gitea #64). #63 stays OPEN pending a playtest.
 
-### The owner's report (verbatim)
+### The playtest report (verbatim)
 
 "I plugged in an xbox controller. However, it doesn't face the right way.
 Also, they are missing the button actions along the side of it. Control
 Style still shows the old n64 names, which might be fine, as long as we are
 using the xbox layouts i showed before. Can tell because it doesn't show
-the buttons." And: "I don't really see a point to hide that behind a
-profile. Sightline will never get a n64 controller hooked up and we aren't
-using emulation."
+the buttons." Design direction: there is no point hiding that behind a
+profile - Sightline will never have an N64 controller attached and does not
+use emulation.
 
 ### The Xbox orientation - measured, fixed at the importer (rule 3)
 
@@ -36877,7 +36902,7 @@ using emulation."
   The page already tilts the frame 45 degrees away from the camera
   (options.c draw_watch_controller, -pitch - 0.785 about x), so the Xbox
   face lay ~62 degrees from the eye, foreshortened, its top edge toward the
-  viewer - exactly the owner's frame. The round-2 normals fix was correct
+  viewer - exactly the reported frame. The round-2 normals fix was correct
   (the normals were in the source frame); the POSITIONS were re-based into
   the frame's box by the package builder but not its orientation.
 - Fix (tools/asset/gltf_import.py, face_level_fit / level_model, a
@@ -36931,7 +36956,7 @@ using emulation."
   to the text height) if the column would run off the face. A line that
   would cross the pad's projected silhouette (the body's +-394 edge at the
   part's depth) breaks into two rows, name over action - measured at the
-  owner's window: "RT FIRE" fits, "RB NEXT WPN" and every DualSense face
+  playtest window: "RT FIRE" fits, "RB NEXT WPN" and every DualSense face
   line break. A held control's label is drawn white outlined, the original
   page's idiom. No leader lines: the 2D pass is text and the original page
   draws none either. Two defects found on the first frames and fixed: the
@@ -36945,7 +36970,7 @@ using emulation."
   labels), F-bumper-southpaw-f3.png (BUMPER: RB FIRE, LB AIM, RT NEXT WPN,
   LT PREV WPN).
 
-### PROFILE, BUTTON MODE and CONTROL STYLE removed (owner decision)
+### PROFILE, BUTTON MODE and CONTROL STYLE removed (design decision)
 
 - Deleted: SL_SET_CONTROLLER_PROFILE / SL_SET_PAD_BUTTON_MODE /
   SL_SET_CONTROL_STYLE and their rows, SL_PROFILE_*,
@@ -36994,12 +37019,12 @@ using emulation."
 - BUTTON LAYOUT (`pad_button_layout`, the registry's g_layouts in
   sl_bindings.c, data - one row per action, two sources): DEFAULT (RT
   fire, LT aim, RB + Y next weapon, LB previous, A interact, X reload, B
-  crouch, L3 sprint, R3 zoom in - the task's list; it IS the compiled pad
+  crouch, L3 sprint, R3 zoom in - the specified list; it IS the compiled pad
   default now: RB, LB and R3 changed from the #46 CUSTOM layout for anyone
   who never edited them), SOUTHPAW (triggers and bumpers swapped), BUMPER
   (RB fire, LB aim, RT next, LT previous, Y still next), GREEN THUMB
   (DEFAULT with R3 a second AIM and B ZOOM IN - CROUCH then has no pad
-  source; flagged for the owner). sl_bindings_layout_apply writes every
+  source; flagged for review). sl_bindings_layout_apply writes every
   action's two PAD slots in one store write and records the id; a PAD slot
   edited through sl_bindings_set records CUSTOM (or the preset the table
   then equals); RESET DEFAULTS records DEFAULT; at load a recorded preset
@@ -37039,7 +37064,7 @@ byte-identical to 45479b1b under __sgi, control differs, native arms +75 /
 ### Not exercised / limitations
 
 - The physical Xbox pad's own sticks, triggers and buttons were not moved
-  by anyone (the owner's pad, on the owner's desk): the family / model
+  by anyone (the reference play machine's pad): the family / model
   line and the face-on page are the real pad's, the pose and held-label
   witnesses are the scripted virtual Xbox pad's (SDL classifies it XBOX
   from a real VID:PID). During the last run (G, the front end) SDL saw 0
@@ -37049,20 +37074,20 @@ byte-identical to 45479b1b under __sgi, control differs, native arms +75 /
   from rounds 1-3, noted because the scripted witness tripped on it.
 - The right column holds up to thirteen lines on the DualSense (five
   two-row labels) and tightens its pitch to fit; it reads, and it is dense.
-  An owner call whether Start / View belong there.
+  A design call whether Start / View belong there.
 - `make trace-verify` not run: no game logic, physics, AI or entity state
   touched (the apply seam is a native arm that returns before touching
   anything with the store inactive).
 
-## 2026-09-20 - #63 / #64 defect round 5 (the owner's replay, real Xbox pad):
+## 2026-09-20 - #63 / #64 defect round 5 (the playtest, real Xbox pad):
 ## "xbox is still not facing the camera correctly and the button icons on the
 ## side are missing". The icons: DONE - each labelled part drawn alone beside
 ## its action, the original page's idiom. The facing: MEASURED, the Xbox now
-## faces exactly as the N64 pad does; what the owner sees is the page's own
-## 45-degree tilt on a modern pad's shape - an owner call, asked on #63 with
+## faces exactly as the N64 pad does; what is visible in play is the page's own
+## 45-degree tilt on a modern pad's shape - a design call, asked on #63 with
 ## previews, nothing changed. #63 stays OPEN.
 
-### The owner's report (verbatim)
+### The playtest report (verbatim)
 
 "xbox is still not facing the camera correctly and the button icons on the
 side are missing. Maybe we need to pull the buttons out of the controller
@@ -37070,7 +37095,7 @@ model to show on the side too."
 
 ### Stale-model check first
 
-The owner's 09:32 run (`~/.sightline/runs/20260920-093211-lvlboot/log`)
+The 09:32 playtest run (`~/.sightline/runs/20260920-093211-lvlboot/log`)
 loaded `build\win32\data\asset-overrides\controllers/xbox.slmodel` whose
 SHA-1 (E128D9E7...) is the round-4 "after" hash - the LEVELLED model, not a
 stale one; the exe (09:25) postdates the compile (08:44). So round 4's fix
@@ -37109,18 +37134,18 @@ was in force for the report.
   space) while its winding says level: a lighting-only oddity of that
   package's normals, not a shape.
 - SIDE BY SIDE (scratch modern5/facing-sheet.png: the N64 pad through a
-  scripted GENERIC virtual pad, the owner's real Xbox pad, a virtual
-  DualSense, all front end -> Dam, 960x720 4:3, the owner's config): the
+  scripted GENERIC virtual pad, the real Xbox pad, a virtual
+  DualSense, all front end -> Dam, 960x720 4:3, the playtest config): the
   three pads under the same 45-degree page tilt. All three are seen from
   above-front with the grips toward the viewer; the N64 pad's flat, long
   face reads as near face-on, the two modern pads' short faces and steep
   grips read as "tilted away" at the same angle.
 - CONCLUSION: the Xbox faces the camera as the N64 pad and the DualSense
   do, to within 2 degrees by the mesh. Nothing to fix at the importer (a
-  second levelling pass would find 0.6 degrees). What the owner sees is the
+  second levelling pass would find 0.6 degrees). What is visible in play is the
   PAGE'S tilt - Rare's 45 degrees, right for the N64 pad's shape - applied
   to a modern pad's shape. Whether the modern pads should present more
-  face-on is a judgement of feel (an owner call, not a subagent's). Asked
+  face-on is a judgement of feel (a design call, not an automated one). Asked
   on #63 with a preview sheet (scratch modern5/tilt-sheet.png: 45 as
   shipped, 20, 0 - the `SL_PAD_TILT=<degrees>` developer seam in
   sl_watch_controller.c, off by default, the modern pad pitched that many
@@ -37197,7 +37222,7 @@ was in force for the report.
   bumper rocked on both; d-pad up - LOOK lit, the cross rocked; RT - FIRE
   lit, the trigger swung on the pad and beside the label; LT steps the
   page (AIM -> N64 R, unchanged since round 1).
-- FRAMES: Xbox (the owner's real pad, 960x720 4:3 = the owner's window:
+- FRAMES: Xbox (the real pad, 960x720 4:3 = the playtest window:
   B-xbox-real-f4.png, E-held-f7-rest.png, P2-timing-f12.png; 1280x720 16:9
   F-xbox-169-f12.png; 1920x540 32:9 G-xbox-329-f12.png - no overlap
   between icons, text and the pad at any of the three; at 16:9 and 32:9
@@ -37231,7 +37256,7 @@ arms +6 / +0, zero new tokens.
   (~150) lines on lilac (~230) in a 65-texel disc: at 13 px a line is under
   half a pixel and the mip chain averages it into the white. The pad's own
   buttons at ~12 px show the same plain discs - a faithful DualSense, whose
-  real symbols are subtle. Options for the owner: a darker-symbol edit of
+  real symbols are subtle. Options for decision: a darker-symbol edit of
   the CC-BY texture (the licence allows it; ATTRIBUTION.md records changes),
   or the family name back in the text for the PlayStation family (CROSS
   INTERACT) - one flag. The Xbox letters (large, coloured on black) read
@@ -37239,7 +37264,7 @@ arms +6 / +0, zero new tokens.
 - The Xbox bumper and trigger icons read as the shapes they are - a curved
   lip and a rounded paddle with no legend on the package's texture; the
   DualSense's L1 / R1 / L2 / R2 legends are dark-on-dark at 13 px.
-- The owner's real pad's own sticks and buttons were not moved by anyone;
+- The real pad's own sticks and buttons were not moved by anyone;
   the held witnesses are the scripted virtual Xbox pad's (SDL classifies it
   XBOX). The real pad drew the facing frames (family XBOX, "Xbox One
   Controller").
@@ -37248,15 +37273,15 @@ arms +6 / +0, zero new tokens.
   touched (src/native, src/gfx, and one probe call inside options.c's
   native arm).
 
-## 2026-09-20 - #63 owner-accepted and CLOSED ("Ok, i think the controllers
+## 2026-09-20 - #63 accepted and CLOSED ("Ok, i think the controllers
 ## look good now. What next?"); #51 controller analog tuning - LOOK
 ## SENSITIVITY, LOOK DEADZONE and MOVE DEADZONE for the modern pad (D-013),
-## defaults = the accepted feel bit for bit. #51 stays OPEN pending the
-## owner's replay with a real pad; #64's polish stays PARKED.
+## defaults = the accepted feel bit for bit. #51 stays OPEN pending a
+## playtest with a real pad; #64's polish stays PARKED.
 
 ### Issue admin
 
-- #63 CLOSED on the owner's acceptance after the round-6 replay: the
+- #63 CLOSED on acceptance after the round-6 playtest: the
   device-matched Xbox / DualSense models, the individually addressable
   controls, the icons beside the action labels, the 20-degree
   presentation, the DualSense symbols, the direct modern controller
@@ -37414,7 +37439,7 @@ cartridge's curve as a formula, not an in-game measurement):
 - __sgi: options.c / options.h byte-identical to 04b92554 (md5
   c5b3b9864b82 / 89af0a83a899), non-vacuous control, native arms +63 /
   +22, zero #51 tokens (scratch analog\sgi_proof.sh / .txt).
-- IN-GAME WITNESSES (960x720, the owner-shaped config, the real DualSense
+- IN-GAME WITNESSES (960x720, a user-shaped config, the real DualSense
   attached and awake - family PLAYSTATION - its sticks moved by no one):
   F: the front end's PAD tab (F-pad-tab.png), `+` x3 on LOOK SENSITIVITY
   -> 105 / 110 / 115, a press on its bar at the cursor's 0.907 -> 185 (the
@@ -37428,7 +37453,7 @@ cartridge's curve as a formula, not an in-game measurement):
   CONTROLS on row 2 (one level), Escape -> SIGHTLINE on row 3; the file
   holds 195 / 14 / 15. R (a third launch on it): the PAD tab shows 195 /
   14 / 15. P (in play on Dam, the scripted virtual Xbox pad taking the
-  poll from the sleeping DualSense, the owner's SOUTHPAW layout): at 100 /
+  poll from the sleeping DualSense, the config's SOUTHPAW layout): at 100 /
   15 / 15 LX 0.5 -> turn 28, LX 0.25 -> 8, RY -0.5 -> walk 28, LX -1.0 ->
   -70, LY 0.5 -> pitch 28; at 200 / 30 / 30 the same script: turn 39, LX
   0.25 dead, walk 19, -70, pitch 39 - the harness numbers, in the game,
@@ -37439,10 +37464,10 @@ cartridge's curve as a formula, not an in-game measurement):
 
 ### Not exercised / limitations
 
-- The owner's real DualSense drew the CONTROLLER rows (PLAYSTATION) and
+- The real DualSense drew the CONTROLLER rows (PLAYSTATION) and
   was never moved by anyone; the in-play numbers are the scripted virtual
-  pad's. Feel (default the same, lower / higher, drift) is the owner's
-  replay.
+  pad's. Feel (default the same, lower / higher, drift) is for the
+  playtest.
 - The percent labels of the deadzone rows are p x 5000 / 15 raw, i.e.
   p x 1.017 percent of the SDL travel - within 0.8% of the label across
   the range; 15% IS the compiled 5000. Chosen over a true-percent grid so
@@ -37460,21 +37485,21 @@ cartridge's curve as a formula, not an in-game measurement):
   touched (src/platform, src/native, and native-arm rows in options.c /
   options.h).
 
-## 2026-09-20 - #51 owner-accepted and CLOSED ("Looks good. We can move onto
+## 2026-09-20 - #51 accepted and CLOSED ("Looks good. We can move onto
 ## the next item on the todo list."); #56 CROUCH MODE and SPRINT MODE, HOLD /
 ## TOGGLE at the action layer (D-014), default HOLD = today's behaviour bit
-## for bit. #56 stays OPEN pending the owner's replay; #64's polish stays
+## for bit. #56 stays OPEN pending a playtest; #64's polish stays
 ## PARKED; PC display modes are next on the roadmap order.
 
 ### Issue admin
 
-- #51 CLOSED on the owner's acceptance: LOOK SENSITIVITY, LOOK DEADZONE and
+- #51 CLOSED on acceptance: LOOK SENSITIVITY, LOOK DEADZONE and
   MOVE DEADZONE, the default identity, the PAD tab rows, the watch's STICK
   TUNING child, the persistence and the logical-look-role composition.
 - #64 stays OPEN / PARKED as is.
 - #56 REUSED (filed 2026-09-19 with the roadmap): the two HOLD / TOGGLE
   settings, both editors, the edge cases the issue asked to have decided
-  (below). Not owner-accepted; the replay steps are on the issue.
+  (below). Not yet accepted; the playtest steps are on the issue.
 
 ### Recon (file:line, at 68fd4d1e)
 
@@ -37642,7 +37667,7 @@ cartridge's curve as a formula, not an in-game measurement):
   failures, its 278 check lines identical to the previous round's.
 - settingstest 146 / 0 (the 12 new: defaults, write-on-change beside
   sprint_enabled and the #51 rows, 1 accepted / 2 and -1 refused, reload,
-  malformed and out-of-range, a pre-#56 owner-shaped file read as HOLD and
+  malformed and out-of-range, a pre-#56 user-shaped file read as HOLD and
   not rewritten, the next write adding both, the MIXED config - both modes
   TOGGLE, sprint on, bind.crouch.kbm.1=key:C, pad_look_sensitivity 150,
   mouse_invert_y 1 - read intact and surviving an unrelated rewrite and a
@@ -37656,7 +37681,7 @@ cartridge's curve as a formula, not an in-game measurement):
   up -> SPRINT+H+L, sprint=1 (latched, stationary), spd 0; W again ->
   sprint=2, 1.527; a second tap -> SPRINT+P, sprint=0, spd 1.350 (W alone).
 - In-game CROUCH TOGGLE and the watch isolation (Dam through the front end
-  at 960x720, the owner-shaped config, cmode=1 from the front end): a Ctrl
+  at 960x720, a user-shaped config, cmode=1 from the front end): a Ctrl
   tap -> CROUCH+H+P+L, crouch 2 -> 0 with the key up; the watch opened and
   closed (Esc) -> still CROUCH+H+L, crouch 0; Ctrl held in play -> CROUCH+P,
   crouch 0 -> 2 (OFF), the watch opened, Ctrl released in it, closed -> no
@@ -37685,11 +37710,11 @@ cartridge's curve as a formula, not an in-game measurement):
 
 ### Not exercised / limitations
 
-- The owner's real DualSense was attached (the CONTROLLER rows read
+- The real DualSense was attached (the CONTROLLER rows read
   PLAYSTATION) and was moved by no one; the in-game witnesses are the
   keyboard's, the pad's toggle semantics are the harness's (the synthetic
   pad through the real evaluator: pad B / L3 / X flip the same latches as
-  the keys). Feel is the owner's replay.
+  the keys). Feel is for the playtest.
 - A press during an intro camera or a cutscene flips a latch (the layer is
   not told about them); the game drops the level until its gates open, so
   the visible result is the same as a control held through the cutscene.
@@ -37700,13 +37725,13 @@ cartridge's curve as a formula, not an in-game measurement):
 - A wheel row bound to CROUCH or SPRINT (possible, useless under HOLD)
   flips once per poll that carries notches, not once per notch.
 - The stray Notepad: an early attempt to capture build.ps1's output
-  through `cmd /c` opened the script in the owner's Notepad (a read-only
+  through `cmd /c` opened the script in a desktop Notepad (a read-only
   tab); nothing was edited. It was not force-closed.
 - `make trace-verify` not run: no game logic, physics, AI or entity state
   touched (src/platform, src/native, and native-arm rows in options.c /
   options.h; bondview2.c untouched).
 
-## 2026-09-20 - #63 / #64 defect round 6 (the owner's replay, real Xbox pad
+## 2026-09-20 - #63 / #64 defect round 6 (the playtest, real Xbox pad
 ## and DualSense): "look and zoom in aren't mapped correctly. D pad isn't
 ## used at all, and it should be, and zoom in is actually look. To zoom in,
 ## we should probably use lb and rb. So it zooms when scoping for sniper
@@ -37714,9 +37739,9 @@ cartridge's curve as a formula, not an in-game measurement):
 ## too ... Looks like ps5 can be tilted better too. Would like for the
 ## symbols to show on the buttons too." All four DONE: the d-pad and the
 ## bumpers in play (D-012), the labels honest, the tilt 20, the DualSense
-## symbols visible. #63 stays OPEN pending the owner's replay.
+## symbols visible. #63 stays OPEN pending a playtest.
 
-### The owner's report (verbatim)
+### The playtest report (verbatim)
 
 "look and zoom in aren't mapped correctly. D pad isn't used at all, and it
 should be, and zoom in is actually look. To zoom in, we should probablly
@@ -37732,7 +37757,7 @@ not a binding; under 1.1 Honey the pad's d-pad reached the game as the N64
 d-pad and the cartridge aliases that to the C buttons (bondview2.c:5427
 look up / down, :5419 the digital strafes, :5495 the scope's zoom), so it
 "looked" a little and read as unused. The RS icon said ZOOM IN - R3's
-binding, which the owner read as the right stick's function - and R3's zoom
+binding, which read in play as the right stick's function - and R3's zoom
 was a two-tick pulse per press (sl_action_channels: a wheel notch's
 duration), so it did nearly nothing. The DualSense's symbols were plain
 white discs.
@@ -37766,7 +37791,7 @@ white discs.
   CROUCH again (its ZOOM IN on B had no point with the zoom on the bumpers
   and the d-pad; the round-4 "CROUCH has no pad source" flag is closed).
   Y is UNBOUND in every preset: two slots per action is the whole editor,
-  and RB + d-pad right fill NEXT WEAPON's - an owner call which of the three
+  and RB + d-pad right fill NEXT WEAPON's - a design call which of the three
   Y should displace, if any. R3 is unbound in DEFAULT.
 - THE STALE RULE (sl_action.c): an edge needs a live source of the action
   that went down THIS poll (per-slot raw memory), so releasing the scope
@@ -37789,7 +37814,7 @@ white discs.
   the STICK LAYOUT in force (MOVE / LOOK; LEGACY: MOVE/TURN and
   LOOK/STRAFE; SOUTHPAW swaps) over "CLICK <action>" for the click's
   binding(s), so a reader cannot take the click for the motion. The
-  owner's config is SOUTHPAW: LS reads "LOOK / CLICK SPRINT", RS "MOVE".
+  playtest config is SOUTHPAW: LS reads "LOOK / CLICK SPRINT", RS "MOVE".
 - THE BUMPER LABELS: both rows, "NEXT WPN/ZOOM IN", and the two-row break
   now prefers the slash between actions (NEXT WPN over ZOOM IN) to the last
   space; a single-word or fixed-row label never breaks.
@@ -37812,7 +37837,7 @@ tilt in force, capped at 30) instead of a fixed 30; front parts unchanged.
 The probe measures the modern model under its tilt: the DualSense reads
 30.0 from the view axis (its stored normals lean 9.7 toward the top edge -
 the round-5 lighting detail, not the shape; 16.0 from the N64 pad's face).
-Frames at 4:3 960x720 (the owner's window, C-xbox-held-f2.png,
+Frames at 4:3 960x720 (the playtest window, C-xbox-held-f2.png,
 D-ps-held-f10.png, P-ps-real), 960x720 16:9 (Q-xbox-960-169), 1280x720
 16:9 (F-xbox-169), 1920x540 32:9 (G-xbox-329, H-ps-329): no overlap
 between icons, text and the pad at any of them; the label lines
@@ -37876,27 +37901,27 @@ entity state touched.
 
 ### Not exercised / limitations
 
-- The owner's real pads' buttons were not moved by anyone; the held and
+- The real pads' buttons were not moved by anyone; the held and
   in-play witnesses are the scripted virtual pads' (SDL classifies them
   XBOX / PLAYSTATION); the real DualSense drew the page frames (A / B / P).
 - On the page the d-pad's left / right cannot be held for a frame: in the
   watch they are the page-change keys (options.c:825), so the held witness
   on the page is up / down; all four are witnessed in play.
-- Y unbound in every preset (two slots per action) - an owner call.
+- Y unbound in every preset (two slots per action) - a design call.
 - The Xbox bumper and trigger icons still carry no legend (that package's
   texture has none).
 
-## 2026-09-20 - #56 owner-accepted and CLOSED ("This is accepted."); #52 PC
+## 2026-09-20 - #56 accepted in playtest and CLOSED ("This is accepted."); #52 PC
 ## DISPLAY MODES: WINDOW MODE (windowed / borderless / fullscreen), RESOLUTION
 ## and VSYNC, persisted, live, in both editors (D-015), the default = the
-## accepted launch bit for bit. #52 stays OPEN pending the owner's replay;
+## accepted launch bit for bit. #52 stays OPEN pending an acceptance playtest;
 ## #64 stays PARKED; #49 (the ZIP release) is next AFTER the display
 ## acceptance, and the v0.2.0 FEATURE FREEZE follows that acceptance - no
 ## further feature work is planned or started before it.
 
 ### Issue admin
 
-- #56 CLOSED on the owner's acceptance ("This is accepted."): CROUCH MODE
+- #56 CLOSED on playtest acceptance ("This is accepted."): CROUCH MODE
   / SPRINT MODE HOLD or TOGGLE, the default identity, the action-layer
   latches, the menu / watch isolation, the stage / process resets, SPRINT
   ENABLED off clearing the sprint latch, the keyboard / controller / remap
@@ -37905,7 +37930,7 @@ entity state touched.
   window mode, fullscreen, VSync and frame pacing"). FRAME CAP / frame
   pacing is OUT of this round (said on the issue): the render loop keeps
   its cadence and the recon the issue asks for stays open there.
-- #51 / #63 stay CLOSED; #64 and #49 stay OPEN / PARKED. Not owner-accepted;
+- #51 / #63 stay CLOSED; #64 and #49 stay OPEN / PARKED. Not accepted in playtest;
   the replay steps are on the issue.
 
 ### Recon (file:line, at 230b4b52)
@@ -37958,15 +37983,15 @@ entity state touched.
   back), the NAMED row idiom (:4470), INFO_PAD (:4492), the pointer's cells
   by KIND (sl_watch_pointer.c:536-651).
 - SDL 2.32.10, the windows driver (sdlprobe.exe, the scratch probe): the
-  owner's display 0 "LC49G95T" desktop 5120x1440@240, 95 modes over 15
+  reference play machine's display 0 "LC49G95T" desktop 5120x1440@240, 95 modes over 15
   sizes 640x480..5120x1440; display 1 "ARZOPA" a portrait 720x1280@60.
   `SDL_GetClosestDisplayMode(1920x1080, refresh 0)` answers @240 - the
   HIGHEST refresh, so the refresh rate is passed explicitly (the desktop's).
 
 ### The oracle (measured BEFORE the first edit, the 230b4b52 exe)
 
-- The owner-shaped config (aspect_ratio=0, fov_vertical=5872, sprint on,
-  both modes TOGGLE, bind.aim.kbm.2=none - the owner's config.ini as it is
+- The user-shaped config (aspect_ratio=0, fov_vertical=5872, sprint on,
+  both modes TOGGLE, bind.aim.kbm.2=none - the existing user config.ini as it is
   today, copied to scratch), play.ps1's launch (SL_WINDOW=1,
   SL_WINDOW_SIZE=960x720): client 960x720, window rect 966x749 at
   (2077,334) on the 5120x1440 primary, style 0x16ca0000 (WS_CAPTION |
@@ -38081,10 +38106,10 @@ entity state touched.
   resized by the aspect (as before).
 - No frame cap; the pacer's contract is untouched (measured below).
 
-### Evidence (all on scratch configs and a scratch save; the owner's
+### Evidence (all on scratch configs and a scratch save; the existing user
 ### config.ini and saves never opened for writing)
 
-- DEFAULT IDENTITY (A): the new build on the owner-shaped config prints
+- DEFAULT IDENTITY (A): the new build on the user-shaped config prints
   the oracle's lines byte for byte - the 8 `sl_display:` / confinement /
   aspect lines Compare-Object 0 differences, the external probe the same
   client 960x720, rect 966x749 at (2077,334), style 0x16ca0000; the config
@@ -38188,8 +38213,8 @@ entity state touched.
   borderless, the pair kept for the return.
 - CONTROL-SETTINGS NEGATIVES: every `sightline options:` witness line
   across every mode change reads `look=0 aim=0 minv=0 sprint=1 ... psens=100
-  pdz=15 mdz=15 smode=1 cmode=1` (the owner's shape) unchanged; the files
-  the runs wrote (F.ini, W.ini) differ from the owner-shaped file in the
+  pdz=15 mdz=15 smode=1 cmode=1` (the user config's shape) unchanged; the files
+  the runs wrote (F.ini, W.ini) differ from the user-shaped file in the
   six display lines only (Compare-Object of the non-display lines: 0),
   bind.aim.kbm.2=none kept; aspect_ratio never rewritten by the display
   code (the F8 aspect steps wrote it through the ASPECT row as before).
@@ -38202,7 +38227,7 @@ entity state touched.
   request / take / commit seam and the editors' steps, BORDERLESS
   informational, the size text); settingstest 156 / 0 (the 10 new: defaults,
   write-on-change beside the #56 rows, refused values, reload, malformed
-  and out-of-range, the pre-#52 owner-shaped file read as the defaults and
+  and out-of-range, the pre-#52 user-shaped file read as the defaults and
   not rewritten, the next write adding the six lines); inputtest the seven
   cases 9 / 5 / 30 / 124 / 73 / 73 / 127 all 0 and the main run 219 with
   the 22 B-096 failures, the 30 FAIL lines byte-identical to the previous
@@ -38223,7 +38248,7 @@ entity state touched.
 - The relative-mouse control is by construction plus the harness, not an
   in-game injection: raw input cannot be posted.
 - The DISPLAY tab and the watch child were driven by the keyboard and the
-  probe; the owner's own pointer and pad are the replay.
+  probe; a real pointer and pad in manual play are the replay.
 - The pinned evidence window's exclusive mode switch worked only through
   the hop; the on-screen activated window was measured both ways (E).
 - A display change while the game is minimised, a desktop-resolution
@@ -38234,10 +38259,10 @@ entity state touched.
   options.c / options.h).
 
 ## 2026-09-20 - #52 follow-up: the front end's RESOLUTION row opens a
-## DROPDOWN (owner, on the display round: "Instead of clicking through each
+## DROPDOWN (playtest request on the display round: "Instead of clicking through each
 ## of the resolutions, can it be a drop down?"). The list policy, the request
 ## seam, the backend transaction, the other rows and the watch's row are
-## untouched. #52 stays OPEN pending the owner's replay.
+## untouched. #52 stays OPEN pending an acceptance playtest.
 
 ### Recon (file:line, at fb31b3b5)
 
@@ -38254,7 +38279,7 @@ entity state touched.
 - The lists are public (`sl_window.h` :129-130 sl_window_list_fullscreen /
   sl_window_list_windowed_now, :99 sl_window_list_find): the same ones the
   step walks, bounded at 32, 11 windowed heights and 15 fullscreen sizes on
-  the owner's LC49G95T.
+  the reference play machine's LC49G95T.
 - Activation and the pointer: one cursor (front.c:288-289), moved by
   frontUpdateControlStickPosition (front.c:1243; full stick = 5.75 units a
   frame, clamped 20 units inside the 440x330 page at :1319-1341) with the
@@ -38329,7 +38354,7 @@ entity state touched.
   confirm outside the column)`.
 
 ### Evidence (scratch config / save under the session scratchpad
-### `dropdown\`; the owner's config.ini never opened; all windows parked
+### `dropdown\`; the existing user config.ini never opened; all windows parked
 ### off-screen but the two-mode excursion, which ended WINDOWED)
 
 - W (WINDOWED 960x720, 4:3, `SL_POINTER_PROBE` in window pixels):
@@ -38388,16 +38413,16 @@ run: no game logic, physics, AI or entity state touched.
   Neither was injected.
 - A real mouse's drag past the list's edge scrolls one entry per pointer
   motion after the cooldown; only the probe's discrete moves were driven.
-- The watch's RESOLUTION row is unchanged (latch + LEFT / RIGHT); the owner
-  can ask for the list there too - the ring face would need its own idiom.
+- The watch's RESOLUTION row is unchanged (latch + LEFT / RIGHT); the list
+  can be added there too if wanted - the ring face would need its own idiom.
 
 ## 2026-09-21 - ACCEPTANCE REPAIR before the v0.2.0 release: five
-## owner-observed defects on the candidate (the widescreen cursor, the watch
+## defects observed in play on the candidate (the widescreen cursor, the watch
 ## cursor, no QUIT GAME, the gunbarrel composition, the missing north face
-## button) plus the owner's bumper decision taken mid-round. v0.2.0 stays
+## button) plus the bumper decision taken mid-round. v0.2.0 stays
 ## FEATURE-FROZEN - this round is repair only; #49 (the ZIP release) was NOT
-## started and is still next AFTER the owner accepts these. Nothing here is
-## owner-accepted.
+## started and is still next AFTER these are accepted in playtest. Nothing here is
+## accepted in playtest.
 
 Branch `sightline/qol-controls`, from e28232e1. One forward commit per
 repaired defect, in order, each with its own gates:
@@ -38408,7 +38433,7 @@ repaired defect, in order, each with its own gates:
 | QUIT GAME (C) | 9b554aec | #66 (filed this round) |
 | gunbarrel (D) | a86476b3 | #67 (filed this round) - measured, NOT reproduced |
 | north face button (E) | a55f3fdf | #64 (existing; stays open) |
-| the bumpers (owner, mid-round) | 322ca69e | #64 |
+| the bumpers (design decision, mid-round) | 322ca69e | #64 |
 | docs | this entry | - |
 
 ### A + B - the widescreen cursor and the watch cursor (#65)
@@ -38515,7 +38540,7 @@ mid-sweep the aperture sits at 0.896 of the safe rect at both 4:3 and 32:9;
 the blood wash is confined to the safe rect with the bands black. So the
 cinematic is the 4:3 image inside the safe rect at every aspect and Bond's
 placement relative to the barrel is the 4:3 placement. NO transform was
-changed. #67 carries the measurement and asks the owner for the conditions
+changed. #67 carries the measurement and asks the reporter for the conditions
 (aspect, window mode, where in the sequence, the screenshot).
 
 ### E - the north face button (#64)
@@ -38528,17 +38553,17 @@ from the authoritative table exactly as a bound one's does. Xbox 12 -> 13
 labels (`R Y: UNBOUND`), DualSense 13 (`R TRIANGLE: UNBOUND`); a scratch
 config with `bind.reload.pad.1=pad:Y` reads `R Y: RELOAD` and `R X: UNBOUND`
 - the same rule in the other direction. No binding invented; #64 stays open
-because what Y should DO is the owner's call.
+because what Y should DO is a design decision still open.
 
-### The owner's bumper decision (mid-round, #64)
+### The bumper decision (mid-round, #64)
 
-"I also don't like RB and LB and L1 and R1 cycling the weapons. They should
-just mirror the triggers for aim and shoot. Dpad handles weapons fine."
+Decision: RB / LB (L1 / R1) no longer cycle the weapons; they mirror the
+triggers for aim and shoot, and the d-pad handles the weapons.
 DATA, not mechanism: DEFAULT is RT / RB FIRE and LT / LB AIM with the cycle
 and the zoom on the d-pad alone; SOUTHPAW the same with the sides swapped;
 GREEN THUMB DEFAULT plus R3 AIM - and because two slots per action is the
 whole editor, R3 takes the slot LB holds, so LB is unbound in that preset
-alone (flagged for the owner, and the page now says UNBOUND rather than
+alone (flagged for review, and the page now says UNBOUND rather than
 hiding it). BUMPER is RETIRED - its point was the TRIGGERS cycling - with
 its id kept occupied (`retired` in the table, `sl_bindings_layout_selectable`
 / `_step`, `layout_matches`), so a config that recorded it loads as CUSTOM
@@ -38566,7 +38591,7 @@ are a display-list tag, a menu row and a stderr witness, all native-arm.
 
 ### Not exercised / limitations
 
-- #67 is NOT reproduced here; the owner's conditions are needed before any
+- #67 is NOT reproduced here; the reported conditions are needed before any
   intro transform is touched.
 - The integrated front-end replay clicked SELECT MISSION and OPTIONS and
   hovered all four rows; MULTIPLAYER was not activated (it needs two
@@ -38578,7 +38603,7 @@ are a display-list tag, a menu row and a stderr witness, all native-arm.
   loader applies bind lines verbatim; the steal is an EDIT-time rule) - the
   pre-existing load semantics, unchanged by this round.
 
-## 2026-09-21 - RELEASE TRANSACTION, v0.1.0 ONLY (owner narrowed the scope
+## 2026-09-21 - RELEASE TRANSACTION, v0.1.0 ONLY (scope narrowed by decision
 ## mid-round): the pre-QoL checkpoint tagged on the canonical and the public
 ## repositories, both read back; the two release blockers settled by
 ## MEASUREMENT on a clean build of the exact checkpoint - one resolved (the
@@ -38588,13 +38613,13 @@ are a display-list tag, a menu row and a stderr witness, all native-arm.
 ## on master and not in the tagged source. QoL was NOT merged; v0.2.0 was NOT
 ## started.
 
-### Issue administration (owner decisions of 2026-09-21, each read back)
+### Issue administration (decisions of 2026-09-21, each read back)
 
-#65 and #66 owner-accepted ("Ok, i accept what was about to be fixed") and
+#65 and #66 accepted in playtest ("Ok, i accept what was about to be fixed") and
 CLOSED. #64: the repair-round changes (Y / TRIANGLE present, the UNBOUND
 rule, the bumpers mirroring the triggers, the d-pad's weapons and zoom)
 accepted; the issue STAYS OPEN for the broader layout questions. #67: the
-owner confirms the sniper-intro observation and accepts v0.2.0 with it
+sniper-intro observation is confirmed and v0.2.0 is accepted with it
 outstanding; deferred to v0.3.0 Visual Fidelity; SL_INTRO_DBG kept; OPEN, not
 claimed disproved. v0.2.0 remains FEATURE-FROZEN; the next milestone after it
 is v0.3.0 Visual Fidelity (nothing implemented here).
@@ -38657,7 +38682,7 @@ That is the blocker in bytes. A safe binary from the exact checkpoint would
 need a source change (a runtime derivation), which is by definition not
 v0.1.0; patching the binary is not a release; shipping the bytes is
 distributing ROM-derived data. So: tags kept, build and provenance recorded,
-NO package, NO GitHub Release. The owner's ruling A (accept the 528 bytes
+NO package, NO GitHub Release. Ruling A (accept the 528 bytes
 with a notice / a source-only release / no v0.1.0 binary at all) decides
 what, if anything, is attached to the public tag; none of them is taken here.
 
@@ -38717,7 +38742,7 @@ the logs carry no D:\Projects, S:\ or scratch path.
 - No fast-forward of master, no v0.2.0 build, package, tag or release, no
   v0.3.0 work. origin/master = c489657c and origin/sightline/qol-controls =
   02bd8e01 before and after.
-- No GitHub Release for v0.1.0 (the artifact is blocked; the owner's ruling
+- No GitHub Release for v0.1.0 (the artifact is blocked; ruling A
   decides). No public README change (nothing to point players at yet).
 - For the v0.2.0 round: the two tables must move to runtime derivation from
   the user's ROM before its executable can pass the same validator (the shim
@@ -38730,7 +38755,7 @@ the logs carry no D:\Projects, S:\ or scratch path.
 
 ## 2026-09-21 - RELEASE ROUND, v0.2.0 (QoL Phase 1, the first Windows binary
 ## release): v0.1.0 published as a SOURCE-ONLY GitHub Release on its existing
-## public tag (owner ruling b); the release tooling fast-forwarded onto the QoL
+## public tag (ruling b); the release tooling fast-forwarded onto the QoL
 ## line; the first demonstrated release blocker - 528 bytes of ROM-derived
 ## audio-microcode data compiled into the exe - removed by deriving the tables
 ## from the player's ROM at start-up, proven byte-identical and proven to
@@ -38739,7 +38764,7 @@ the logs carry no D:\Projects, S:\ or scratch path.
 ## The packaging, the smoke, the integration into master, the tags and the
 ## GitHub Release follow this commit and are recorded in #49.
 
-Owner direction for the round (binding): the distributed executable is
+Design direction for the round (binding): the distributed executable is
 Sightline's own code plus permitted Sightline-owned / redistributable
 runtime material ONLY; the original game data stays EXTERNAL and is read from
 the player's own ROM at run time. No embedding, appending or packaging of the
@@ -38822,7 +38847,7 @@ yet supply the tables - it will report UNGROUNDED until it does; Linux is
 not a target).
 
 **Oracle and identity.** BEFORE deleting the compiled path the bytes the
-old build would compile were recorded from the owner's ROM by an external
+old build would compile were recorded from the development host's ROM by an external
 standard-library derivation (the v0.1.0 round's `derive_ucode.py`): the
 704-byte segment SHA-256 e6afb200..., the old generated header from those
 bytes 1832 bytes SHA-256 13524ce3..., the 16-byte ramp as the build's
@@ -38877,7 +38902,7 @@ Sightline-vX.Y.Z-win32.zip -> extract -> your own compatible GoldenEye 007
 source-only, v0.2.0 the first distributable binary); the build step needs
 neither a ROM nor a matching-build output. `docs/releases/v0.2.0.md`: QoL
 Phase 1 as accepted, the two provenance changes above, known / deferred (#67
-owner-confirmed, accepted for v0.2.0, deferred to v0.3.0 Visual Fidelity;
+confirmed in playtest, accepted for v0.2.0, deferred to v0.3.0 Visual Fidelity;
 no World Detail / Community HD / XBLA / Modern Lighting), the own-ROM
 requirement. Nothing implies a ROM is included; v0.3.0 is not released.
 
@@ -38915,7 +38940,7 @@ Release are performed after this commit and read back into #49.
 ## image, a preflight step proves it on every job, harness-tests is green
 ## on the remote runner with the job log as evidence, and act_runner is
 ## pinned to the version it was already running. Branch sightline/ci-runner
-## from master 664cc1b3; not merged - the owner decides after readback.
+## from master 664cc1b3; not merged - the merge is decided after readback.
 
 ### The first wrong stage, and the second
 
@@ -39058,8 +39083,8 @@ adduser) and nothing changed or removed; the image is rebuilt under
 Scope: Gitea #43 as re-scoped 2026-09-18 (the world-detail profile: LOD
 selection and render visibility; NOT textures #47, NOT lighting #48, NOT the
 retired filtering Phase A, D-007). The UI names the second profile ENHANCED
-(the sprint brief's wording; the issue body says MODERN - the same profile,
-the issue comment records the name). Owner replay is the acceptance gate;
+(the sprint specification's wording; the issue body says MODERN - the same profile,
+the issue comment records the name). A manual playtest is the acceptance gate;
 nothing here is accepted.
 
 ### Docs first
@@ -39212,8 +39237,8 @@ rule is a draw-budget rule, and the fog already bounds the draw.
   walks 2.7k triangles in ~50 ms at this Dam pose on this host under both
   profiles (fps 19 in the harness, catch-up 597 of 600 with the default
   pacing) - a pre-existing cost, not this sprint's, but the ENHANCED delta
-  is proportional to the lifted triangles and the owner should judge the
-  feel on Dam.
+  is proportional to the lifted triangles and the feel on Dam needs
+  judging in playtest.
 - UI: front end OPTIONS -> SETTINGS -> DISPLAY row 5 WORLD DETAIL
   ORIGINAL / ENHANCED (BACK to slot 6), driven by the posted-message
   harness: ENHANCED / ORIGINAL / the label flip, each witnessed by the
@@ -39251,14 +39276,14 @@ abdiff.py / topng.py / sgi_proof.sh; the A..E and P-*, I-*, T*-, Perf*-
 logs; shots\ (ORIGINAL / ENHANCED pairs and crops, the front-end and watch
 captures); cartridge frames %TEMP%\sightline-oracle\wd-alarm, wd-damtop.
 
-## 2026-09-21 - WORLD DETAIL (#43), owner replay of 7e48192e: "the boxes
+## 2026-09-21 - WORLD DETAIL (#43), playtest of 7e48192e: "the boxes
 ## still stream in late" - the same visibility-range formula runs on the
 ## TICK side (posIsOnScreen -> sub_GAME_7F054C58) and withholds the prop
 ## before the render seam can see it; ENHANCED now LIFTS such props for the
 ## render only (a per-frame list beside g_OnScreenPropList, the on-screen
 ## flag untouched); the cartridge withholds them too; state trace identical
 
-Owner marks, run 20260921-215124-lvlboot (Dam, 16:9 h16 90, played under
+Playtest marks, run 20260921-215124-lvlboot (Dam, 16:9 h16 90, played under
 ENHANCED: the run's config was written at the front end before the level
 and reads `world_detail=1`; the level's own pose reproduced under both
 profiles here confirms the withheld set is ORIGINAL's): mark 1 at eye
@@ -39272,7 +39297,7 @@ rooms plus the tunnel (119 118 [110] 111 113 112 122 115 121), so the room
 set and the room residency (not-loaded 0, budget 0 at both) are not the
 mechanism.
 
-### The mechanism, by probe (candidates a-e in the coordinator's order)
+### The mechanism, by probe (candidates a-e in the task specification's order)
 
 A read-only on-screen probe (SL_ONSCR_DBG, propobj.c posIsOnScreen: the
 decision path per prop - chosen room, fog, visrange, box, in-box) at
@@ -39295,7 +39320,7 @@ Cartridge at mark 1's pose (romtele.py, room 110, %TEMP%\sightline-oracle\
 wd-mark1): the mid-yard container row is absent, as under ORIGINAL - the
 tick-side rule is Rare's and the cartridge withholds these stacks at this
 distance; Sightline is not late against it. (The oracle frame is 4:3 at
-the cartridge FOV and the owner's is 16:9 h16 90, so the comparison is of
+the cartridge FOV and the playtest's is 16:9 h16 90, so the comparison is of
 the population in the crop, not of pixels.)
 
 ### The boundary, derived
@@ -39365,21 +39390,21 @@ __sgi arm's decision.
   lines, zero #43 tokens in any __sgi expansion. `make trace-verify` NOT
   run (no MIPS toolchain).
 
-### The property the owner must weigh (not a defect of the implementation)
+### The property that must be weighed (not a defect of the implementation)
 
 A lifted prop is visible but, until it comes inside the cartridge's range,
 it is what it is under ORIGINAL: not shootable, not interactable, not an
 auto-aim target - a bullet passes through it to whatever the cartridge
 would have hit, and a decal lands there. On Dam the yard crates lift at
 ~1500-3100 units for the KF7's reach; the alternative - setting the flag -
-would move the simulation (rules 1 and 5) and is not offered. If the owner
-rules the inert band unacceptable, the lift is one predicate
+would move the simulation (rules 1 and 5) and is not offered. If a ruling
+finds the inert band unacceptable, the lift is one predicate
 (sl_world_detail_lift_query) to withdraw and the render-seam profile stands
 alone.
 
 Scratch (session, not committed): worlddetail\ M1-*, M2-*, M1b-*, M2b-*,
 PerfM1-*, T4-dam-* logs and traces; shots\ M1-O/E, M2b-O/E, M1-crops,
-M1-3way, rom-mark1/2; owner\mark-00{1,2}.png (copies of the owner's
+M1-3way, rom-mark1/2; owner\mark-00{1,2}.png (copies of the playtest
 marks); cartridge frames %TEMP%\sightline-oracle\wd-mark1, wd-mark2.
 
 ## 2026-09-22 - v0.3.0 VISUAL FIDELITY, sprint 2: TEXTURE PROVIDERS (#47) -
@@ -39391,7 +39416,7 @@ marks); cartridge frames %TEMP%\sightline-oracle\wd-mark1, wd-mark2.
 Scope: Gitea #47 as re-scoped 2026-09-18 (three texture sets through one
 abstraction, per-texture fallback to ORIGINAL, no set assumed complete, the
 renderer consuming (active set, canonical id) only; NOT #48 lighting, NOT
-the retired D-007 filtering, NOT model / UV replacement). Owner replay is
+the retired D-007 filtering, NOT model / UV replacement). A manual playtest is
 the acceptance gate; nothing here is accepted. docs/texture-packs.md is the
 architecture; this entry is the evidence.
 
@@ -39522,7 +39547,7 @@ touches it.
   exe, key absent and key 0, four poses (Facility theta 270 / theta 90,
   Archives room 14, Depot spawn): frames byte-identical (1C9ABB4E...,
   23818A31..., 87E29178..., 4F0C02B6...); census lookups 0.
-- 2x2 at the owner's Dam mark 1 (15227.031 / 60.308 / 13970.599 theta
+- 2x2 at the playtest Dam mark 1 (15227.031 / 60.308 / 13970.599 theta
   212.418 room 110): eval / reject / lifted / tick-lift and tris move
   only with WORLD DETAIL (60/10/0/0, 1650 tris vs 92/42/42/16, 2550 -
   under either set), the WD-only pixel diff the same bbox 318..491 x
@@ -39582,28 +39607,28 @@ A-*, P-*, X-*, T-*, S-*, R-*, I-*, Q-*, SC-*, PF*, MB-* logs; shots\ (the
 ORIGINAL / COMMUNITY HD / XBLA frames and crops, the front-end and watch
 captures); the master worktree build under %TEMP%\slm.
 
-## 2026-09-22 - #47 OWNER ACCEPTANCE **FAILED**, and the repair. The first
+## 2026-09-22 - #47 ACCEPTANCE PLAYTEST **FAILED**, and the repair. The first
 ## round's packs lived OUTSIDE the tree behind an exported SL_TEXPACK_ROOT,
-## so the owner's ordinary launch read a pack root that did not exist and
+## so the playtest's ordinary launch read a pack root that did not exist and
 ## drew ORIGINAL under every set. The converter now ships (tools/texpack),
 ## a checkout prepares its own pack, and play.ps1 hands it to the child.
 ## The second report - the two UI surfaces disagreeing - was MEASURED in
 ## five flows and DOES NOT REPRODUCE. #47 stays OPEN; retest pending.
 
-Owner, verbatim: "I don't notice any changes with the graphics or textures.
+Playtest report, verbatim: "I don't notice any changes with the graphics or textures.
 Still seems to be the original when i switch to any option." and "when i
 changed textures in watch, and went back outside the mission, the change
 didn't translate to the options either."
 
-Owner observation wins the gate. The previous round's visual claim was made
-under `SL_TEXPACK_ROOT=<a research workspace>` - a variable the owner's
-launch never sets - so the agent's launch and the owner's launch were never
+Playtest observation wins the gate. The previous round's visual claim was made
+under `SL_TEXPACK_ROOT=<a research workspace>` - a variable an ordinary
+launch never sets - so the verification launch and the playtest launch were never
 the same launch, and the one that mattered read nothing.
 
 ### First wrong stage: root resolution, before a single texture is looked up
 
-The causality was already on the owner's disk, no instrumentation needed:
-their `config.ini` persists `textures=2` (XBLA - so the SETTING had been
+The causality was already on the play machine's disk, no instrumentation needed:
+its `config.ini` persists `textures=2` (XBLA - so the SETTING had been
 changed and saved) while `%LOCALAPPDATA%\sightline\assets\texpacks` DOES NOT
 EXIST. An ordinary launch, scratch config `textures=1`, no SL_TEXPACK_ROOT,
 Facility catwalk, 600 frames:
@@ -39627,7 +39652,7 @@ implicated - nothing in the renderer was touched this round.
 
 Two directories in the checkout, behind the boundary `baserom.u.z64` already
 lives behind, both gitignored: `texsources\` (what the user supplies) and
-`texpacks\` (what the tool writes - the pack root). The owner's XBLA source
+`texpacks\` (what the tool writes - the pack root). The local XBLA source
 archive was MOVED out of a personal downloads folder into `texsources\`
 under a neutral project filename; size and SHA-256 recorded and re-verified
 equal after the move, the old location proved empty, `git status` clean.
@@ -39715,12 +39740,12 @@ window's own close):
 - **E, malformed:** ORIGINAL everywhere, above.
 - Plus the two root-precedence flows.
 
-No flow produced a mismatch. The honest reading of the owner's second
+No flow produced a mismatch. The honest reading of the report's second
 sentence is therefore the SAME defect as the first: with no pack on disk,
 changing the set in the watch changed nothing visible, and changing it in
 the front end changed nothing visible either - "the change didn't translate
 to the options either" is the absence of any effect, not two rows
-disagreeing. If the owner's retest still shows two DIFFERENT values in the
+disagreeing. If the playtest retest still shows two DIFFERENT values in the
 two places, that is new evidence and the flows above are the harness to
 re-run against it. Nothing in C was changed on a hypothesis.
 
@@ -39740,7 +39765,7 @@ private directories, `git ls-files` holds neither, `git check-ignore`
 names the rule for each, and `git archive HEAD` (3724 entries - what the
 public export publishes) matches nothing under `texsources`, `texpacks`,
 `.sltx`, `.7z` or the pack archive. `package-release.ps1` stages named
-files, never a tree. No owner path, no username and no acquisition pointer
+files, never a tree. No personal path, no username and no acquisition pointer
 in any tracked file.
 
 ### Parked, unchanged
@@ -39750,8 +39775,8 @@ Every coverage debt from the first round stays parked exactly as recorded
 review-tier candidates, NPOT wrap shape-misses, the graded-alpha witness,
 the Archives posters' pre-existing mirroring). Added to the list: a CI step
 for the preparation tooling's selftest - it is asset-free and would run
-anywhere, but CI was out of scope this round and the change is the owner's
-to approve. The conversion's Pillow / numpy prerequisite is a developer-tool
+anywhere, but CI was out of scope this round and the change still awaits
+approval. The conversion's Pillow / numpy prerequisite is a developer-tool
 dependency, declared nowhere and linked by nothing; requirements.txt was
 deliberately NOT touched (project rules: ask before adding).
 
@@ -39765,12 +39790,10 @@ derive_mapping.py and the R-*, N-*, I-*, U-*, F-*, A-*, E-*, P-* run logs.
 ## in sight. 594 mapped textures compared, 20 campaign levels swept per
 ## provider. Sightline still redistributes nothing. #47 stays OPEN.
 
-Owner, verbatim: "I don't want to do any of that myself. I don't have the
-textures on hand, they must be pulled dyanmically"; "we will never
-redistribute the community textures so we need to automate that for the users
-too if not already"; "Make sure you are looking at the texture files and IDing
-where they are in game and automatically go to those textures and compare all
-of them."
+Requirements: no manual step - the textures are not on hand and must be
+pulled dynamically; the community textures are never redistributed, so the
+acquisition is automated for players too; and every texture file is
+identified in game, visited automatically and compared - all of them.
 
 ### The manual step that had no reason to exist
 
@@ -39855,7 +39878,7 @@ New seam, dark by default: SL_TEX_DUMP_IDS=<dir> writes the renderer's decode
 ONCE PER TEXTURE NUMBER in the pack's own format, so a decode and a
 replacement for the same id are two files one reader opens. The id comes from
 the provider's existing side table (sl_texprov_id_of, new, reading the same
-reg_find the resolve path reads). Without it, "compare all of them" has no
+reg_find the resolve path reads). Without it, comparing all of them has no
 second operand.
 
 THE SWEEP. All 20 campaign levels x 3 providers, bounded frames at each
@@ -39878,7 +39901,7 @@ mapped but never resolved       137            41
 Per level, replaced-id counts run 7 (egypt) to 53 (runway) for COMMUNITY HD
 and 0 (egypt) to 15 (runway) for XBLA; provider-replaced uploads peak at 224
 (aztec, community). The 137 / 41 "never resolved" are not a defect: a level's
-start pose does not draw the whole level, and the owner's direction was
+start pose does not draw the whole level, and the design direction was
 explicitly not to walk the world looking for textures.
 
 V2 - ALL 594 MAPPINGS COMPARED OFFLINE (v2-table.csv in scratch), each against
@@ -39929,10 +39952,10 @@ the cause of the jungle shape-miss cluster (31 ids, e.g. `tile 16x14 vs image
 14x14`), until now parked as "NPOT wrap shape-misses" without a cause. NOTHING
 WAS CHANGED on this: the fix is a decision - whether the provider should
 compare against the image table's size, or the mapping should record the
-pool's - and it is the owner's. 0828 additionally looks like a wrong resource
+pool's - and it awaits a design ruling. 0828 additionally looks like a wrong resource
 (MAE 156, correlation -0.41, a 1:1 "replacement"), so promoting it by editing
-dimensions would have been exactly the "lower the threshold" move the brief
-forbids. Parked, with evidence.
+dimensions would have been exactly the "lower the threshold" move the stated
+requirements forbid. Parked, with evidence.
 
 V4 - IN-WORLD CONFIRMATION. dam and jungle captured under all three providers
 at an identical pose with the RNG pinned. Geometry, character pose, foliage
@@ -39940,7 +39963,7 @@ shape and placement are identical; only texel colour changes (dam 56.1% of
 pixels under COMMUNITY HD, 43.2% under XBLA; jungle 24.8% / 10.6%). No filled
 cutout, no shifted UV, no stretched tile.
 
-### The owner's second report, driven for real this time
+### The second playtest report, driven for real this time
 
 A synthetic-pad harness (SL_PAD_VIRTUAL + SL_PAD_SCRIPT, the seam that already
 exists) drove Facility -> watch -> SIGHTLINE -> GRAPHICS -> TEXTURES: the row
@@ -39985,7 +40008,7 @@ git status clean of both private directories; git ls-files holds neither and
 no .sltx; git check-ignore names the rule for each; git archive HEAD (3737
 entries - what the public export publishes) matches nothing under texsources,
 texpacks, .sltx, .7z or the pack archive. The staged diff of every commit
-greps ZERO for the owner's name, the XBLA archive's name, the private
+greps ZERO for personal names, the XBLA archive's name, the private
 workspace name and the user-profile path. The upstream Community HD URL
 appears in tracked files deliberately: it is the legitimate official source
 and the whole point of the round.
@@ -40000,7 +40023,7 @@ mirrored under ORIGINAL and COMMUNITY HD alike, which is Rare's own draw).
 Added: the NPOT pool-padding shape-miss above with its cause and the decision
 it needs; xbla 0828 as a suspected wrong resource; the abort hang under direct
 boot; the pack's opaque-alpha ids; and a CI step for the preparation selftest
-(still asset-free, still the owner's to approve).
+(still asset-free, still awaiting approval).
 
 Scratch (session, not committed): texrepair2\ sweep.ps1 / witness.ps1 /
 padrun.ps1 / padscript.py / v4.ps1 / verify.py / coverage.py / cutout.py /
@@ -40009,7 +40032,7 @@ for 20 levels), frames\ (the witness and comparison captures), pkgstage\ and
 playerdata\ (a staged package and the pack a player would get), v2-table.csv
 and v1-where.csv.
 
-## 2026-09-22 - #47 THE OWNER'S QUESTION ANSWERED WITH A MEASUREMENT, and the
+## 2026-09-22 - #47 THE PLAYTEST QUESTION ANSWERED WITH A MEASUREMENT, and the
 ## cycle key. "Did you test them? ... Most of it looks the same. Water on the
 ## dam looks the same in all version." Nine poses, three providers, one frame
 ## each, plus two new dark-by-default seams that say WHAT IS ON SCREEN and
@@ -40017,7 +40040,7 @@ and v1-where.csv.
 ## separate causes, and neither is a defect. TEXTURES now cycles on F5 and on
 ## the pad button that used to mark. #47 stays OPEN.
 
-Owner, verbatim: "Did you test them? Like visually start it at the same
+Playtest report, verbatim: "Did you test them? Like visually start it at the same
 scene, check what graphics get loaded and cycle through each setting? Most of
 it looks the same. Water on the dam looks the same in all version. Also, I'd
 like to be able to cycle by using F5 on keyboard, and the 'Select' button
@@ -40079,7 +40102,7 @@ REPLACEMENT LOOKS LIKE THE ORIGINAL - the Dam reservoir, below. Where the
 pack's art really differs the change is not subtle at all: Archives 92.7% of
 the frame, mean delta 24/255.
 
-### THE DAM WATER, the owner's own example, settled
+### THE DAM WATER, the playtest report's own example, settled
 
 id 0123, 64x64, greyscale, decode alpha 34..153, geometry path. Hiliting that
 id ALONE puts the mask exactly on the water: 30.1% of the frame at that pose.
@@ -40099,12 +40122,12 @@ was changed on it.
 NO BLOCKER FOUND: no scene showed a REPLACED id with a zero-difference
 footprint, and `did` <= `could` at all nine poses in both sets.
 
-### C5 with a number, for the size-contract decision that is still the owner's
+### C5 with a number, for the size-contract decision that is still open
 
 Across the nine poses NOT ONE SHAPE MISS occurred - the NPOT pool-padding
 question costs 0.00% of on-screen area here. Tree-wide: 732 of 2698 ids are
 NPOT on at least one axis, and 86 of the 541 currently mapped ids are, so
-that is the population the contract can gate. Still the owner's call; still
+that is the population the contract can gate. Still an open design decision; still
 not implemented.
 
 ### The highest-coverage ids NO set maps (the useful backlog, not a promise)
@@ -40115,7 +40138,7 @@ not implemented.
 03d7, 0882, 01b5, 05d6, 0648, 028e, 01b1, 04c7, 043e. Nothing was promoted,
 no threshold was lowered and no mapping was invented.
 
-### THE CYCLE ACTION (the owner's request), and the pad's mark
+### THE CYCLE ACTION (the playtest requirement), and the pad's mark
 
 TEXTURE SET is now a REGISTRY action (SL_ACT_TEXTURE_CYCLE, appended last -
 no published bit moves), not another hard-wired scancode: keyboard F5, pad
@@ -40207,9 +40230,9 @@ masks, the per-scene id tables, summary.csv, c4-unmapped-ranked.csv).
 ## 2026-09-22 - #47 THE WATER WITNESS WAS POINTED AT THE WRONG SURFACE, and
 ## the XBLA set is NOT replacing art with itself. An audit of all 126 accepted
 ## mappings, a correction to the Dam answer, and the two mappings that make
-## the owner's own scene finally change. #47 stays OPEN.
+## the reported scene finally change. #47 stays OPEN.
 
-Two owner inputs drove this round. First, a hypothesis: "i don't think
+Two playtest inputs drove this round. First, a hypothesis: "i don't think
 original and xbla change at all. Maybe we are using the original textures
 that are in that rom and we need the updated textures?" Second, a correction
 to the previous round's Dam analysis: **"wrong side of the dam"**.
@@ -40251,7 +40274,7 @@ So the reason XBLA looked inert was never legacy termination. It was
 **coverage** - and the Dam was the worst case precisely because its witness
 was aimed at the wrong surface.
 
-### "Wrong side of the dam" - the owner is right, and the old answer was
+### "Wrong side of the dam" - the report is right, and the old answer was
 ### about the concrete
 
 The previous round declared id **0123** the water and explained the lack of
@@ -40307,7 +40330,7 @@ two independent queries (z ~ 8.5 on both), clean 8x, 1:1 aspect, opaque both
 sides, and the same distinctive horizontal seam in the ROM decode, the
 Community texture and the XBLA one. It sat in the review tier only because
 the pairing step scored 0.46 against a 0.60 bar. It is **38.6% of the gate
-yard frame** - the largest texture at the owner's own Dam mark.
+yard frame** - the largest texture at the playtest Dam mark.
 
 Accepted XBLA set: **126 -> 127** (+05e7, +011e, -0828).
 
@@ -40329,7 +40352,7 @@ calibrated against the 231-232 pairs pixels had already established:
 ### Does the source carry its own original-to-remastered table? NO, not at
 ### texture granularity - and this was checked, not assumed
 
-On the owner's lead that the build renders either generation at runtime and
+On the lead that the build renders either generation at runtime and
 so must know the correspondence:
 
 - **In the bundles.** Every bundle does hold a resource named "texture
@@ -40408,3 +40431,4630 @@ idxtest.py / crossconfirm.py / cooccur.py / hunt.py / triangulate.py /
 water05e7.py / xexhdr.py / xexpair.py / damexplore2.ps1 / damexplore3.ps1 /
 shoot.ps1 / resanalyze.py / summary.py, the p1-p5 CSVs, the Dam exploration
 sheets and the reservoir panels.
+
+## 2026-09-23 - #68 THE REPLACEMENT SLICE STOPS AT IDENTIFY, and the boundary
+## is structural. The Dam's cliff/snow shell IS separable on the original side
+## and IS decomposable on the source side, but nothing in either names the
+## other, so no bounded target can be chosen without inventing the pairing.
+## No behaviour changed; a measurement instrument is kept. #68 stays OPEN.
+
+The task was the first REPLACEMENT world asset: stand a remastered cliff/snow
+environment shell in place of the Dam's original one, under PRESENTATION=XBLA,
+with the original rooms, collision, AI and scripting still authoritative. The
+additive path (the skydome) is proven; replacement adds one obligation -
+identify the original draw, suppress only its native visual emission, draw the
+replacement - and the work stopped on the first of those three.
+
+### The original side: bounded, and selectable by a finer identity than "room"
+
+The renderer's only stable handle on world geometry is the one the game itself
+branches with: the room, and which of its two lists, resolved from the depth-1
+display-list operand through the same `g_BgRoomInfo` lookup the F8 mark uses.
+Nothing in `src/game` moves to supply it. 57 rooms carry geometry at the Dam
+gate-yard pose.
+
+That handle is too coarse. One room's primary list carries the cliff, the
+ground the player walks on, the concrete barriers and the kerb TOGETHER:
+hiding it removes 72.9% of the frame (hiding every room removes 84.8%), and
+what remains is the game's own sky pass, the ladders and the truck. Replacing
+the cliff through the room would delete the yard.
+
+A finer identity does separate it, and the tree already has it: the N64
+texture number #47 keys on. Texture 03b5 paints 65.3% of that frame from 92
+primitives, and the existing SL_TEX_HILITE covers the cliff shell exactly
+while ground, barriers, kerb, ladders and truck are untouched. So the original
+population is bounded and selectable.
+
+### The source side: one item per level, 389 material batches, no region names
+
+The user's source carries one world bundle per level - one model blob, one
+rendergraph, ONE command list under a single resource name. It is not opaque:
+the command list decomposes into 389 draws over a shared vertex pool in three
+primitive types. But a draw is a MATERIAL BATCH, not a region, and nothing in
+the bundle says which batches are the cliff rather than the yard, the dam wall
+or the buildings. The only names its rendergraph carries are shader constant
+names and style names.
+
+Nor does the correspondence arrive from outside. The #47 round already
+recorded that the source carries no original-to-remastered table at texture
+granularity, and that the remaster's own display-mode switch swaps WHOLE
+MODELS paired by item path - the whole level background, which is exactly the
+granularity this slice must not use. The two 2026-09-22 entries above reach
+the same wall from the texture side: for 03b5 and 03b4 "the remaster exists
+but is a full-colour panorama containing sky, on different UVs - different art
+for different geometry".
+
+So: original cliff = a per-texture population inside a room; remastered cliff
+= an unlabelled subset of 389 material batches; no artefact in either names
+the other. Choosing a subset anyway is a derivation with no authority - the
+same shape as the half-float texture coordinate the skydome round withdrew -
+and is refused rather than guessed at.
+
+### A measured correction to the source reader
+
+`tools/worldasset/xblaworld.py` finds draws by the byte pattern
+`00100100 00000004`. Against a level bundle that is wrong. The `.stream`
+record is a command list of `(byte length << 16 | opcode << 8)` headers plus
+arguments, starting at the offset its own first word names; a draw is opcode
+0x01 and its first argument is a PRIMITIVE TYPE, not a constant. The existing
+pattern sees 46 records where there are 389, and its buffer resolver assumes
+one vertex buffer per draw ending where its index buffer begins, which a
+shared vertex pool breaks. The skydome path is unaffected - its one-item
+bundle satisfies both assumptions - and was not changed. Recorded so the next
+attempt does not read 46 draws and believe it has the item.
+
+### What was kept, and what it is not
+
+The instrument that produced the identification: SL_WR_CENSUS (per room and
+list, triangles and screen area), SL_WR_HIDE and SL_WR_ONLY (suppress that
+room's native draw, or every other room's). Diagnostic only - three
+environment variables, one cached int test on the triangle path when none is
+set, wired to no setting, no presentation and no key. The census counts before
+the suppression can remove anything, so it describes what the ORIGINAL draws.
+
+It is NOT a replacement and there is no feature behind it. No suppression is
+reachable from any presentation, and none ships enabled: a suppression with
+nothing to draw would be a hole in the world, which is the one outcome the
+replacement contract forbids.
+
+One reading of the instrument was wrong and is kept as a caution: the first
+version took NDC area without requiring the triangle to be in front of the eye
+or clamping to the screen, and ranked three rooms that paint nothing at the
+top of the table. Hide-and-difference is the authority; the area column ranks.
+
+### Controls
+
+Three Dam poses x three presentations, before and after: 0 of 691200 pixels
+differ in all nine. Per-tick state traces (SL_TRACE_OUT, 400 frames) are
+byte-identical across ORIGINAL, COMMUNITY HD and XBLA, byte-identical against
+the branch before this change, and byte-identical again with the suppression
+actively removing a room's triangles - the check that says suppressing a draw
+suppresses no gameplay code.
+
+### Gates
+
+build.ps1 OK (normal, last); test.ps1 facility 300 PASS; worldassettest 57/0;
+texprovtest 56/0; presentationtest 31/0; settingstest 196/0; displaytest
+171/0; inputtest 240 checks 22 failed (the unchanged B-096 baseline, and
+inputtest.ps1 does not compile the file this touches); check_layering 282 =
+baseline. No src/game change; one file touched, plus docs. `make trace-verify`
+NOT run: this host has no MIPS toolchain and the checkout carries no recorded
+.sltrace corpus - the per-tick native state traces above are what was measured
+instead, and the change is render-only and off by default.
+
+### Parked, in the order a next attempt would take them
+
+1. The command-list reading above, validated against a consumed output rather
+   than against itself.
+2. Whether a per-draw image binding exists in a level bundle. A candidate was
+   seen (one record's argument slot covers 356 of 389 draws with 66 distinct
+   values in the bundle's own image set) but it is a CANDIDATE, not a
+   demonstrated binding, and nothing was built on it.
+3. The correspondence question, which is the actual blocker: what evidence
+   could pair a subset of the source's batches with the original's per-texture
+   population, given that neither side names the other. A spatial match against
+   the original cliff's own world positions is the only candidate route seen.
+4. Only then: SLWA extension (several materials, several primitive types), the
+   world-space transform contract, and the validity-gated suppression.
+
+Scratch (session, not committed): damworld\ - summ.py / summ2.py / inspect1-4
+/ stream.py / buftab.py / layout.py / draws.py / cmds.py / bind.py / bind2.py
+/ around.py / top.py / png.py / diff.py / tele.ps1, the isolation and hilite
+frame sets, and the per-tick trace captures.
+
+## 2026-09-23 - #68 THE WHOLE DAM STATIC BACKGROUND RENDERS AS A REPLACEMENT.
+## The granularity pivot: the remaster's own replacement unit is the whole
+## background item, so that is the unit. Under PRESENTATION=XBLA the Dam's
+## room background is suppressed and the remastered one drawn in its place;
+## rooms, collision, AI, props, doors, objectives and scripts stay original,
+## and the per-tick trace is byte-identical across all three presentations.
+## #68 stays OPEN.
+
+The previous entry stopped at IDENTIFY and the boundary was structural: the
+original cliff is a per-texture population inside a room that also carries the
+yard the player stands on, the source side is one unlabelled bundle of
+material batches, and no artefact in either names the other. The remaster's
+own display-mode switch swaps WHOLE MODELS paired by item path. The unit is
+therefore the whole background item, which is source-native rather than a
+convenience, and partial-cliff correspondence stays parked.
+
+### The reader, fixed structurally and checked against consumed output
+
+`tools/worldasset/xblaworld.read_level`. The command list is consumed by its
+own record framing rather than searched: the walk lands exactly on the end the
+stream's own header names, 1481 records, no remainder. A draw is opcode 0x01
+with a primitive TYPE - 46 triangle lists, 258 strips, 85 quad lists, where a
+pattern requiring type 4 saw 46 records in total. 387 of 389 draws resolve to
+an index buffer whose length is exactly the element count times its width; the
+two that do not are the pair needing 32-BIT indices, and they resolve against
+kind 6 with count*4. Every index run must begin exactly where some vertex
+buffer's bytes END, which is what names the SHARED pool without inventing a
+binding: 342 of 386 draws index ONE buffer of 54651 vertices, and a second of
+77880 is why a 32-bit buffer exists at all. The bounds computed from the
+vertices read agree with the bounds the bundle declares for itself to the
+printed digit.
+
+### The vertex layout is measured, and the first reading of it was wrong
+
+The bundle names a vertex declaration per draw and a level uses several. The
+reader measures the consequences instead of decoding them. WHICH word is the
+coordinate, per triangle EDGE: |world change| / |raw change| reads 0.072 on the
+coordinate word and 0.000 on the packed normal over 113972 edges, because a
+normal is constant over a face. Measured per DRAW instead, the normal WINS -
+a draw is a material batch and every face in it carries its own chart - and
+drawing that is a level of flat-shaded facets. That was the first render.
+AT WHAT SCALE, from the values: the three commonest absolute values are 0
+(86365), 128 (45200) and 127 (42974), and 25.8% of the non-zero values are
+exact multiples of 128 against a 0.78% chance, where only 0.47% are multiples
+of 256. One texture is 128 raw units here; the skydome item's own declaration
+uses 16384, which is why the scale is read per item and never fixed.
+
+Two more settled by pixels rather than structure: the colour is A R G B (its
+first byte is 0xff on all 132860 vertices of the four large pools), and slot 0
+is not always the base image - one pool of 7081 triangles, every tree in the
+level, names a tangent-space normal map whose mean is (125,125,254), and it
+drew as a flat violet standing beside every tree.
+
+### The world transform, and a correction to the skydome round
+
+Geometry is laid out in S = position * level_scale - render_origin
+(bgroomtrans.c:211-218), and the same holds for the camera: at the gate yard
+the eye reads (17959.16, 73.15, 17809.95), the render origin (17723.85,
+-107.00, 17612.57), and their difference is where the eye is in S to the last
+digit printed. The source authors the bundle in the bg data's own room
+coordinates, so X = B * k - origin under the folded projection and X = B * k
+under the plain one, with k = room_data_float2 read per frame - 4.2801 at the
+Dam, and NOT a constant across levels.
+
+The skydome round's "exactly 5.0000" is an artefact of sl_wa_view_origin, which
+assumes an orthonormal basis while the folded view carries a uniform scale of
+five. Nothing about the skydome moves - it is eye-anchored and a uniform scale
+about the eye changes no ray - which is precisely why the error could not show
+there. A world-anchored asset cannot ignore it and does not.
+
+WHAT SAYS THE TRANSFORM IS RIGHT is the game's own numbers, not the derivation:
+it reports the floor under the gate-yard teleport at world y -94.162 and under
+the first-alarm one at -107.002, and a vertical ray through the prepared
+geometry at those two columns crosses a surface at -93.66 and -107.00. Before
+the correction the same two columns crossed no surface at all.
+
+### Controls
+
+| | result |
+|---|---|
+| ORIGINAL identity, three Dam poses, against a build of the branch head d02a5fba | byte-identical framebuffers at all three, and identical again with no world-asset root at all |
+| simulation, per-tick trace, 400 frames | ORIGINAL, COMMUNITY HD, XBLA, the head build and a repeat: ONE hash, 1049 lines, 80802 bytes. No re-baseline |
+| COMMUNITY HD | worldasset inactive, no lookup - it keeps the ORIGINAL world geometry |
+| XBLA at three witness poses | 94.3%, 99.7% and 99.5% of the world rows differ from ORIGINAL |
+| rotation in place, four headings, same eye | the placement is IDENTICAL at all four - the transform does not depend on heading |
+| across a room change, same heading | the two poses take DIFFERENT projection branches (folded, then plain) and the asset occupies the same world box: -52366.05 against -52366.1 |
+| missing / malformed / truncated | ONE identical picture, and it is the original world; missing=1 / invalid=1, no background line, nothing suppressed |
+| facility under XBLA | lookups=0 - no Dam background requested or drawn |
+| four full presentation cycles, one run, twelve presses | each asset LOADED once, lookups=2 loaded=2 never grows, texture provider reloaded=0, and the background's drawn-frame count advances only inside the XBLA windows |
+| performance, 600 frames at the gate yard, three repetitions | XBLA is FASTER: 7.5s against 10.7s. 80 glDrawElements replace ~640 native triangles per frame through the interpreter |
+| skydome | still drawn, 3400 triangles per frame, correctly occluded by the replacement at the reservoir and at a steep look-up |
+
+Collision stays the original game's, and the two floor columns above are the
+evidence: the remastered floor sits 0.5 and 0.0 world units from where the
+player actually stands.
+
+### Gates
+
+worldasset 108 + 108 (was 90 + 57); texprov 56; presentation 31; settings 196;
+display 171 + 67; inputtest 240 checks / 22 failed = the unchanged B-096
+baseline; layering 282 = baseline, no new violations; test.ps1 facility 300
+frames PASS 1/1; build.ps1 normal, last. `make trace-verify` NOT run: this host
+has no MIPS toolchain and the checkout carries no recorded .sltrace corpus -
+the per-tick native state traces above are what was measured instead.
+
+### Not right yet, and parked
+
+1. Three pools do not validate and their three draws are dropped and counted:
+   one of stride 12, which has no room for both tail words, and two of stride
+   36 whose first word is not a position.
+2. Some cliff facets read untextured white at a steep look-up, and the
+   skydome's lower rim shows as an arc where the background does not reach it.
+3. The lighting is the remaster's baked vertex colour and its base image, with
+   no second map and no shader. That is #48's, and no brightness compensation
+   is applied here.
+4. Props, barriers, doors, characters, heads, guns, animation and widescreen
+   are all still out. One class, two items.
+
+Scratch (session, not committed): damworld2\ - p1..p31.py / mkasset.py /
+mkpool.py / ppm.py / tele.ps1 / battery.ps1 / battery2.ps1 / battery3.ps1 /
+cycle.ps1 / analyse.ps1 / gates.ps1 / refbuild.ps1, the witness frame sets and
+the per-tick trace captures.
+
+## 2026-09-23 - #68 SPATIAL REGISTRATION REPAIRED. The playtest's matched
+## ORIGINAL/XBLA pair at ONE camera found the first wrong stage: the seam put
+## the replacement into the room space while the frame's matrices consume that
+## space TIMES the stage's `visibility` - 0.2 at the Dam, 1.0 on every stage
+## but two. Omitting it drew the level five times its size ABOUT THE RENDER
+## ORIGIN, which moves the apparent viewpoint and floats the player. One term,
+## read from the game. #68 stays OPEN pending acceptance in playtest.
+
+The previous entry's round ended by asking for different evidence and the
+playtest supplied exactly the right thing. Marks 2 and 3 of the 2026-09-23 run
+carry the IDENTICAL eye (16783.068, 60.311, 6851.682), heading, room and
+render origin, 656 frames apart - one with every room's list emitting
+triangles (ORIGINAL) and one with every room's list DREW NOTHING (XBLA). The
+gameplay state is not a variable; presentation is the only one. Playtest report: "the
+last 2 marks shows how my position changes between presentation mode", and at
+mark 1 "models are in the wrong spot with the player floating too".
+
+### The floor evidence was vacuous
+
+Both prepared bundles put a surface 167.31 world units under the eye at
+y = -107.00 at mark 1 AND at mark 2 - same distance, same height, same mesh,
+at two poses over ten thousand units apart. That is ONE FLAT PLANE spanning
+the stage, not registration, and the check could not have failed whatever the
+horizontal placement was. Withdrawn as evidence.
+
+### The first wrong stage, measured three ways
+
+1. `sl_wa_view_origin` on the FOLDED matrix recovers exactly
+   (eye - render_origin) * 0.2 - ratio 5.0000 at both marks.
+2. The game's own room vertices, from the mark's own `source` and `eye`
+   columns, reach the interpreter scaled by level_scale * 0.2 = k/5, measured
+   on three independent triangle edges to 1.0000.
+3. Ray-casting the prepared bundle from render_origin + (eye - render_origin)
+   * 0.2 reproduces THE PICTURE THIS PASS WAS DRAWING; casting from the true
+   eye reproduces THE GAME'S OWN PICTURE.
+
+The instrument for (3) was already in the tree. The source carries the level
+background TWICE under one item path and the ORIGINAL-generation model is the
+N64 level's own geometry: prepared through the identical pipeline and drawn
+through the identical seam it came out in the SAME WRONG PLACE as the
+remastered one. That retires the previous round's "the original model, drawn
+as the replacement, reproduces the game's own world" - that round compared the
+two SOURCE models with each other, where they agree trivially, and never
+compared either against the game.
+
+### The contract
+
+bg.c:1088-1091 reads levelinfotable[...].visibility into
+matrix_4x4_7F058C4C, which stores 65535 * visibility as the fixed-point
+conversion's multiplier (matrixmath.c:478); matrix_4x4_f32_to_s32 applies it
+to the first three columns of every matrix converted (matrixmath.c:495-511),
+and bondview2.c:8798-8800 applies it again explicitly by name. So the space
+the frame's world matrices consume is
+
+    X = (position * level_scale - render_origin) * visibility
+
+It is 1.0 on every stage but DAM (bg.c:291) and SURFACE (bg.c:294), both 0.2.
+That is why this could ship unnoticed: the skydome is eye-anchored and a
+uniform scale about the eye changes no ray, and the Dam is the one stage the
+background asset exists for. The skydome round measured this number and wrote
+it down correctly; the replacement round reclassified it as an artefact of
+sl_wa_view_origin's orthonormality assumption and dropped it. That
+reclassification was the defect.
+
+### What omitting it did
+
+A scale about a point that is NOT the eye moves the apparent viewpoint. The
+picture became the world seen from render_origin + (eye - render_origin) *
+visibility with every distance times 1/visibility.
+
+| | mark 1 (dam top) | mark 2/3 (loading yard) |
+|---|---|---|
+| viewpoint displaced by | 924.7 units, 557.8 vertical | 790.9 units, 157.2 vertical |
+| ground under the player, drawn | 3625.6 below | 1622.5 below |
+| ground under the player, correct | 167.3 | 167.3 |
+
+Mark 1 is worse because its room origin is far below the player, and mark 1 is
+exactly where the playtest report wrote "the player floating too".
+
+### The fix
+
+`sl_wa_visibility_scale` in src/native/sl_world_assets.c - the same read-only
+shape as sl_wa_level_scale - applied ONCE per branch in bg_draw. The FOLDED
+matrix already carries the scale so the point handed to it is scaled; the
+PLAIN branch's view is built by the seam so the scale goes on that view's
+OUTPUT COLUMNS, w untouched, so no screen position moves there and only the
+eye-space depth changes - which is what has to agree with the geometry this
+pass is depth-tested against. Nothing in src/game is touched.
+
+### Before and after, geometry rather than pixels
+
+35-ray fan over the playtest's actual view volume, against the GAME's own world:
+
+| | within 15% of the game surface | median error |
+|---|---|---|
+| mark 1 before | 0 of 33 | 759% |
+| mark 1 after | 33 of 33 | 0.0% |
+| mark 2/3 before | 1 of 34 | 870% |
+| mark 2/3 after | 33 of 34 | 0.0% |
+
+Local volume, world units, before / after:
+
+| | mark 1 | mark 2/3 |
+|---|---|---|
+| floor below eye | 3625.6 / 167.3 | 1622.5 / 167.3 |
+| wall left | 5340.1 / 1039.3 | 5035.0 / 308.9 |
+| wall right | 7623.2 / 1531.0 | 8134.9 / 2231.7 |
+| forward | 24151.8 / 3986.2 | 16123.1 / 4504.2 |
+
+The witness now prints the declared value beside the recovered one:
+`visibility 0.2000 (1/5.0000) measured 1/5.0000`. A disagreement is this fault
+returning, as a number rather than an argument. SL_BG_NOSUPPRESS=1 is the
+picture form: original and replacement now coincide instead of standing apart.
+
+### Controls
+
+| | result |
+|---|---|
+| ORIGINAL, both playtest poses, against the branch head build | byte-identical framebuffers |
+| COMMUNITY HD, both playtest poses | byte-identical |
+| per-tick trace, 400 frames, ORIGINAL/COMMUNITY/XBLA, both builds | ONE hash, 936 lines, 80802 bytes. No re-baseline |
+| skydome with the background drawing no mesh | identical before and after; 3400 triangles/frame, sampler unchanged |
+| missing / malformed / truncated | ONE identical picture, and it equals the provider pinned dark |
+| facility under XBLA | lookups=0 |
+
+### Gates
+
+worldasset 121 + 110 (was 108 + 110 - five new synthetic checks for the
+visibility-scaled space, on a matrix the test writes itself); texprov 56;
+presentation 31; settings 196; display 171 + 67; inputtest 240 checks /
+22 failed = the unchanged B-096 baseline; layering 282 = baseline, no new
+violations; test.ps1 facility 300 frames PASS 1/1. `make trace-verify` NOT
+run: this host has no MIPS toolchain and the checkout carries no recorded
+.sltrace corpus - the per-tick native state traces above are what was measured
+instead.
+
+### Still parked, deliberately
+
+1. The texture coordinate's derived scale, and the stretched ground at a steep
+   look-down. A wrong UV scale cannot move a wall, and this round's evidence
+   was walls moving; the bounded reference measurement for it is unchanged and
+   still the named next step.
+2. Props, guards, doors and collision stay the original game's (rule 5). If
+   the background now registers and a prop still does not, that is a prop
+   placement contract and a separate finding.
+3. Lighting is #48's.
+
+Scratch (session, not committed): damreg\ - tele.ps1 / controls.ps1 / ray.py /
+cast2.py / audit.py / gamegeom.py, the mark ingest, the before/after frame
+sets and the offline ray-cast images.
+
+---
+
+## 2026-09-23 - #68 the world gap: a FAN was being drawn as a RIBBON
+
+The playtest ACCEPTED the registration repair as materially better ("plays much
+better and looks a lot better", "I can traverse it normally") and returned five
+marks with it, reporting gaps in the world, a wrong-looking skydome, "pathing
+lines", ground z-fighting and the Dam's water. This round closes the first of
+those - the WORLD GAP - and only that one.
+
+### The defect
+
+A draw record carries a primitive TYPE and this item uses 4, 5 and 13. Type 13
+is a QUAD LIST, which exists only in the Xbox 360's extension of
+`D3DPRIMITIVETYPE`; desktop Direct3D 9 stops at 6. In that SAME table 5 is a
+TRIANGLE FAN and a strip is 6, which this item never uses. The reader took 13
+from the Xbox table and 5 from the desktop one and expanded 258 of the item's
+389 draws as ribbons. A ribbon over a fan's points tiles a zig-zag and leaves
+the rim bare - a lens of sky through ground the player walks on, bounded on
+every side by the very draws that should have closed it.
+
+Nothing could catch it by counting: a fan of n and a strip of n both make n - 2
+triangles, so the bundle carries 140066 vertices and 90360 triangles under BOTH
+readings, the index buffers still resolve by exact consumed length, every index
+still falls inside its pool, and the computed bounds still agree with the
+bounds the item declares for itself. Only the picture can see it.
+
+### What said so
+
+At playtest mark 1, casting the prepared geometry offline from the mark's
+own eye: 549 of 551 grid rays agree with the screen, so the cast reproduces the
+picture; of the 87 rays landing on sky, ZERO had a triangle in the bundle. So
+the defect was an omission, not rasterisation or state - and culling was never
+a candidate, this pass having run with GL_CULL_FACE disabled since it shipped.
+
+Eliminated first, by measurement rather than by argument: the three refused
+vertex pools (20004 triangles, the largest of them a flat tessellated grid at
+world y -824 at the reservoir end) cover 0 of the 87; and the source's own
+ORIGINAL-generation model lacks the surface too, while the game under
+PRESENTATION ORIGINAL paints solid ground at every one of those pixels.
+
+### Before / after
+
+| | ribbon | FAN |
+|---|---|---|
+| mark 1's 87 gap rays, covered | 0 | 87 |
+| of the 464 rays already hitting, same surface at the same distance | - | 464 of 464, none moved |
+| rays covered before and bare after | - | 0 |
+| triangles in the bundle | 90360 | 90360 |
+
+Sky through solid world at the five playtest marks: 14.16 -> 0.00%, 0.28 ->
+0.07%, 0.04 -> 0.00%, 0.00 -> 0.00%, 2.17 -> 0.00%. Not camera-specific: three
+poses moved 85 units and rotated +/-14 degrees read 7.53 -> 0.00%, 15.09 ->
+0.00%, 15.33 -> 0.00%. At mark 5 the blue wedges become a whole chain-link
+fence, whose panels are fans and which the ribbon reading had shredded.
+
+### Controls
+
+| | result |
+|---|---|
+| ORIGINAL, the playtest pose, before against after | byte-identical framebuffer |
+| COMMUNITY HD, same | byte-identical |
+| per-tick trace, 400 frames, ORIGINAL/COMMUNITY/XBLA, both bundles | ONE hash, 80802 bytes, six runs. No re-baseline |
+| the skydome bundle, regenerated | byte-identical (sha256 unchanged); it uses type 4 only |
+| missing / malformed / truncated | the original world, no gap; missing=2 / invalid=1 as expected |
+| facility under XBLA | lookups=0 |
+
+The trace instrument needs SL_RNG_SEED and SL_BOOT_ELAPSED_FRAMES pinned to
+repeat; without them a windowed run varies with live devices, and ORIGINAL - which
+cannot be touched by a bundle at all - varies with it. Pinned, two back-to-back
+ORIGINAL runs agree byte for byte, which is what makes the row above a
+measurement rather than a hope.
+
+### Gates
+
+worldasset 121 + 114 (was 121 + 110 - four new synthetic checks pinning the
+fan's hub and refusing the ribbon reading by name); texprov 56; presentation
+31; settings 196; display 171 + 67; inputtest 240 checks / 22 failed = the
+unchanged B-096 baseline; layering 282 = baseline, no new violations; test.ps1
+facility 300 frames PASS 1/1; build normal, last.
+
+### Still open after this round
+
+1. The skydome at marks 2 and 3.
+2. The white overlay patches still on the ground at mark 3 - fewer than before,
+   and not yet identified.
+3. Ground z-fighting.
+4. The Dam's water. A candidate is now named rather than guessed: a refused
+   stride-36 pool of 10099 vertices and 19626 triangles, a flat tessellated
+   grid at a constant world y of -824 spanning the reservoir end of the level,
+   whose position word sits at byte offset 4 of its record and not 0.
+5. The UV scale stays parked. A wrong coordinate cannot leave a hole where a
+   triangle should be, and this round's evidence was triangles that were not
+   there.
+
+Scratch (session, not committed): worldgap\ - shot.ps1 / batch.ps1 / trace.ps1,
+slwa.py and marks.py (the offline reader and ray cast), the five-mark ingest,
+the before/after frame sets and the tessellation-ownership map.
+
+---
+
+## 2026-09-23 - #68 THE COPLANAR PASS. The source separates a DECAL group by
+## one bit of its style word; the preparation dropped it, so surfaces authored
+## exactly coincident resolved per pixel by floating-point noise. One bit
+## carried end to end. #68 stays OPEN pending acceptance in playtest.
+
+A playtest of the fan repair confirmed the world is traversable and that the
+repair held, and returned eight marks with seven reports. This round closes the
+first - "z-fighting on the bridges at the start" - and classifies the rest.
+
+### The instrument had to be fixed before the defect could be
+
+Two captures of the playtest pose, same build and same settings, differed by
+**75% of their pixels**. The VI is a wall clock by default
+(`sl_ultra_shim.c`, `SL_VI_CATCHUP`): the two runs reached pumped frame 123 at
+read index **121 and 107**, fourteen game ticks apart, and a teleported pose
+decays over those ticks. With `SL_VI_CATCHUP=0` two independent runs of one
+pose are byte-identical. The first hide-a-mesh comparison read 83% changed
+where the truth was 2.24%, so nothing in this round would have been measurable
+without it. Recorded in `docs/world-assets.md` beside the other diagnostics,
+because any teleport-sampled comparison of two renderings needs it.
+
+### Both participants, and the fight seen in the geometry
+
+Every surface each ray crosses, not just the nearest - a nearest-hit cast can
+only report the winner. At mark 1 the overlay is a 28-triangle quad-list patch
+(material 56, image 56, translucent) over the opaque walkway and ground, at
+**0.0000 world units**. And the overlay is nearer on **21 rays and further on
+21 others at that zero separation**: which one is in front flips ray to ray by
+floating-point noise. Hiding it removes the stipple and leaves a clean grating
+(2.24% of the frame).
+
+The competing explanation was refused by measurement, not argument: the
+renderer's `GL_GREATER 0.33` would stipple a decal whose alpha sits near the
+threshold, but image 56's alpha is **binary** - 42.0% at 0, 55.9% at 255, no
+intermediate deciles.
+
+### The contract, recovered
+
+The op-`0x15` style word is a BITFIELD and only its low byte was read. `0x2000`
+and `0x4000` occur alone and together (`0x6701 = 0x2000 | 0x4701`), which an
+enumeration cannot do. `0x2000` names the decal pass, measured three ways:
+**17 of 389 draws and 254 of 90360 triangles**; every one a small quad-list
+patch; and over the eight playtest marks, of every ray crossing two surfaces
+within 0.05 world units, **652 of 655 have exactly one participant in that
+group and none has two**. It recovers by rule the three overlays two earlier
+rounds had found by hand.
+
+The item's vertex programs declare **`c_zadjust`**, one float4, beside
+`c_modelviewprojection`, in 36 of 42 programs - exactly the 36 that declare the
+projection matrix. So the source's own vertex stage takes a per-draw
+clip-space depth adjustment by name. Its VALUE is not in the bundle: all 189
+constant-upload records were read (three argument shapes, two registers) and
+none carries a depth term; no decal-style block uploads a constant at all.
+
+**Draw order was never the fault**, checked before any depth term: the overlay's
+draw is at stream `0x540c` and its two bases at `0x53c` and `0x17d8`, so it is
+issued after both in the source and in Sightline alike. The previous round's
+"no ordering or offset contract behind it" is narrowed accordingly - there is
+no ordering contract to recover, and there is a depth contract, named but
+unvalued.
+
+### What shipped
+
+`SL_WA_MAT_DECAL` in the material `flags` word the parser previously required
+to be zero. The layout does not move, so the **version does not move**; an
+older bundle carries zero and parses unchanged, and an undefined bit is refused
+rather than ignored. The flag is part of the **material key** - adjacent draws
+of one material merge into one mesh, and three of the Dam's meshes sit exactly
+on a style boundary. 72 materials / 80 meshes become 79 / 84; vertices and
+triangles are unchanged at 140066 and 90360.
+
+At draw time, around a decal mesh's own `glDrawElements` only: a polygon
+offset enabled immediately before and disabled immediately after, at the
+magnitudes this tree already applies for the RDP's `G_RM_ZMODE_DEC` - the same
+contract on the original renderer's own decals. Not a number tuned by eye.
+Depth writes stay off, so the pass can win the compare against what it lies on
+and can never occlude anything. `SL_BG_DECAL=0` is the kill switch, the same
+idiom as `SL_Z_LEQUAL`.
+
+### The picture
+
+Mean `|I(x) - I(x+1)|` over the decal INTERIOR (eroded three pixels, so a
+decal's own edges are not counted as stipple), pass off -> on:
+
+| pose | stipple off -> on |
+|---|---|
+| mark 1, the playtest's own framing | 14.84 -> **6.76** (-54.5%) |
+| +85 units | 14.19 -> 6.46 |
+| +85 units, +14 deg heading | 12.48 -> 5.68 |
+| -85 units, -14 deg, +8 deg pitch | 13.15 -> 6.01 |
+| mark 4 | 6.56 -> 3.56 |
+| mark 5, the truck | 11.17 -> 5.65 |
+| mark 7, dam top | 12.84 -> 11.79 |
+
+### Controls
+
+| | result |
+|---|---|
+| new build with the pass disabled vs the pre-change build and bundle | **byte-identical, 0 pixels** - the parser widening, the material split and the extra draw calls move no pixel |
+| ORIGINAL / COMMUNITY HD, with and without a world-asset root | byte-identical; the two presentations differ from each other by 90.3%, so those are not vacuous |
+| per-tick trace, 400 frames, ORIGINAL/COMMUNITY/XBLA/XBLA-no-decal | ONE hash, 901 lines, 80802 bytes. No re-baseline |
+| a material flags word with an undefined bit | INVALID, one line, the original world - the same picture as missing and truncated |
+| facility under XBLA | lookups=0 |
+| census | 84 GL draws per frame, 16 of them the decal pass |
+
+### Gates
+
+worldasset 125 + 119 (was 121 + 114 - four parser checks for the flags word and
+five tooling checks for the flag's round-trip); texprov 56; presentation 31;
+settings 196; display 171 + 67; inputtest 240 checks / 22 failed = the
+unchanged B-096 baseline; layering 282 = baseline, no new violations; test.ps1
+facility 300 frames PASS 1/1; build normal, last.
+
+### Still open after this round, each with its next stage
+
+1. **The tunnel's road lines - a DIFFERENT mechanism, and the next blocker.**
+   Two decal meshes lie flat across the tunnel floor and hiding either changes
+   **zero pixels**: they are submitted and every fragment is discarded. The
+   renderer applies `GL_GREATER 0.33` to translucent materials as well as to
+   cutouts - a rule introduced for foliage, which is now CUTOUT and no longer
+   needs it - and these two images reach a maximum alpha of **0.314 and
+   0.235**. One misses the threshold by 5%. Three translucent meshes and 56
+   triangles are discarded outright. A decal-pass state question like this
+   round's, but not this round's contract.
+2. **The sky ring.** With the background drawing no mesh the dome alone steps
+   3.30 against a mean of 0.38 - no ring in its own image. The ring is the
+   boundary between the remastered distant terrain and the dome behind it.
+3. **The water.** The refused stride-36 pool read with its position at byte
+   **+4** is 100% finite and a perfectly flat plane at world y **-824.4**, y
+   spread 0.00, spanning the reservoir end; at +0 it is not finite. At the
+   playtest water mark **15.3% of the frame is the environment colour** - nothing
+   rasterised - and the ray through its centre crosses that plane inside the
+   pool's footprint. Under ORIGINAL the same pose is **0.00%**. A second
+   vertex-layout question; its own round.
+4. **The mountain shading.** Not a mip transition and not vertex shading (it
+   survives `SL_BG_NOMIP` and `SL_BG_WHITE`), but neither leaves it where it
+   was and `SL_BG_NOMIP` changes the region's whole step structure. Points at
+   the base image and its coordinate - the parked UV blocker.
+5. **Fog.** The game's own room background goes through `fog_apply`
+   (`sl_gfx_dl.c:12234`); both external passes call `glDisable(GL_FOG)`
+   unconditionally (`:13525`, `:13852`) and a tree-wide search of `src/` finds
+   `glEnable(GL_FOG)` only inside `fog_apply`. So the external background does
+   NOT receive the fog state the original one does. The reason on record was
+   written for an eye-anchored dome beyond the far plane and does not follow for
+   a world-anchored replacement inside the world. A concrete later blocker.
+6. **The UV scale stays parked.** A wrong coordinate cannot make two coincident
+   surfaces flip which one is in front, and this round's evidence was exactly
+   that.
+
+Scratch (session, not committed): decal\ - shot.ps1 / pairs.ps1 / nearby.ps1 /
+trace.ps1, layers.py (all hits per ray), audit.py / styles.py / consts.py (the
+source's own records), meshmap.py, alphacensus.py, stipple.py, and the
+eight-mark ingest with its before/after frame sets.
+
+
+## 2026-09-24 - #68 the tunnel road markings: an ALPHA REJECT outlived the
+## population it was written for - the translucent class was discarding every
+## fragment - implemented on sightline/xbla-world-assets, #68 stays OPEN
+
+The previous round closed the coplanar/depth defect and named this one as the
+next blocker with its evidence: two decal meshes lie flat across the tunnel
+floor, they are prepared, loaded, submitted and drawn, and hiding them changes
+**zero pixels**. This round recovers the contract and repairs it. It is the
+same pass and a different state, and nothing in the accepted coplanar repair is
+reopened.
+
+### The first wrong stage, confirmed before anything was changed
+
+At the playtest tunnel mark (`20260923-215201-lvl33`, mark-003), on the
+pre-change build:
+
+- two captures of the pose, same settings, are **byte-identical** across all 8
+  captured frames (`SL_VI_CATCHUP=0` plus the pinned seed - the control the
+  previous round had to establish, applied from the start here);
+- hiding meshes 60, 61, 62 and 69 changes **0 pixels**, on all 8 frames;
+- casting the mark's own camera against the prepared bundle, mesh 62 alone
+  covers **20128 framebuffer pixels**, and the surfaces its rays cross next are
+  the opaque tunnel floor (meshes 26, 27, 28) at a **median separation of
+  0.0000** world units.
+
+So the geometry is in view, it covers the floor it was authored for, and the
+renderer paints none of it.
+
+### The cause, from the history and from the source
+
+`git log -S "0.33f" -- src/gfx/sl_gfx_dl.c` names exactly one commit: the one
+that introduced the background pass, whose own comment says the threshold was
+for **the foliage**, which at that time reached the translucent branch because a
+draw was classified translucent if its style said so *or* its image carried
+alpha. The CUTOUT split moved that entire population to
+`SL_WA_BLEND_CUTOUT`. The rule's originating population left; the rule did not.
+
+The source agrees the two are separate. Cross-tabulated over all 386 draws of
+the Dam item, the style word's **masked group is the bit `0x0800`**, set on
+exactly the 4 foliage draws (39044 of 90360 triangles) and nothing else, and it
+**never co-occurs with the translucent low byte 2** - the two groups are
+disjoint. The causal half: the masked group is styled *opaque*, so it cannot
+blend its 52-80% transparent texels away and must reject them; a blended draw
+multiplies them by an alpha of zero and adds nothing.
+
+### What it cost, and the risk of the removal, both measured
+
+4 of the bundle's 19 translucent materials have an alpha maximum at or below
+0.33 and were discarded outright. Two are the road markings, at **0.314 and
+0.235**. The band a removal newly admits (`0 < alpha <= 0.33`) is empty on 8 of
+the 17 translucent images, under 4% and dark on 6 more, and large on exactly 2
+- the markings themselves. A fully transparent image stays invisible either
+way.
+
+### What ships
+
+`SL_WA_BLEND_REJECTS` - one predicate, in the header beside the blend
+constants, which the draw loop branches on and the self-test checks. CUTOUT
+rejects at `SL_WA_ALPHA_REF`; TRANSLUCENT and OPAQUE do not. It is TOTAL, which
+is what says no draw inherits the previous draw's alpha-test state.
+
+**No byte of the format moved and the version did not move.** This is a
+render-state contract; the classification the format already carries expresses
+it, so there is no new material bit. `SL_BG_XLU_BLEND=0` restores the previous
+state, and every before/after rests on that one flag.
+
+### The picture and the controls
+
+At mark-003: 0 pixels before, **4161 after** (0.397% of the frame), painting
+20.7% of the geometric footprint against an image that is 19.9%
+non-transparent. **0 pixels** driven to opaque white. Five nearby poses all
+draw the markings with the bounding box swinging correctly with the camera.
+
+Controls: the new build with the flag off is **byte-identical** to the
+pre-change build at the witness; hiding the four meshes after the fix restores
+the pre-fix frame **exactly**; CUTOUT drawn alone is byte-identical under both
+rules; a translucent material with no texel below 0.33 is byte-identical;
+**every translucent mesh hidden, at six marks, is byte-identical**, which
+covers opaque, cutout, the FAN/world-gap repair and registration at once;
+ORIGINAL and COMMUNITY HD are byte-identical both ways and differ from each
+other by 90.3%; the per-tick trace is **one hash** across all four runs
+(901 lines, 80802 bytes, no re-baseline); missing, malformed and truncated
+bundles all draw the original world; Facility under XBLA performs no lookup.
+
+**The accepted coplanar repair is intact, and one metric misreported it.** The
+adjacent-pixel stipple number reads worse at mark 4 after this change (-45.7%
+becomes -1.1%), which is that metric's limit rather than a regression - it
+cannot separate "the decal now draws texture the reject used to punch out of
+it" from "the decal is fighting again". The physical measurement does: a decal
+that loses the depth compare contributes nothing and reads as the decal-free
+frame, and with the pass on **0.0% of the decal footprint contributes nothing**
+at marks 1 and 4 under both alpha rules (82% and 100% with the pass off). There
+is no alternation between decal and base left to be a fight.
+
+### Recorded debt, NOT fixed here
+
+The derived CUTOUT set and the source's `0x0800` differ by **one draw of 6
+triangles** (draw `0x4f64`, style `0x4701`, image 53). The same image is used by
+a marked draw and an unmarked one, so the bit is per-DRAW state and not a
+property of the image - which means reading CUTOUT from the source bit rather
+than deriving it from the image is available, and is a later round's business.
+Out of scope here: the contract under test was the alpha reject, not the
+classification.
+
+Also still carried forward, unchanged: the exact XBLA `c_zadjust` magnitude
+(the mechanism is proven, the number was not recovered, the engine's own
+decal-mode magnitude is in use); the visually stable circles/patches, used here
+only as a regression control; and the skydome ring, the water, the mountain UV
+and the fog, all still open.
+
+### Gates
+
+worldasset 133 + 119 (eight new checks); texprov 56; presentation 31; settings
+196; display 171 + 67; inputtest 240 / 22 = the unchanged B-096 baseline;
+layering 282 = baseline; test.ps1 PASS 1/1; normal build last.
+
+Scratch (session, not committed): alphatest\ - shot.ps1 / matrix.ps1 /
+nearby.ps1 / trace.ps1, probe.py and styletab.py (the source's own records and
+its style/selector names), census.py and risk.py (the per-draw style x alpha
+cross-tab and the newly-admitted band), bundle.py (the shipped bundle read as
+the renderer reads it), inview.py (the geometry-in-view cast), cmp.py /
+detail.py / regress.py / decalctl.py / winning.py, and the eight-mark
+before/after frame sets under both alpha rules.
+
+
+## B-XBLA tunnel road marking — the base level was never at the start of its allocation (FIXED 2026-09-24, #68)
+
+The tunnel road marking was rejected in playtest after the alpha reject made it
+visible: *"The lines in the tunnel aren't right yet."* The prior round cleared
+every stage downstream of the picture by measurement — mesh 62 alone paints the
+pattern, the geometry is a healthy continuous strip, the UV field is BE s16 at
+vertex +16 over 1/128, U runs along the strip and V spans exactly 0..1 across
+it, and the current UVs with the current sampler and the **currently decoded
+image** reproduce the reported broken blocks. So the first wrong stage was the
+decoded image, and within it, not the format, the endianness, the block decode
+or the tiling but the **address**.
+
+**The contract.** A Xenos allocation stores the base level at the fetch
+constant's row pitch, padded to 32 blocks each way; mips 1.. under a separate
+address with a power-of-two layout; and, when packed mips are on, every level
+whose width **or height** has fallen to 16 texels or fewer inside a single
+packed tail rather than in storage of its own. That rule is written on the
+SHORTER side, so a texture already 16 or less on one side has its tail begin at
+**level 0** — the base level itself is inside the tail, and is not at
+allocation coordinate (0, 0). Its own smaller levels are stacked in the rows
+above it, and that is exactly what the decoder had been reading and handing
+over as the picture.
+
+**The prediction, made before anything was decoded.** The road marking is
+256x16 DXT4/5, five levels, 32768 bytes. The rule puts its packed level at 0
+and its base 16 texels down — block offset (0, 4) — and it also predicts the
+SHAPE OF THE DAMAGE: the tail's other levels reach block column 39, i.e. texel
+column **159**, so the old decode must be empty from 160 to 255. Measured on
+the old decode: 149 empty columns, every one of them at 160..255. The layout
+named the corruption's exact extent on its own.
+
+**The picture.** Old decode: 31 distinct RGB triples, 31 alpha values, ragged
+column runs. Repaired: **6 RGB triples, 5 alpha values**, and a column pattern
+of 32 on / 64 off / 64 on / 64 off / 32 on — under REPEAT a period-128 dashed
+stripe, light grey with darker edges across its width. An authored road
+marking. Thirty-one of each is what four mip levels read as one image looks
+like.
+
+**Packed mips proven from the allocations, not assumed.** Nothing in the
+container's record is a fetch constant — no pitch, no tiled flag, no packed
+flag, no address; the word at +0x18 carries format and endianness and is
+otherwise identical across textures of a format. So it was measured: for every
+larger texture in the bundle the allocation is the base extent plus a mip chain
+**truncated at the packed level**, residual zero bytes, nothing fitted
+(256x256 DXT1 → 65536; 512x512 → 196608; 1024x1024 → 720896). Without packing
+every total would be larger. The truncation is the signature.
+
+**The gate is measured too.** A tail needs a chain, so a single-level texture
+reads at the origin — and the bundle's 64x1 single-level texture is entirely
+zero at the packed position and real at the origin. The declared mip count is
+the gate.
+
+**What ships.** `tools/texpack/xdecode.py` gained the packed mip level, the
+packed level offset, the base origin and the base row pitch; `untile` takes the
+level's origin and the surface pitch and REFUSES a level placed outside its
+surface rather than decoding out of padding; the three call sites pass the
+declared mip count. No texture id, no size, no byte offset. It moves **39
+textures of 1369 across 35 bundles**, every one short-side ≤ 16 with a mip
+chain — every square, every large texture, all 22 skydome textures and the
+64x1 are byte-identical. No accepted texture-pack mapping names a moved
+texture, so all three texture sets regenerate byte-identical (595 files, zero
+changed); only world-asset bundles move.
+
+**The playtest mark.** Same source, same pipeline, decoder the only difference;
+teleport-only, `SL_VI_CATCHUP=0`, pinned seed. Before reproduces the reported
+irregular blocks exactly; after is a regular dash sequence receding up the
+tunnel with correct foreshortening. **7389 px of 1048320 (0.705%)** differ, all
+inside x 622..673, y 407..735, and outside that band the frames are
+**pixel-identical at all five captured indices** — the mesh has not moved and
+the blending has not changed.
+
+**The staleness hole this exposed.** The repair would have been invisible: the
+world-asset tool hash covered only the three `tools/worldasset` modules, not
+`caff.py` and `xdecode.py`, which it imports and which decide every texture
+byte. The source had not changed, so nothing would have noticed. Both stamps
+now hash the modules that decide the output. The evidence it works is that
+regeneration ran with no `-Force` the moment the decoder changed.
+
+### Recorded debt, NOT fixed here
+
+- **Image 57 (32x32) still decodes to zero alpha and image 60 (64x64) is still
+  wrong.** Both have their tail at level 1 / level 2, so their base levels are
+  at the origin and are byte-identical before and after. Whatever is wrong with
+  them is a LATER stage; this round deliberately did not invent one universal
+  offset to cover them.
+- **`tools/texpack/selftest.py` is not wired into CI.** It is synthetic-only
+  and self-contained by design, and the 34 new layout checks run with it, but
+  it is only invoked from `prepare-textures.ps1`, which needs the private
+  source. Wiring it in is a CI-infrastructure change and was out of scope this
+  round.
+- The repaired texture's alpha tops out at 76/255, which is the art's own;
+  whether the material's blend reads it at the right strength was not touched.
+
+Carried forward unchanged: the `_uv_format` 1% histogram debt (real, measured
+NOT causal for this witness); the source `0x0800` CUTOUT classification debt;
+the exact XBLA `c_zadjust` magnitude; and the skydome ring, the water, the
+mountain shading and the fog, all still open.
+
+### Gates
+
+texpack selftest 104 / 0 (34 new layout checks); worldasset 133 + 119;
+texprov 56; presentation 31; settings 196; display 171 + 67; inputtest 240 / 22
+= the unchanged B-096 baseline; layering 282 = baseline; test.ps1 PASS 1/1;
+normal build last. No trace re-baseline: the change is offline asset tooling
+only — no C, no game logic, no trace data.
+
+Reference: the layout was recovered from the Xenos hardware behaviour with the
+Xenia emulator as the reference oracle (`canary_experimental` @ c9c8e483,
+upstream @ 95a5c3ee, cloned outside the tree and reached through machine-local
+`.research/` junctions that git never sees). It is REIMPLEMENTED in Sightline's
+own idiom — no emulator source is vendored, copied or referenced by the tree.
+
+Scratch (session, not committed): packedmip\ — p1_records.py (the raw 0x70
+texture record), p2_fields.py (which record words vary; allocation vs Xenos
+extent across two bundles), xlayout.py (the scratch reference layout),
+p34_image58.py and p4b_vis.py (the three-way decode and the run profiles),
+p5_ownerframe.py (the playtest-frame offline prediction), p67_controls.py and
+p68_movers.py (the 32x32 / 64x64 controls and the single-mip gate),
+p8_verify.py (bundle-wide scope), p9_mapping.py (mapping overlap),
+p10_frames.py (the playtest-mark before/after), and the before/after world-asset
+roots and frame sets.
+
+
+## B-XBLA tunnel road marking - the vertex colour word was never byte-reversed (FIXED 2026-09-24, #68)
+
+A playtest of the repaired marking rejected its COLOUR: *"lines look
+better, but they are blue and not yellow"* (Dam, run
+`20260924-090300-lvl33`, `mark-001`). Shape, spacing and repetition were
+accepted. This is the colour, and it is not in the texture path at all.
+
+### Where yellow became blue, measured stage by stage
+
+The road marking's image (58, 256x16, DXT4/5) decodes **NEUTRAL**: 8 distinct
+RGBA values, mean rgb over its visible texels 205.6 / 206.0 / 205.6, brightest
+visible texel `(207, 207, 207)`. A grey image cannot be made cyan by any
+channel error in the decoder, the serialization or the GL upload - so the hue
+can only come from the **vertex colour**, and the prepared bundle's road-line
+mesh carried `(0, 107, 107)` on 8 of its 42 vertices. That is the cyan.
+
+The control that rules the texture path out is in the same picture rather than
+in an argument: the kerb's **yellow-and-black hazard stripes are a texture**
+and they render correctly yellow under both presentations, in the frame where
+the centre line is cyan.
+
+### The rule
+
+The raw word is `ff 00 6b 6b`. Alpha is byte 0 either way (0xff on all 132860
+vertices of the four large pools); the disagreement is the other three.
+Reversed, `r, g, b, a = byte3, byte2, byte1, byte0`, it is `(107, 107, 0)` -
+yellow.
+
+**Mechanism.** A Xenos vertex fetch converts memory to register order with its
+fetch constant's endian, and this buffer's is the one that makes a 32-bit float
+come out right: `8IN32`, which reverses all four bytes (`GpuSwap`, Xenia
+canary_experimental c9c8e483, agreeing with upstream 95a5c3ee). That is why
+this reader already takes the position `'>fff'`, the coordinate `'>hh'` and the
+indices big-endian. `k_8_8_8_8` then takes x, y, z, w from bits 0..7, 8..15,
+16..23, 24..31 of the reversed word. **The colour was the one field in the
+record that was not reversed.**
+
+Recorded because it matters for the next round: the mechanism does NOT close
+this on its own - a vfetch carries a free destination swizzle, so a D3DCOLOR
+element reaches the shader as RGBA under either byte order. Nor do statistics:
+the item's mean vertex colour is `(202, 189, 178)` one way and
+`(178, 189, 202)` the other, and a warm Dam and a cool Dam are both plausible.
+
+### What settles it: the game draws the same surface
+
+The source carries the level background twice under one item path, and the
+ORIGINAL-generation model is the N64 level's own geometry. Its floor decal
+(draw `0x2f10`, style `0x2702`, translucent, world y -107 along the road)
+carries `ff 00 e1 ff` on 34 of its 46 vertices - the same word family, the same
+encoding. At `mark-001`, teleport-only, `SL_VI_CATCHUP=0`, pinned seed, in the
+centre-line band x 657..707 y 399..735, brightest 1% of each picture:
+
+| | rgb | R - B |
+|---|---|---|
+| PRESENTATION ORIGINAL - the game's own line | 121.5 121.5 8.0 | **+113.5** |
+| that model through our pipeline, REVERSED reading | 130.8 127.2 96.1 | **+34.6** |
+| the same model, the SHIPPED reading | 96.1 127.2 130.8 | **-34.6** |
+
+The game draws it yellow - red equal to green, blue near zero. The reversed
+reading reproduces the sign; the shipped one inverts it. That is the
+known-colour control, and it is a second surface from a second model, prepared
+through the identical pipeline and drawn through the identical seam.
+
+### What ships
+
+`xblaworld.vertex_colour`, one function, and **both** readers take it - the
+level reader's `_pool_vertices` and the one-item reader's `_vertex_at`, which
+had quietly disagreed with each other about where alpha was. **No engine code
+changed**: `src/` untouched, the format did not move, the version did not move.
+
+Bundle diff, by section: header, indices, materials, textures, meshes and the
+image payload byte-identical; vertex positions, coordinates, alpha and green
+byte-identical; red and blue exactly each other's values on all 140066
+vertices. The **skydome bundle is byte-identical**, because its vertices are
+white and white cannot tell the readings apart.
+
+### The picture
+
+Road-line pixels, isolated as exactly the set that changes when meshes 60, 61,
+62 and 69 are hidden:
+
+| pose | px | before R-B | after R-B |
+|---|---|---|---|
+| mark-001 | 6280 | -8.89 | **+7.69** |
+| +85 forward | 4203 | -6.72 | **+5.60** |
+| -85 back | 4359 | -9.17 | **+8.03** |
+| +12 deg heading | 6256 | -8.58 | **+7.46** |
+| -12 deg heading | 2536 | -17.88 | **+16.61** |
+
+The footprint differs before and after by 1 to 3 pixels at every pose -
+antialiasing on its own edge - so geometry, repetition and transparency are
+untouched and only hue moved. The box swings with the camera (x 529..580 at
++12 degrees, x 784..833 at -12), a marking staying where it is in the world.
+
+**The change is not confined to the line, and that is the honest number:** the
+vertex colour is the whole replacement's, so 32-38% of an XBLA frame moves.
+Whole-frame mean R-B goes +0.40 -> -0.92 in the tunnel and -0.58 -> -7.82 at
+the gate yard, where the snow reads cooler and the barriers' painted red - a
+texture - does not move at all.
+
+### Controls
+
+ORIGINAL old bundle vs new: byte-identical, 5 frames. COMMUNITY HD: same.
+ORIGINAL vs COMMUNITY HD differ, so neither is vacuous. A missing bundle under
+XBLA is byte-identical to the provider pinned dark. Per-tick trace, 400 frames,
+ORIGINAL / COMMUNITY / XBLA / XBLA on the old bundle: **one hash**, 901 lines,
+80802 bytes - no re-baseline. Facility under XBLA: `lookups=0`.
+
+### Recorded debt, NOT fixed here
+
+- **Images 57 and 60 are unchanged and unexplained by this.** Neither carries
+  hue: 57 decodes to alpha 0 everywhere (one RGBA value, `255 255 255 0`) and
+  60 decodes to a neutral white at an alpha maximum of 60. A vertex-colour
+  contract cannot reach either; they remain a texture-side question.
+- **The trace gate still cannot replay here.** `trace.py rom-for` finds no
+  candidate for the recorded traces: `facility.sltrace` declares
+  `rom_sha1 60fefcda1baaddef3265a872238a239fde962fd0` and the checkout's
+  `baserom.u.z64` is `abe01e4aeb033b6c0836819f549c791b26cfde83`. Simulation
+  identity this round therefore rests on the per-tick `SL_TRACE_OUT` trace
+  above and on nothing else, and that is stated rather than reported as a gate
+  pass. The tracked `tools/trace/gate-results.json` was verified intact
+  (117 entries, facility `runs: 10`) and was not written.
+- Carried forward unchanged: the `_uv_format` 1% histogram debt, the source
+  `0x0800` CUTOUT classification debt, the exact XBLA `c_zadjust` magnitude,
+  and the skydome ring, the water, the mountain shading and the fog.
+
+### Gates
+
+worldasset 133 + 124 (5 new colour checks); texprov 56; presentation 31;
+settings 196; display 171 + 67; inputtest 240 / 22 = the unchanged B-096
+baseline; layering 282 = baseline; test.ps1 PASS 1/1; normal build last. No
+trace re-baseline: the change is offline asset tooling only - no C, no game
+logic, no trace data.
+
+Reference: the endian contract was read from the Xenia emulator as an
+implementation oracle (`canary_experimental` @ c9c8e483, upstream @ 95a5c3ee,
+cloned outside the tree and reached through machine-local `.research/` junctions
+git never sees) and REIMPLEMENTED in Sightline's own idiom - no emulator source
+is vendored, copied or referenced by the tree. The decision rests on the game's
+own render, not on the emulator.
+
+Scratch (session, not committed): roadcolor\ - p1_census.py (the guest texture
+records), p2_decode.py (the image-58 decode and its DXT endpoints), p3_slwa.py
+(the prepared bundle as the renderer reads it), p4_pool.py (per-pool raw colour
+words), p5_decl.py / p7_vfetch.py / p8_shader.py (the search for a vertex
+declaration - the container carries none), p6_sat.py and p9_extremes.py (the
+channel-extreme words in both model generations), p10_id.py (their surfaces and
+world positions), p11_frames.py / p12_stripe.py / p13_line.py / p14_nearby.py /
+p15_nearby2.py (the frame measurements), run.ps1 and trace.ps1, and the
+before/after world-asset roots, the N64-generation control roots and the frame
+sets.
+
+### The control that proves nothing else moved (added after the first commit)
+
+Only red and blue moved in the bundle, and blending is per channel - so the
+rendered GREEN channel must be identical everywhere. A geometry shift, a depth
+decision, an alpha change or a mesh appearing or disappearing would all break
+it, and none of them can hide in it. Measured over six poses, five captured
+frames each, whole frame: green differs on ZERO of 5241600 pixels at every one
+of them - 31.4 million pixels - while red or blue differs on 1.1 to 2.0 million
+per pose. The road-line geometry, the FAN repair, the world-gap repair, the
+coplanar decal depth, the CUTOUT classification, the alpha-test rule and the
+registration are therefore untouched by measurement rather than by an argument
+from the diff.
+
+## B-XBLA the external world background never received the level's fog (FIXED 2026-09-24, #68)
+
+The previous round left one measurement with no implementation behind it. This
+closes it, and corrects one thing that measurement implied. It is a RENDERER
+STATE contract: no bundle, no preparation tool and no source byte moves, and
+`prepare.py`, SLWA and the presentation code are all untouched.
+
+### The first wrong stage, measured on both sides
+
+At the Dam's gate yard - a long-distance outdoor pose, distant peaks, large
+depth range - under PRESENTATION ORIGINAL, read off the display list the game
+itself wrote (`SL_FOG_DBG`):
+
+  - fog enabled: YES. 2072 of the frame's triangles carry G_FOG and all 2072
+    are drawn under the fog stage.
+  - colour: 10 30 60 ff = (16, 48, 96), alpha 255 - the environment's own sky
+    RGB, the same three bytes the run's env-rgb event records.
+  - band: fm 25600, fo -25344. The RSP computes alpha = ndcz * fm + fo clamped
+    0..255, so fog STARTS at NDC z 0.99000 and SATURATES at 0.99996 - the outer
+    one percent of a 1/w depth buffer.
+  - mode: GL_LINEAR, start 0, end 1, over an explicit PER-VERTEX fog
+    coordinate (GL_FOG_COORD_SRC read back as 0x8451). The game's fog is not
+    eye distance; it is the perspective-divided z through those two halves.
+  - applied by: fog_apply / fog_coord in sl_gfx_dl.c, from
+    fogSetRenderFogColor (bgfog.c:620).
+
+At the same camera under PRESENTATION XBLA, with GL read back rather than
+echoed (SL_BG_FOGTRACE): GL fog DISABLED for the replacement's whole draw, no
+colour and no band handed over - while the level had all of it standing at
+that instant, unused.
+
+### And the disable leaked, with a measured limit to what that cost
+
+fog_apply mirrors GL's enable in g_fog_gl_on and issues glEnable(GL_FOG) only
+when that mirror is clear; the frame reset deliberately does not clear it. A
+raw glDisable therefore left the mirror saying "enabled" while GL was not, and
+nothing ever turned it back on - tree-wide, glEnable(GL_FOG) appears in src/
+only inside fog_apply, behind that mirror. From the second frame onward every
+trace line reads GL_FOG=0 mirror=1 and never recovers.
+
+What that did NOT do, measured rather than assumed: with the replacement
+drawing no mesh at all (SL_BG_ONLY=9999, so only the game's own geometry
+remains), the leaking and non-leaking arms are BYTE-IDENTICAL on every
+captured frame. The game's fogged triangles go through the B-051
+alpha-equation SHADER, which applies fog from its own u_fog uniform and
+gl_Fog state and never consults the fixed-function enable - toggling
+SL_FOG_PRIM in the same configuration moves 15559 pixels, so that population
+is visible and is simply not gated by GL_FOG. The leak is a real state defect
+and is fixed; the load-bearing half is the background's own missing fog.
+
+### The second defect: the seam is not always a room triangle
+
+The obvious repair - classify the replacement with fog_mode(), the same
+classifier the triangle path calls - was implemented, measured and found
+UNSTABLE. The seam draws on the frame's first world triangle, and bg.c:737
+draws a room's PROPS before bg.c:755 draws its background, so the blender mux
+standing there is the room's A_SHADE on most frames and a prop's A_FOG on
+others; a prop's fog alpha at this pose is zero. The replacement's fog changed
+from frame to frame at a fixed camera.
+
+The contract is therefore read from the game's own fog EMITTER. gSPFogPosition
+has exactly one emitter in the game - tree-wide, `grep -rn "gSPFogPosition"
+src/` names bgfog.c:632 and bgfog.c:637 and nothing else - and
+fogSetRenderFogColor writes SetFogColor immediately before it and returns
+without writing either when g_FogSkyIsEnabled is clear. Latching the colour
+where that command executes gives the LEVEL's fog by construction rather than
+by luck, and gives the no-fog answer for a level that does not fog, for the
+same reason the game's own geometry gets it.
+
+### What ships
+
+One contract, no second fog configuration anywhere, and no Dam number in the
+tree.
+
+  - sl_wa_fog_band (src/gfx/sl_gfx_worldasset.c) is the decision: given
+    whether a fog position has been seen, its two halves and its age in
+    frames, does the replacement receive fog and over what NDC band. A
+    function rather than a condition at the seam so it can be tested with no
+    GL context - the same reason sl_wa_sky_aperture is one.
+  - The background pass computes its per-vertex value with the renderer's
+    EXISTING fog_coord, from c[2]/c[3] - the same perspective-divided z the
+    triangle path reads out of g_vdepth - and hands it to GL as a
+    GL_FOG_COORD_ARRAY, because this pass draws through glDrawElements.
+    glFogCoordPointer is resolved separately from the three B-075 entry points
+    so a driver missing only it costs the background's fog and not TEXEL1 and
+    the whole fog stage.
+  - fog_apply establishes the enable and the colour, so the renderer's mirror
+    of GL stays truthful; the level's colour is handed to it for the length of
+    that one call and the RDP register is put back.
+  - NEITHER PASS DISABLES THE STAGE ANY MORE. At LINEAR(0..1) a coordinate of
+    zero is factor 1 - the incoming fragment untouched - so fog_neutral is the
+    same picture a disable drew without desynchronising the mirror. The
+    SKYDOME keeps its unfogged picture through exactly that: it is
+    eye-anchored, carries no depth and sits beyond the frustum, so the level's
+    distance band has nothing to say about it. The reason on record for
+    fog-off is correct for the dome and was only ever wrong when carried
+    across to a world-anchored replacement.
+
+SL_BG_FOG=0 restores the previous behaviour from the same binary.
+
+### The picture, at the Dam's gate yard
+
+Deterministic boot pose, no input, SL_VI_CATCHUP=0, the pinned seed,
+-Cheats invincible,invisible,maxammo.
+
+  band                        before              after               delta
+  far peaks   rows  40..200   85.19 98.44 110.55  73.92 89.28 105.83  -11.27 -9.16 -4.72   46.5% of px
+  mid cliffs  rows 200..380   85.93 95.84 105.14  82.95 93.57 104.16   -2.97 -2.27 -0.98   27.0% of px
+  near yard   rows 520..730   58.68 61.44  63.52  58.68 61.44  63.52    0.00  0.00  0.00    0.0% of px
+
+Three things have to be true of that and all three are: the attenuation is
+MONOTONE with depth; the near band is untouched to the last bit, which is what
+says this is a depth contract and not a tint; and the direction is the fog
+COLOUR's - mixing bright snow toward (16,48,96) must take red furthest, then
+green, then blue, and the deltas are in exactly that order.
+
+Whole frame, 190039 of 1048320 pixels move. The coordinates handed to GL over
+the item's 140066 vertices run 0.0000 .. 0.9659, mean 0.1725, from a depth
+range of -154.5 .. 0.99962, and the mode and projection are the same on every
+sampled frame - the flicker the first attempt had is gone.
+
+Pixel identity with the original is NOT the test and is not claimed: the
+geometry and the textures differ by design. What is claimed is that the
+replacement now receives the same fog parameters, over the same depth, in the
+same direction.
+
+### Controls
+
+  ORIGINAL, pre-change build vs this one            byte-identical, 5 of 5 frames
+  COMMUNITY HD, pre-change build vs this one        byte-identical, 5 of 5 frames
+  ORIGINAL vs COMMUNITY HD                          differ - neither above is vacuous
+  XBLA, pre-change build vs SL_BG_FOG=0             byte-identical, 5 of 5
+  XBLA, pre-change build vs the fixed default       differs on all 5 - the A/B is not vacuous
+  no bundle under XBLA, pre-change vs fixed         byte-identical, 4 of 4; "not provided - dam unchanged"
+  Facility under XBLA                               lookups=0 loaded=0 missing=0 invalid=0
+  the tunnel mark (playtest mark-003)               3 of 1048320 px differ; road lines present,
+                                                    dashes regular, no z-fighting, no repetition change
+  per-tick trace, 400 frames, ORIGINAL / COMMUNITY
+    / XBLA / XBLA with SL_BG_FOG=0                  one hash, 901 lines, 80802 bytes. No re-baseline
+
+The tunnel's 3 pixels and the near yard's 0 together cover the accepted
+repairs by measurement rather than by an argument from the diff: the FAN /
+world-gap repair, the world registration and visibility scale, the coplanar
+decal depth, the TRANSLUCENT alpha-test rule, the CUTOUT foliage
+classification and the packed-base texture addressing all sit in bands that
+did not move.
+
+### Secondary observations, classified and NOT repaired
+
+  - The MOUNTAIN appearance improved as a natural consequence of the fog
+    contract; nothing separate was done for it, and the distance-shading
+    complaint recorded against the mountain band is a different measurement
+    and is not claimed closed.
+  - The SKY RING is not fog. The strongest row-to-row step across the
+    terrain-to-sky band moves from 9.19 to 8.83 - within the noise of the
+    band's own structure - so fog was not causally involved and the sky
+    transition remains the next separate candidate.
+  - The WATER is untouched and still parked.
+
+### Recorded as correctness debt, not a blocker
+
+THE TUNNEL ROAD LINE'S PER-DASH HUE. Decision 2026-09-24: not to be
+chased further. The line is functionally restored - geometry present,
+placement and repetition coherent, packed-base layout repaired, transparency
+working, coplanar z-fighting repaired, and the global vertex-colour byte order
+repaired. What remains is per-dash hue variation, and the last round measured
+that the remaster's OWN road-line draw contains mixed vertex colours
+(yellowish, white, darker neutral) and that the corresponding
+original-generation draw ALSO contains mixed yellow and white. "Every dash
+identical yellow" is therefore NOT a valid acceptance requirement and must not
+be adopted as one. Mesh 60/61/62/69 dash archaeology, per-dash hue matching,
+aggregate R-B validators and images 57/60 are all parked unless a later
+visible defect promotes them.
+
+### Gates
+
+worldasset 144 + 124 (11 new fog-contract checks); texprov 56; presentation
+31; settings 196; display 171 + 67; inputtest 240 / 22 = the unchanged B-096
+baseline; layering 282 = baseline; test.ps1 PASS 1/1; normal build last.
+
+On simulation identity, stated rather than claimed: the corpus trace gate
+still cannot replay in this checkout - facility.sltrace declares
+rom_sha1 60fefcda... and the checkout's baserom.u.z64 is abe01e4a..., so
+trace.py rom-for finds no candidate. Simulation identity this round rests on
+the per-tick SL_TRACE_OUT trace above and on nothing else. The tracked
+tools/trace/gate-results.json was verified intact (117 entries, facility
+runs: 10) and was not written.
+
+Scratch (session, not committed): fog\ - run.ps1 (the deterministic capture,
+teleport or boot pose, scratch SL_CONFIG/SL_EEPROM only), trace.ps1 (the
+per-tick trace across presentations), and the ORIGINAL / COMMUNITY / XBLA
+before-and-after frame sets, the leak-control sets and the tunnel-mark pair.
+
+
+## B-XBLA the additive skydome was composed with a REPLACEMENT background (FIXED 2026-09-25, #68)
+
+The ring across the Dam's sky/backdrop transition is not fog - the fog round
+measured that and said so. It is a COMPOSITION defect, and the unit that was
+wrong is WHICH ASSETS THE SCENE CONTAINS. This is a scene-assembly contract:
+no bundle, no preparation tool, no source byte and no fog code moves.
+
+### The four-state matrix
+
+Four captures, same camera, same frame, same geometry, at the sky-ring witness
+the previous round established (Dam, eye 15605 60 3755, room 123, theta 315,
+verta 20, read 62; teleport only, SL_VI_CATCHUP=0, pinned seed, cheats
+invincible,invisible,maxammo). The dome is removed by pointing the world-asset
+root at a set carrying the background bundle only, so the arms differ by the
+asset's presence and by nothing else.
+
+  A  dome + background, fog ON     max step across the dome's own boundary  7.15
+  B  dome + background, fog OFF                                            12.64
+  C  background only,   fog ON                                              1.88
+  D  background only,   fog OFF                                             7.28
+
+The boundary is located ONCE from the dome's own visible footprint and all
+four are then measured on the same screen rows. Below it A and C are equal to
+the last bit at every row, and so are B and D - which is what says the
+footprint really ends there and nothing else moved. The dome owns 141052 px of
+the frame and 33.9% of the sky/backdrop band; 0.02% of that band is painted by
+neither external pass, so there is no literal gap for a sky to fill.
+
+### What actual XBLA shows - the sign that settles it
+
+Read off the user-supplied console build under Xenia: where the remastered Dam's sky
+is unoccluded it is a FLAT PALE BLUE, (120.7, 163.4, 195.1) with sd
+(2.3, 2.8, 3.2), and over the top thirty rows of that patch it is one exact
+constant. No cloud pattern, no horizon band, no arc, in any capture with sky.
+
+The discriminator is a SIGN, the same shape as the road line's:
+
+  actual XBLA, four unoccluded sky patches            R-B  -48 .. -74
+  THE STANDALONE SKYDOME ALONE   176.1 167.0 163.1    R-B  +13.0
+  dome + background, fog ON      131.6 133.1 141.0    R-B   -9.5
+  dome + background, fog OFF     161.3 159.8 163.0    R-B   -1.7
+  BACKGROUND ONLY, fog ON         83.9 104.8 134.5    R-B  -50.6
+  BACKGROUND ONLY, fog OFF       113.6 131.5 156.5    R-B  -42.9
+
+The dome's picture is WARM - a peach and cream cloud map with its own baked
+horizon and its own jagged mountain rim - against a reference that never comes
+near neutral. Composed, it drags the band to -2..-10; removed, the band sits
+inside the reference's own range. The dome is a sky the actual game is not
+drawing here.
+
+### The cause, and the rule
+
+An ordering accident rather than a decision. The skydome shipped FIRST, when
+the Dam had no external background at all and the only other picture was the
+game's own; the whole-background replacement arrived afterwards carrying the
+stage's complete distant panorama AND its own authored sky transition; and
+nothing ever related the two classes, because nothing had to. The provider
+resolves each class separately by (class, item path), prepare.py converts
+whatever directory it finds, and the seam drew both. PRESENCE IN THE ARCHIVE,
+NOT SCENE MEMBERSHIP, WAS DECIDING.
+
+sl_wa_compose_skydome decides it now, on the condition each class already IS:
+SKYDOME is ADDITIVE - drawn as well as the game's own picture - and BACKGROUND
+is a REPLACEMENT that stands in for the stage's static background and
+suppresses the emission it replaces. The additive class's premise is that the
+game's own backdrop is on screen; a loaded replacement is the statement that
+it is not. It is the SAME condition that decides the suppression, so the two
+can never disagree about which backdrop is on screen, and every degenerate
+case falls out of it: a stage with a sky and no replacement composes as
+before; a missing, invalid or unuploadable replacement leaves the game's own
+backdrop drawing and the sky composed over it; a presentation selecting no
+world assets resolves neither. No item path, no level id, no mesh index, no
+colour. The replacement is resolved FIRST so a sky the composition does not
+contain is never opened, and the census reports what was composed.
+
+SL_SKY_WITH_BG=1 composes both from the same binary.
+
+### Checked and NOT holding - recorded so nobody re-walks it
+
+new/skydome/ covers eleven stages (bunker, bunker2, caverns, complex, dam,
+egyptian, frigate, runway, surface, surface2, temple) against new/background/'s
+twenty-four; it is the one class with NO original/ counterpart; and its names
+are a STAGE vocabulary where the background's are MODEL names (caverns against
+cavern and caves, egyptian against aztec, surface2 where the background has
+only surface). The obvious reading - that the set names the stages whose own
+environment draws a sky - was tested against fog_tables[] and IS WRONG: clouds
+is set on sixteen stages, eight with no skydome (statue, archives, train,
+streets, depot, cradle, citadel, aztec), and caverns has a skydome with clouds
+clear. WHAT THE ELEVEN ARE IS NOT ESTABLISHED, and the rule does not depend on
+it.
+
+### Before and after, ten poses, one binary
+
+  pose                                  px changed   ring before   ring after
+  the ring witness                      141052        7.15          1.88
+  +85 forward                           140020        7.61          2.16
+  -85 back                              142019        6.39          1.48
+  -12 deg heading                       139341        2.84          4.26
+  +12 deg heading                       134392       11.14          5.03
+  same spot, settled pitch (read 123)        1          -             -
+  same spot, level pitch                     0          -             -
+  the crest                                  2          -             -
+  playtest mark-001 (tunnel)                 0          -             -
+  playtest mark-003 (tunnel)                 0          -             -
+
+TWO HONEST QUALIFICATIONS, both measured:
+
+  - THE METRIC'S LIMIT. With the dome gone the boundary locus is an arbitrary
+    line through the panorama and what it reports is the panorama's own ridge
+    detail, not a ring - which is why -12 deg reads higher after, from an
+    already-low 2.84. The same limit is why the largest row step in the sky
+    band cannot by itself separate a ring from terrain: unfogged and dome-free
+    the ridge produces steps of 7.3, above actual XBLA's 2.6-5.6, because it is
+    structure rather than a seam.
+  - HOW MUCH A PLAYER SEES DEPENDS ON PITCH. At the gate yard the dome
+    contributes nothing at level pitch and grows as the camera looks up:
+    0 px, 1458, 35723, 86808, 141052 as the teleport pitch is raised. The ring
+    witness is a deliberately pitched diagnostic camera, and NONE of the five
+    playtest marks recorded for this level is an outdoor sky pose - all five are
+    tunnel poses pitched down. This is a scene-assembly correction demonstrated
+    at the witness; what it is worth in play is for a playtest to judge.
+
+### Controls
+
+  the witness, new default vs a pre-change build with no skydome file
+                                                    byte-identical
+  the witness, SL_SKY_WITH_BG=1 vs pre-change default
+                                                    byte-identical
+  the witness, new default vs SL_SKY_WITH_BG=1      141052 px - not vacuous
+  ORIGINAL, new build vs the pre-change build       byte-identical
+  ORIGINAL, new default vs SL_SKY_WITH_BG=1         byte-identical
+  COMMUNITY HD, new default vs SL_SKY_WITH_BG=1     byte-identical
+  ORIGINAL vs COMMUNITY HD                          446886 px - not vacuous
+  a set with a skydome and NO background, both arms byte-identical; the sky
+                                                    still composes, and differs
+                                                    from dome+bg by 855199 px
+  Facility under XBLA                               no world-asset line at all
+  per-tick trace, 400 frames, ORIGINAL / COMMUNITY
+    / XBLA / XBLA with SL_SKY_WITH_BG=1             one hash, 901 lines,
+                                                    80802 bytes - the same
+                                                    trace the fog round
+                                                    recorded. No re-baseline
+
+The tunnel marks' 0 pixels and the level-pitch pose's 0 cover the accepted
+repairs by measurement rather than by an argument from the diff: FAN /
+world-gap, world registration and the visibility scale, coplanar decal depth,
+the TRANSLUCENT alpha-test rule, CUTOUT foliage, the packed-base texture
+layout and the tunnel road line all sit in bands that did not move at all.
+
+THE FOG IMPLEMENTATION IS UNTOUCHED. No added or removed line changes it;
+SL_BG_FOG was used only as a diagnostic. The remastered atmosphere - distant
+scenery that keeps its structure and trends toward a bright pale-blue haze,
+against the N64 fog colour (16,48,96) - remains a SEPARATE open question and
+was deliberately not addressed.
+
+### Gates
+
+worldasset 147 + 124 (3 new scene-assembly checks); texprov 56; presentation
+31; settings 196; display 171 + 67; ucodetab 17; inputtest 240 / 22 = the
+unchanged B-096 baseline; layering 282 = baseline; test.ps1 PASS 1/1; normal
+build last.
+
+On simulation identity, stated rather than claimed: the corpus trace gate
+still cannot replay in this checkout - facility.sltrace declares
+rom_sha1 60fefcda... and the checkout's baserom.u.z64 is abe01e4a..., so
+trace.py rom-for finds no candidate. Simulation identity this round rests on
+the per-tick SL_TRACE_OUT trace above and on nothing else. The tracked
+tools/trace/gate-results.json was not written.
+
+### Still open, carried forward unchanged
+
+The remastered ATMOSPHERE (a separate issue from this one and from fog); the
+per-draw panorama fog selector, still TOOLING/EVIDENCE DEBT because the
+shipped Canary release compiles out TraceWriter; the WATER the game draws and
+the replacement does not; the MOUNTAIN distance shading and the parked terrain
+UV scale; the tunnel's parked per-dash hue debt; the source 0x0800 CUTOUT
+classification debt; the dome's lower-rim UV wrap; and what the eleven
+new/skydome/ stages actually are.
+
+Scratch (session, not committed): sceneasm\ - run.ps1 (the deterministic
+capture, teleport only, scratch SL_CONFIG/SL_EEPROM), battery.ps1 (the ten
+poses, both arms), controls.ps1 (the presentation, fallback and Facility
+controls), trace.ps1 (the per-tick trace across presentations), and
+boundary.py / inside.py / scan2.py (the ring metric, following the dome's own
+footprint so all states are measured on the same screen rows). The actual-XBLA
+reference frames stay in the previous round's fogoracle\ and are private: no
+capture, mark or converted asset is committed, packaged or exported.
+
+
+## B-XBLA the frame was being spent on a diagnostic that is OFF (FIXED 2026-09-25, #68)
+
+Playtest of `120894ae`: "Skydome looks better, but the edges are still kinda
+weird and 'walled' Like a reverse of what we had before. Also, framerate is
+terrible now." The frame rate is the BLOCKER and this closes it. The remaining
+wall-like sky edge is real, is NOT repaired here, and stays open.
+
+The cause is not the world assets, not the fog contract and not the
+scene-assembly rule. It is one `getenv` that was never cached, on a function
+that used to be called a few thousand times a frame and is now called 140066.
+
+### The playtest's own witness, before anything was run
+
+`%USERPROFILE%\.sightline\runs\20260925-092236-lvl33` carries the two marks
+and their screenshots. `mark-001` is pumped frame 1433, `mark-002` pumped frame
+1993, and the two `.bmp` files are 30 s apart: 560 pumped frames in 30 s, which
+is 18.7 pumped and 9.3 PRESENTED frames per second on the reference play machine at
+its own settings. One presented frame spans two services of `gfxFrameMsgQ`, so
+the two counters are not the same number and reading either alone halves or
+doubles the answer.
+
+Both marks are OUTDOOR poses - `mark-001` eye 15745.2 59.7 12723.8, theta 204.8,
+verta 28.9, room 111; `mark-002` eye 16724.5 60.3 9096.9, theta 329.1, verta
+40.0, room 111; both 1365x768 (the config's `window_height=768` wins over
+`SL_WINDOW_SIZE`), vsync off, `world_detail=1`, `presentation=2`, framebuffer
+declared 320x240 into a 1024x768 safe area. They are the first sky poses
+marked in playtest on this level, which is why this is being reported now.
+
+### The matrix: one binary, one camera, no input, pacing left alone
+
+At `mark-001`, `SL_TICK_DBG` + `SL_PHASE`, the existing instrumentation - no
+profiler was built and `SL_VI_CATCHUP=0` was deliberately NOT used, because
+manual play does not run that way and a performance number taken under it is not the
+interactive path. Presented frames, aggregate over the run:
+
+      A  XBLA, current default                  265.66 ms/frame    3.8 fps
+      B  XBLA, SL_SKY_WITH_BG=1 (the old scene) 264.97 ms/frame    3.8 fps
+      C  PRESENTATION ORIGINAL                   68.80 ms/frame   14.5 fps
+      D  XBLA, SL_BG_ONLY=9999 - NO MESH DRAWN  266.80 ms/frame    3.8 fps
+      D2 XBLA, SL_WORLD_ASSETS=off               69.00 ms/frame   14.5 fps
+      F  XBLA, SL_BG_FOG=0                       49.33 ms/frame   20.3 fps
+
+Four readings and each one removes a suspect:
+
+- **A == B, so `120894ae` is not causal.** The scene-assembly commit is
+  exonerated by measurement, and it is exonerated by reading too: it REMOVES a
+  per-frame `sl_wa_lookup` for the skydome and adds one cached `getenv`.
+- **A == D, so the DRAW is not the cost.** Hiding every one of the 84 meshes -
+  all 90360 triangles, all 84 `glDrawElements` - changed the frame by 1.1 ms.
+  The GPU was never the bottleneck and nothing about overdraw, blending or
+  texture size was ever involved.
+- **D2 == C, so the cost IS in the world-asset path.** Turning the set off
+  lands exactly on ORIGINAL.
+- **F recovers.** The one arm that skips the per-vertex fog call is the one
+  that gets the frame back.
+
+What survives all four: something the background pass does per VERTEX, before
+the mesh loop, that the fog round put there.
+
+### The defect
+
+`fog_coord` (sl_gfx_dl.c) computes one vertex's fog value. Inside it, the
+`SL_FOG_DUMP` probe read its variable with a bare `getenv` on EVERY call - the
+lookup and the `atoi` were on the hot path, not behind a static. `getenv` here
+walks the process environment block comparing names, so its cost is the
+environment's size, not a constant. That was invisible while the only caller was
+the triangle path at a few thousand vertices a frame. `d7d258c5` then gave the
+replacement background its per-vertex fog coordinate from this same function -
+correctly; that is the contract, and it is not being changed - and the Dam item
+is 140066 vertices. 140066 environment scans per frame is the 197 ms between row
+D and row F above, and the whole of it was paid by a diagnostic that was
+switched off.
+
+Tree-wide, this was the only uncached one on a per-vertex path: every other
+probe in `src/gfx/sl_gfx_dl.c` reads its variable into a `static` once
+(`grep -n 'getenv' src/gfx/sl_gfx_dl.c`, the `if (on < 0)` idiom, about fifty
+sites). This one was written in the same file, in the same style, and simply
+missed it.
+
+### The fix
+
+The cap is read once into a static and the probe is otherwise untouched. No fog
+arithmetic, no band, no coordinate, no GL state and no picture moves; the only
+behavioural difference is that `SL_FOG_DUMP` is sampled on the first call rather
+than on every one, which is what "nothing unset costs anything" has meant
+everywhere else in this file all along. The escape hatch still works: with
+`SL_FOG_DUMP=3` the run prints three `sl_fogv` lines per frame, resetting per
+frame, 132 over 44 drawn frames.
+
+### Before and after, at the two playtest marks
+
+Same binary lineage, same launch contract, same camera, no input, pacing left
+alone. Presented frames; the window figures drop three leading windows of
+warm-up. Per-FRAME p95 is not available from any existing facility and none was
+added, so the distribution is over `SL_TICK_DBG`'s 2-second windows and is
+labelled as such; `SL_PHASE`'s worst single frame is the true tail.
+
+      mark-001   aggregate ms   fps    window median / p95    worst frame
+        before        265.66     3.8       266.50 / 274.93        518.9 ms
+        after          34.56    28.9        35.65 /  37.84        276.2 ms
+      mark-002
+        before        169.46     5.9       150.29 / 251.38        676.5 ms
+        after          30.32    33.0        31.44 /  33.81        331.2 ms
+
+7.7x at `mark-001` and 5.6x at `mark-002`. The remaining frame is 78-81% display
+list against 96% before, so the renderer is still the frame's largest share and
+is now a normal one rather than a scan.
+
+NO HITCH WAS INTRODUCED, and at `mark-002` one was REMOVED. The worst single
+frame in every arm is the level load, and it falls. The steady-window spread
+(max/min) is 1.21 after against 1.12 before at `mark-001` - the same flat series
+at eight times the rate - while at `mark-002` it falls from 1.85 to 1.26:
+before, that pose's windows were bimodal, with a p95 of 251 ms against a median
+of 150, and after they are 33.8 against 31.4.
+
+### Controls - the fix must move no pixel anywhere
+
+Deterministic capture, `SL_VI_CATCHUP=0` and the pinned seed used HERE ONLY so
+two builds are comparable frame-for-frame, at the sky-ring witness and at both
+playtest marks, two frames each:
+
+      ORIGINAL, pre-fix build vs this one       byte-identical, 2 of 2
+      COMMUNITY HD, pre-fix vs this one         byte-identical, 2 of 2
+      XBLA, pre-fix vs this one                 byte-identical, 2 of 2
+      a set with a skydome and NO background    byte-identical, 2 of 2
+      playtest mark-001, pre-fix vs this one    byte-identical, 2 of 2
+      playtest mark-002, pre-fix vs this one    byte-identical, 2 of 2
+      ORIGINAL vs COMMUNITY vs XBLA vs the      all four differ, so none of
+        sky-only set                            the above is vacuous
+      Facility under XBLA                       no world-asset line at all:
+                                                no lookup, no file opened
+      per-tick trace, 400 frames, ORIGINAL /    one hash, 901 lines, 80802
+        COMMUNITY / XBLA / XBLA with            bytes - the same figures the
+        SL_SKY_WITH_BG=1                        fog and scene-assembly rounds
+                                                recorded. No re-baseline
+
+Twelve byte-identical frames across four presentations cover the accepted
+repairs by measurement rather than by an argument from the diff: the sky
+scene-assembly rule, FAN / world-gap, world registration and the visibility
+scale, coplanar decal depth, the TRANSLUCENT alpha-test rule, CUTOUT foliage,
+the packed-base texture layout and the tunnel road line are all unchanged to the
+last bit.
+
+### What the census says, so the other hypotheses are closed by counter
+
+Over a whole run: provider `lookups=1 loaded=1 missing=0 invalid=0` - the
+resolve is once per stage, not per frame. The upload is once
+(`wa_upload_images` returns on `a->uploaded`); 68 images, 12 mip levels. The
+background is drawn on exactly one frame each, 84 GL draws and 90360 triangles
+per frame - no duplicate submission, no repeated upload, no per-frame bundle
+validation, no matrix rebuild that was not there before.
+
+### NOT repaired here, and NOT to be read as accepted
+
+- **THE SKY WALL IS STILL WRONG.** The playtest screenshots show a broad curved
+  boundary between a pale near-white upper cap and a darker blue region below.
+  This round did not touch it and took no new measurement of it; the previous
+  round's record already names the background's own authored sky transition
+  (mesh 48 opaque, mesh 77 the alpha-fade strip) as what paints that band, and
+  the panorama / fade-to-sky contract is the next candidate. Nothing here is an
+  acceptance of the sky composition.
+- The remastered ATMOSPHERE, the WATER, the MOUNTAIN distance shading, the
+  parked terrain UV scale, the tunnel's per-dash hue debt, the source `0x0800`
+  CUTOUT classification debt, the dome's lower-rim UV wrap, and what the eleven
+  `new/skydome/` stages are - all carried forward unchanged.
+
+### Gates
+
+worldasset 147 + 124; texprov 56; presentation 31; settings 196; display 171 +
+67; ucodetab 17; inputtest 240 / 22 = the unchanged B-096 baseline; layering
+282 = baseline; test.ps1 PASS 1/1; normal build last. No synthetic test was
+added: `fog_coord` is file-static with no test seam, and exposing one to assert
+a diagnostic's caching would be a larger change than the repair - the contract
+is covered instead by the `SL_FOG_DUMP=3` escape-hatch run and by twelve
+byte-identical control frames. No trace re-baseline.
+
+On simulation identity, stated rather than claimed: the corpus trace gate still
+cannot replay in this checkout - `facility.sltrace` declares
+`rom_sha1 60fefcda...` and the checkout's `baserom.u.z64` is `abe01e4a...`, so
+`trace.py rom-for` finds no candidate. Simulation identity this round rests on
+the per-tick `SL_TRACE_OUT` trace above and on nothing else. The tracked
+`tools/trace/gate-results.json` was verified intact (117 entries) and was not
+written.
+
+Scratch (session, not committed): frametime\ - run.ps1 (the interactive
+measurement launch: existing instrumentation only, pacing left alone, scratch
+SL_CONFIG/SL_EEPROM), shots.ps1 (the deterministic picture controls), trace.ps1
+(the per-tick trace across presentations), stats.py (the window distribution),
+and the before/after frame sets. No capture, mark or converted asset is
+committed, packaged or exported.
+
+
+## B-XBLA the cloud ring - the level's fog faded the remaster into a backdrop
+## it had already replaced (FIXED 2026-09-25, #68)
+
+Playtest of the scene-assembly and frame-time work: *"Frame rate is better,
+and dome is mostly acceptable, but the clouds seems to be contained in a ring.
+Almost the reverse of the initial problem."* The frame rate and the dome are
+taken as reported and are not reopened. The ring is a different defect, it
+reproduces on the current binary at the playtest mark, and this closes it
+causally. **#68 stays OPEN. This is a measurement, not an acceptance.**
+
+### The witness came with its own answer
+
+`runs\20260925-112133-lvl33\mark-001` - Dam, outdoor, on the dam wall,
+eye `11648.3 60.3 1000.1`, room 53, theta 127.4, verta 22.3, taken on the
+binary at `3617449f`. Two recorded fields settle where to look:
+
+- **centre-rgba `10 2f 5e`** = (16, 47, 94). The level's own fog colour, to
+  within a unit.
+- **centre-depth `0.999965`**, eye distance **13794.8**, `triangles-at-centre
+  0`. Not the clear, not a 2D pass, not a submitted display-list triangle:
+  OPAQUE geometry with depth written, 13795 units out. The replacement's own.
+
+The earlier `20260925-092236` `mark-002` shows the same boundary from a second
+pose. Reproduced by teleport at that camera (no input, `SL_VI_CATCHUP=0`, the
+pinned seed, `-Cheats invincible,invisible,maxammo`, read 62).
+
+### Pixel ownership, by removal rather than by argument
+
+| | pixels changed | rows |
+|---|---|---|
+| hide the opaque distant panorama mesh | 213153 | 115..523 |
+| hide the source's own fade strip | 56894 | 48..368 |
+
+Overlaid: the panorama mesh is EVERYTHING below the arc; the fade strip is a
+narrow band ON the arc. The pale cloud above is neither - it is the asset's own
+near sky shell. **So the authored fade is not the wall**, and the
+alpha-runs-out hypothesis is refused by the footprint before any alpha is read.
+
+### The fade is not what fails. The destination is.
+
+A pixel of this pass is `(1-f)*unfogged + f*fogcolour`, so capturing the same
+frame with the stage and without it solves for `f` per pixel. Down one column:
+
+```
+  y 60..320   f = 0.000      the near sky shell - no fog at all
+  y 340       f = 0.410
+  y 360       f = 0.917
+  y 380..460  f = 1.000      the distant panorama - the fog colour exactly
+```
+
+A MASK, not a gradient. The level's band is the outer one percent of a 1/w
+buffer - no fog below NDC z 0.99000, saturated at 0.99996, i.e. 939 to 13780
+eye units - and this asset's near sky shell sits inside it while its far
+panorama shell sits beyond it, with nothing in between. Below the rim the frame
+is a constant: mean (17.1, 48.9, 96.5), sd (2.2, 1.8, 1.3).
+
+### The identity the game keeps, and what replacing the backdrop did to it
+
+One value feeds two places. `g_CurrentEnvironment`'s three bytes are what the
+backdrop is filled with and what `fogSetRenderFogColor` (bgfog.c:620) hands to
+`SetFogColor`, and the environment lerp moves both together. Measured on the
+Dam in ONE `SL_FOG_DBG` line: `fill=103163` = (16,49,99), the 5551
+quantisation, beside `fogcol=103060ff` = (16,48,96), which is also the RGB the
+run's own `env-rgb` event records.
+
+So the game's distance does not fade toward "a fog colour" - **it fades into
+the picture behind it**, and that identity is why the original shows no seam
+where its band saturates. A REPLACEMENT background IS the stage's backdrop -
+the same statement the suppression is armed by and `sl_wa_compose_skydome` is
+built on - so handing it the level's band fades the remastered world toward a
+backdrop that is no longer on screen.
+
+### And the replacement already carries the remaster's atmosphere
+
+Unfogged, the same panorama reads (131,155,188), (112,145,183), (101,136,175),
+(91,129,171) down one column - monotone, paler with distance. Held at white
+vertex colour those pixels are IDENTICAL, so the shading is in the asset's own
+images.
+
+| | rgb | sd |
+|---|---|---|
+| actual XBLA, distant terrain (console, private capture) | (110.5, 147.0, 174.3) | (13.7, 16.9, 20.3) |
+| actual XBLA, unoccluded sky | (120.7, 163.4, 195.1) | (2.3, 2.8, 3.2) |
+| ours, band NOT applied | (92.4, 124.1, 159.9) | (30.8, 31.7, 34.9) |
+| ours, band applied | (17.1, 48.9, 96.5) | (2.2, 1.8, 1.3) |
+
+No distance in any console capture comes near (16,48,96). The level's band was
+a SECOND atmosphere over one already there, toward the wrong destination.
+
+### What ships
+
+`sl_wa_fog_level_applies` (`sl_gfx_worldasset.c`), one rule beside the
+scene-assembly rule and reading the same fact: the level's own fog band applies
+to an external pass only while the level's own backdrop is the one on screen.
+
+- `sl_wa_fog_band` still DECODES the band and the census still REPORTS it, with
+  a new `#68 background fog destination:` line saying whether it was applied.
+- No colour, level id, item path or mesh index appears in the rule. Nothing
+  here chooses what the distance should look like; it stops overwriting what
+  the asset already says.
+- The fog STATE handling is untouched - `fog_apply` / `fog_neutral` stay as the
+  fog round left them, so that round's mirror-desync repair stays in force.
+  This is a value change, not a `glDisable`.
+- `SL_BG_LEVEL_FOG=1` applies the band anyway, so the A/B is one binary.
+
+### Controls
+
+| | result |
+|---|---|
+| the gate yard (teleport-free), `SL_BG_LEVEL_FOG=1` vs the pre-change default | **byte-identical** |
+| the gate yard, new default vs the pre-change `SL_BG_FOG=0` | **byte-identical** - the change lands on the fog VALUE alone |
+| the gate yard, ORIGINAL, new build vs pre-change | **byte-identical** |
+| the gate yard, COMMUNITY HD | a third distinct frame - none of the above is vacuous |
+| the playtest mark, `SL_BG_LEVEL_FOG=1` vs the pre-change default | **byte-identical** |
+| the playtest mark, new default vs `SL_BG_LEVEL_FOG=1` | differs by 578938 px |
+| COMMUNITY HD, both arms | **byte-identical** |
+| a set with a skydome and NO background, both arms | **byte-identical** - the additive class is untouched |
+| Facility under XBLA | `lookups=0 loaded=0` - no Dam world asset requested or drawn |
+| per-tick trace, 400 frames, ORIGINAL / COMMUNITY / XBLA / XBLA `SL_SKY_WITH_BG=1` | **one hash**, 901 lines, 80802 bytes - the same figures the fog, scene-assembly and frame-time rounds recorded. No re-baseline |
+
+The gate-yard arms are teleport-free and are the load-bearing identity set. The
+teleport-sampled pose is reproducible at read 62 but not beyond it, and one
+ORIGINAL run in three landed on a different decayed pitch; the teleport applies
+on the first frame the stan world is ready and that frame depends on load
+timing. Stated rather than smoothed over.
+
+### Performance, stated with its conditions
+
+The getenv repair is untouched and this change REMOVES per-vertex work (140066
+`fog_coord` calls a frame). Measured today at the playtest `mark-001`, 1199
+presented frames per arm, existing instrumentation only, pacing left alone:
+
+      default          40.53, 44.03, 40.21 ms   (median 40.53)
+      SL_BG_LEVEL_FOG  42.83, 42.05 ms          (median 42.44)
+      mark-002 default 36.03, 35.84 ms
+
+**These absolutes do not reproduce this morning's 34.56 / 30.32 ms and the
+reason is not the change.** The machine is carrying an unrelated 54% background
+load (Docker, Discord, Firefox, Battle.net, Parsec all resident and none of
+them stopped), the run-to-run spread on ONE arm (40.2..44.0) exceeds the
+difference between the arms, and the arm with the repair is the faster of the
+two in adjacent runs - the expected direction. What is claimed: tens of
+milliseconds, not the hundreds the pre-repair regression measured (265.7 /
+169.5), and no new instrumentation and no profiling sprint.
+
+### Gates
+
+worldasset 151 + 124 (four assertions added for the new rule); texprov 56;
+presentation 31; settings 196; display 171 + 67; ucodetab 17; inputtest 240 /
+22 = the unchanged B-096 baseline; layering 282 = baseline; test.ps1 PASS 1/1;
+normal build last. The corpus trace gate still cannot replay in this checkout -
+`facility.sltrace` declares `rom_sha1 60fefcda...` against a baserom of
+`abe01e4a...` - so simulation identity this round rests on the per-tick
+`SL_TRACE_OUT` trace above and on nothing else. `tools/trace/gate-results.json`
+was verified intact (117 entries) and was not written.
+
+### Not fixed here, and not to be read as accepted
+
+- **The mountain shell's own scale and shading.** What this restores is the
+  asset's own picture; whether that picture is the right SIZE is the parked
+  terrain UV / distance-shading debt and is not claimed.
+- **The game's own remaining geometry still fogs toward the level's colour.**
+  Props, characters and every model the distance shade applies to are untouched
+  by this rule. They sit in the near field, where the band contributes nothing
+  - the gate yard measures 0 pixels of the near yard moving under it - but it
+  is a boundary the rule deliberately does not cross.
+- The water, the tunnel's per-dash hue, the source `0x0800` CUTOUT
+  classification debt, images 57 / 60, the dome's lower-rim UV wrap and what
+  the eleven `new/skydome/` stages are all carry forward unchanged.
+
+### A correction to the record
+
+The fog round wrote "the sky ring is NOT fog", and that measurement was about
+the boundary the ADDITIVE DOME's lower edge made. It still says what it said
+about that boundary. It says nothing about the boundary left once the dome is
+not composed - and that one IS the band. The reading that has to be retired is
+the METRIC, not the number: the largest row-to-row step FALLS when a region is
+crushed to a constant (1.30 with the band applied against 4.09 without, where
+the console's own range is 2.61..5.04), so it cannot on its own tell a seam
+from a wall.
+
+Scratch (session, not committed): cloudring\ - run.ps1 (the deterministic
+capture), perf.ps1 and trace.ps1 (copied from the frame-time round unchanged),
+look.py / ownership and fog-factor analysis, and the capture sets. No console
+capture, mark or converted asset is committed, packaged or exported.
+
+## B-XBLA the stage sky was drawn from a pass the remaster never walks it in, and then
+## left out beneath the replacement it belongs to (FIXED 2026-09-26, #68)
+
+### What the console measured
+
+An instrumented Xenia Canary draw log (private, never committed), two
+independent frames of the remaster at the Dam:
+
+- after the frame's black colour clears, the stage skydome's 7350-index draw is
+  the FIRST world draw (1024x1024 format-18 image, opaque replace, depth tested
+  and written), once per EDRAM tile; the background's draws follow it;
+- skipping only the dome's pixel shader in a matched pair turned the bright
+  upper hemisphere into a flat dark backdrop and moved 658731 of 1009584
+  pixels. The background has no geometry above 39.66 degrees; the sky above
+  its rim IS the skydome;
+- the remaster resolves `new/skydome/dam` inside the load of
+  `new/background/dam` - the sky is the background's companion;
+- the dome item's SECOND draw (2850 indices, the 512x512 alpha image) is issued
+  in NEITHER frame, while the same frames issue the background's own
+  translucent-pass draws.
+
+### First wrong contract: the draw population
+
+The item's command list gates its draws by pass. `op 0x15 (skip, mask)` gates a
+block and `op 0x1a (mask)` gates the rest of the list; the head gate 0x4703 is
+exactly the union of the dome's two blocks (and the level bundle's 0x6f13 the
+union of all of its). Draw 0 stands under 0x4701 (opaque pass), draw 1 under
+0x4702 (translucent pass). The console walks the dome in the opaque pass only,
+so draw 1 is not part of what it shows. Sightline prepared and drew both, and
+draw 1 - a grey cloud cap - covered the whole visible dome: with it removed by a
+scratch bundle, the same camera's frame differed on 0 pixels from a bundle
+carrying draw 1 alone.
+
+Mark-004 (teleport, SL_VI_CATCHUP=0, pinned seed, read 66), upper sky above
+the rim: both draws (132.9,145.3,152.4); opaque pass only (48.0,93.3,134.6);
+the console's blue sky (46.9,97.0,144.8) at a comparable view. The control arm
+(the translucent-pass draw only) reproduces the grey picture byte-for-byte.
+
+Repair (tools): `xblaworld.draw_passes` reads each draw's innermost gate and
+`prepare.py` keeps a skydome draw only when its gate admits the opaque pass.
+No item, mesh index or colour decides it. The regenerated skydome bundle holds
+draw 0 byte-for-byte as before; the background bundle regenerates
+byte-identical.
+
+### Scene membership
+
+`sl_wa_compose_skydome` answered "a replacement IS the backdrop, so no stage
+sky" - a reading of the class contracts, never measured. It now composes the
+sky in both states; the seam already emits it immediately before the
+replacement, depth-less, so the replacement lands over it as authored.
+`SL_SKY_WITH_BG=0` restores the suppression for A/B. `sl_wa_fog_level_applies`
+keeps its measured answer (no level fog on a replacement); only its rationale
+changed - the level's colour is behind neither the replacement nor its sky.
+
+Mark-004: exact (16,48,96) backdrop pixels 44457 -> 0; verta 55 at the same
+eye 149313 -> 0. Every changed pixel lies above the panorama (rows 32..370);
+nothing below moves.
+
+### Controls and gates
+
+ORIGINAL and COMMUNITY 8/8 frames byte-identical at mark-004; Facility 3/3
+identical and requests nothing; per-tick trace one hash across ORIGINAL,
+COMMUNITY, XBLA and XBLA with SL_SKY_WITH_BG=0 (ab9e61bf..., the previous
+round's hash). Frame time, alternating arms in one session: mark-004 24.7/24.2
+before vs 25.1/23.6 ms after; mark-001 34.9/34.2 vs 33.3/32.6 ms.
+
+### Not claimed
+
+- **The dome's colour is not claimed to match the console yet.** At comparable
+  elevations it is close at altitude, but the console's flat (121,164,196) near
+  the horizon has no pose-matched Sightline counterpart, and Sightline's rim
+  band reads visibly darker than the panorama's pale top. Whether that is a
+  sampling-contract difference (resource, layout, sampler) or pose is
+  unmeasured; it needs a pose-matched console frame, not a decoder change.
+- `read_level` still takes a background draw's style from the last op 0x15
+  only, so its final draw (after `op 0x1a 0x2b01`) is classed by the op 0x15
+  before it (0x2702). Recorded, not changed.
+- Water, the stride-36 pools and everything else parked on #68 carry forward.
+
+## B-XBLA the cloud ring overhead - generated zenith clouds, a chosen divergence
+## (D-023, SHIPPED 2026-09-26, #68 - playtest pending)
+
+### What was reported in playtest, and what it measured to be
+
+Playtest report, on the anchor-fixed dome: "My main issue is the cloud coverage. The
+clouds seem to be concentrated in a ring shape around the dome." The ring is
+the remaster's own: the dome image is a flat blue gradient from its pole to
+row 155, the cloud band settles by row 271, and the console's picture looking
+up is clear deep blue. Of three options offered, the decision was clouds
+GENERATED overhead from the image's own band. docs/divergences.md D-023;
+docs/world-assets.md "Generated zenith clouds".
+
+### What ships
+
+`tools/worldasset/zenith.py` synthesises a cap carrier at preparation time and
+`prepare.py` appends it to the skydome bundle as one draw flagged
+`GENERATED`; `sky_draw` draws it while `SL_SKY_ZENITH` is on (default).
+Re-run `.\tools\windows\prepare-xbla-assets.ps1 -DamSkydome` to get it (the
+tool hash changed, so no `-Force` is needed).
+
+### The smudge in clear sky, explained, not fixed
+
+The faint round wedge right of centre in the second playtest screenshot is the
+dome's texture pole: its two-vertex fan raises the mip level and the V-REPEAT
+sampler pulls the image's horizon rows into the pole at those levels
+(reproduced offline with mipmaps, absent without). Hidden by the carrier while
+the zenith clouds are on; unchanged with them off.
+
+### Not done here
+
+- Acceptance of the look: pending a playtest.
+- The fill is a statistical match to the band (soft, mottled), not the band's
+  stretched painted cumulus.
+- Whether a settings row is wanted for the switch (developer
+  environment variable only this round).
+- Frame-time cost of the carrier not separable from run-to-run spread
+  (median 31.64 ms on vs 30.80 / 30.84 ms before / off, n = 4).
+- Parked and carried forward unchanged: display curve and brightness,
+  anisotropy, the source's own mips, the remaster's unused cap draw as
+  content, water, the stride-36 pools, tunnel hue, terrain UV, lighting #48,
+  other stages, and the mark tool's truck / forward-Z issue.
+
+## B-XBLA the Dam water was absent - two draws in a 36-byte pool were dropped
+## (FIXED 2026-09-26, #68 - playtest pending)
+
+### What it measured to be
+
+At an engineering camera over the reservoir (not a playtest mark: teleport
+(6226.1, 413.6, -3387.4), theta 225.9, verta -28.95, room 72) 31% of the
+picture was the empty backdrop colour, owned by no replacement mesh. The
+reservoir is source draws `0x605c` and `0x6524` (19626 + 374 triangles, the
+only draws bound to the remaster's sine-wave water programs). `read_level`
+refused their pools because the 36-byte vertex has its position at +4, and
+the base-image rule would then have bound a shoreline photograph instead of
+the water surface. docs/world-assets.md "The water".
+
+### What ships
+
+`POOL_LAYOUTS` in `tools/worldasset/xblaworld.py` (the 36-byte layout from the
+item's own vertex program: position +4, coordinate +20, scale 128) and
+`translucent_base` in `prepare.py` (a translucent multi-slot draw takes the one
+slot whose image carries alpha). Preparation only; no engine change. Re-run
+`.\tools\windows\prepare-xbla-assets.ps1 -DamBackground` (the tool hash changed,
+so no `-Force` is needed).
+
+### Not done here
+
+- Acceptance of the water: pending a playtest.
+- The water is its base term only: no sphere-map reflection (7.4% of its
+  colour on the console), no coordinate offset from the offset map, no
+  sine-wave vertex displacement. No console picture of the reservoir was
+  captured; the reference is the console's register and constant state.
+- A far strip beyond the source mesh's edge stays empty (15681 pixels at the
+  engineering camera).
+- RELEASE-HYGIENE DEBT (before v0.3): several source comments and docstrings
+  narrate session history (who chose a divergence rather than what it is -
+  e.g. `tools/worldasset/zenith.py` lines 3-4). They should describe what the
+  code does. Not changed here.
+- Parked and carried forward unchanged: display curve, anisotropy, source mip
+  chain, unused cloud-cap content, tunnel per-dash hue, generic terrain UV
+  (`_uv_format`'s histogram scale for the other pools), lighting #48, the mark
+  tool's truck / forward-Z issue.
+
+## B-XBLA the Dam water stood still - the source animates its vertices
+## (FIXED 2026-09-27, #69 - playtest pending)
+
+### What it measured to be
+
+The remaster's water is two draws whose vertex program displaces every
+vertex along its normal by the sum of two travelling sine waves, driven by a
+time constant the game uploads every frame. Measured on the console over
+2935 consecutive gameplay frames: the only vertex-program register that
+moves besides the camera terms is that time, which advances by exactly one
+frame period (1/30 s) per rendered frame and keeps advancing behind the pause
+screen; no pixel-program constant moves at all, and the texture coordinates
+the program emits carry no time term. So the whole of the material's motion
+is the vertex displacement, and the base texture, its static offset-map warp
+and the reflection ride on the moving surface.
+
+The wave table (amplitude, phase, speed, two frequency rows) is uploaded by
+the item's own command list before each water draw (op 0x03, register 32,
+seven rows) and repeated in the program's default block (op 0x20), which
+also carries the evaluation constants (0.5, 0.98, 2 pi and the seventh-order
+sine polynomial the program uses in place of a sine). The wave coordinate is
+the 36-byte vertex's +0 pair, scaled by the program's own literal bank (the
+sixteen bytes in front of its microcode: (0, 1, 1/128, 0)), and it is
+bit-identical to the texture coordinate on every water vertex.
+
+### What ships
+
+`tools/worldasset/xblaworld.py` reads the per-vertex fields (`_pool_aux`),
+the program's literal bank (`wave_program_literal`) and the record
+(`wave_record`, cross-checking the upload against the default block), scoped
+to the program binding (op 0x2e). `slwa.py` writes SLWA version 2 - a
+12-byte per-vertex auxiliary section and a 128-byte record table - only when
+a bundle carries motion; a bundle with nothing to animate is still a
+version-1 file, byte for byte. `src/gfx/sl_gfx_worldasset.c` parses both
+versions and evaluates the record (`sl_wa_anim_displacement`, the shipped
+polynomial, not a library sine); `sl_gfx_dl.c` displaces the animated
+vertices in the item's model space before the level scale, on the game's own
+VI frame clock (`sl_wa_frame_clock`, `currentFrameCounter` over 60 - it runs
+through the pause like the source's, is deterministic under a replay and is
+never the wall clock). `SL_BG_ANIM=0` draws the bundle at rest. Re-run
+`.\tools\windows\prepare-xbla-assets.ps1 -DamBackground` (the tool hash
+changed, so no `-Force` is needed); the skydome regenerates byte-identical.
+
+### Not done here
+
+- Acceptance of the motion: pending a playtest.
+- The three static slots stay unreproduced: the 0.1 x offset-map warp of the
+  base coordinate, the 7.4% sphere-map reflection, the tangent-space normal
+  map. All measured static in time on the console; none is part of the
+  motion.
+- The console's water clock starts near zero when gameplay begins; the VI
+  frame counter here counts from boot, so the absolute phase differs. The
+  waves' shape, rate and direction are the item's.
+- No console picture of the reservoir was captured; the reference is the
+  program, its constants and their progression.
+
+## B-XBLA a Dam guard drew as the cartridge's under every presentation
+## (FIXED 2026-09-27 for the Dam's whole character set, #70 - playtest pending)
+
+### What it measured to be
+
+Not a texture defect. The gate-yard guard (`Cgreatguard2Z` body, `CheadleeZ`
+head) has 21 images; the #47 provider is asked for every one (each is
+registered by `texLoad`; no unregistered source, no shape miss). COMMUNITY HD
+carries one of them (`07a9`, applied) and none of the head's - correct
+per-texture fallback, and across the campaign's 248 character images the
+pack carries 2. The remaster carries the same character as whole model items
+(`char/greatguard2`, `head/headlee`: new meshes on two unwrapped atlases),
+which no per-image mapping can express. The first wrong stage was the
+missing character-asset seam: nothing under XBLA ever asked for a character
+model.
+
+### What ships
+
+The character-asset seam (`src/sl_chr_asset.h`, `src/native/sl_chr_asset.c`,
+the `chrRenderProp` / `modelRenderNode*` hooks behind `#ifndef __sgi`), SLWA
+version 4 (skinned CHAR / HEAD items), `sl_chr_derive` relating an item to the
+game skeleton by bone direction under a quarter turn and a common scale,
+the renderer's bridge draw under the character's own
+shade and stage fog, `tools/worldasset/xblachar.py` and
+`prepare-xbla-assets.ps1 -Characters`. See docs/world-assets.md, "Characters
+and heads (#70)". Per-tick trace unchanged; ORIGINAL and COMMUNITY HD
+byte-identical; `SL_CHR_ASSETS=0` byte-identical to before.
+
+### The neck (same day)
+
+A guard wearing a head with no item (`CheadrobinZ` on `Cgreatguard2Z`) drew
+the remastered body under the game's own head with no neck between them: the
+game's neck belongs to the game's body model, the remaster's to whichever
+head is drawn (the body's gated built-in head, or the head item's own), so
+that pairing had no neck owner. `sl_chr_compose` now holds a body item back
+whenever the separate head it is worn with has no item - the character draws
+as the game's - and `head/headrobin` was prepared for that guard. See
+docs/world-assets.md, "Who owns the neck".
+
+### The Dam's whole set (same day)
+
+The head a guard wears is the game's random choice at every stage load, so
+preparing heads by name left most guards drawn as the game's (a body item is
+held back under an unprepared head). `tools/worldasset/stagechars.py` now
+derives a stage's possible characters from the game's own tables - the
+setup's guard records, its AI spawns and clones, and the GLOBAL random-head
+pool they draw from - and `prepare-xbla-assets.ps1 -Level dam -Characters`
+prepares every one the source carries, reporting each part as prepared,
+current, source absent (the game's model stays) or refused with its reason.
+The Dam's set is 3 bodies and all 25 heads of `random_male_heads`; the source
+carries all 28, and all convert.
+
+Two preparation defects surfaced on the new items and were fixed at that
+stage: a head item may gate its whole neck and face (`head/headjoe`), and
+the body's built-in-head mark on those draws would have left it undrawn; and
+six items (`char/oliveguard` and five heads) scale their texture coordinates
+at 1/16384 rather than 1/32768, so they sampled a quarter of their atlases -
+the scale is now measured per item. See docs/world-assets.md, "A stage's
+character set" and "The format".
+
+Measured: eleven pinned seeds drew 158 characters, all 25 heads and 3 bodies,
+every one body and head REPLACED, no item "not provided"; three unpinned
+launches the same. ORIGINAL, COMMUNITY HD and `SL_CHR_ASSETS=0` byte-identical
+at the witnesses; per-tick trace unchanged.
+
+### Not done here
+
+- Acceptance: pending a playtest of an ordinary Dam run.
+- Every other stage's characters have no prepared item and draw as the
+  game's (`-Level <stage> -Characters` prepares a stage's set); so does a
+  prepared body worn under an unprepared head.
+- Bond's first-person view model (source `gun` items, `char/suitlfhand`) is a
+  different path; the #47 provider is asked for its images (`0702`, `0703`,
+  `0705`, `0706` missing in both sets; `0648` a 1x1 image drawn as a 16x1 tile)
+  - the next character sub-slice.
+- Blood and damage colouring and the fading path stay the game's model's;
+  the source's own character lighting is #48.
+
+## B-XBLA Bond's first-person weapon and external body were the cartridge's under XBLA
+## (FIXED 2026-09-27 for the Dam, #70 - playtest pending)
+
+### What it measured to be
+
+The first-person weapon is not a character: the game draws it from one
+weapon file per weapon (`GwppksilZ` on the Dam: gun, hand, finger, silencer,
+flash) through the view-model path, which no seam reached; the #47 provider
+was asked for its images and the sets carry none of them. The remaster
+carries the same unit as a `gun/` item bound to the game's own view-model
+skeleton and gated by the game's own switches. Bond's external body (the intro
+swirl) is a character, but built from private copies of his body and head
+files with no body or head number recorded on the player in this build, so
+the character seam never recognised it; the remaster's Bond body carries its
+own head and no head attach point.
+
+### What ships
+
+`src/native/sl_vm_asset.c` (the view-model seam around the view model's
+`subdraw`, behind `#ifndef __sgi`), the renderer's view-model bridge, SLWA
+class GUN (joint game part, draw switch conditions), `sl_vm_derive`; the
+player's body handed to the character seam by `solo_char_load`
+(`sl_chr_player_model`), the own-head mark (`SL_WA_MESH_OWN_HEAD`) and the
+game's fade carried for the player's body; `tools/worldasset/viewmodels.py`
+and `prepare-xbla-assets.ps1 -Player`. See docs/world-assets.md, "Bond (#70)".
+ORIGINAL and COMMUNITY HD byte-identical; `SL_BOND_ASSETS=0` byte-identical to
+before; per-tick trace unchanged.
+
+### Open
+
+The fist's and the bug's items are refused (the fist keeps its vertices
+outside its model data; the bug has no skeleton) and draw as the game's.
+
+The fist is now prepared (its first vertex buffer is named by the binding,
+not found by where it ends); the bug is not drawn in first person at all
+(`HIDE_FIRST_PERSON_HAND`). See the next entry.
+
+## B-XBLA the rest of the Dam's first-person weapons, the pairs, and its props were the cartridge's under XBLA
+## (FIXED 2026-09-27 for the Dam, #70 and #71 - playtest pending)
+
+### What it measured to be
+
+Only the starting pistol was prepared: the set came from the stage's loadout
+alone, and the item reader refused most of the others - a vertex buffer found
+by where it ends (it is named by the draw's vertex-program binding), texture
+coordinates read unsigned and measured by their largest value (they are
+signed, and a draw that tiles says nothing about the atlas edge), a bind
+rotation refused (it places nothing), plain untextured buffers, a translucent
+pass, a material whose texture is not its first image, and a weapon with no
+skeleton. Pairs needed nothing: each hand draws the same model file, mirrored
+by the game itself for a `MIRROR_DUAL` weapon. The Dam's props are static
+remaster items with nothing that places them but the source's own original
+generation of the same item.
+
+### What ships
+
+The first-person set derived from the game's tables (loadout, ALL GUNS,
+compiled weapon stats) and `-Level dam -ViewModels`; the reader contracts;
+translucent draws, reflection images and static view models; the costume
+rule; SLWA class PROP, `stageprops.py`, `-Level dam -Props` and the prop seam
+around the object render. See docs/world-assets.md, "Bond (#70)" and "The
+stage's rigid props (#71)". ORIGINAL and COMMUNITY HD byte-identical;
+`SL_BOND_ASSETS=0` / `SL_PROP_ASSETS=0` byte-identical to before; per-tick
+trace unchanged.
+
+### Open
+
+- THE WATCH HAND (`Csuit_lf_handZ`, drawn by `bondviewRenderWatch`, its cuffs
+  at `Switches[4..9]`): the source's `char/suitlfhand` carries five
+  alternative sleeves, ungated - no condition table, no gate record, and the
+  image ids referenced nowhere else - so nothing in the source says which
+  sleeve a costume wears. The watch laser's item carries the same five and is
+  refused at runtime for it. Measured 2026-09-28 in the remaster itself
+  (the Dam, watch raised): it selects NONE. One logged frame issues the
+  item's draws in item order with all five sleeve pairs among them, every
+  one opaque with depth writes, and the picture is the black tuxedo sleeve
+  pierced by the parka and ribbed-knit sleeves. There is no selector to
+  carry. A replacement either reproduces that, or picks one sleeve per
+  cuff (`Switches[4..9]`) by a mapping the source does not contain - a
+  design decision, not a derivation.
+  DONE 2026-09-28 (decision: one sleeve per costume, D-024): the mapping
+  is derived at preparation from the game's own cuffs (the ROM's model and
+  the source's original generation, tools/worldasset/watchhand.py) - boiler
+  -> ribbed, jungle -> rolled olive, snow -> parka; `SL_WATCH_SLEEVES=all`
+  draws the remaster's composite. STILL OPEN: the Brosnan-tuxedo and
+  blue-suit cuffs (their original-generation sleeve images are identical in
+  size, count and place, so the derivation cannot tell which is which) and
+  Connery's (no remastered sleeve is a white jacket) keep the game's whole
+  watch hand; pairing the remaining tuxedo and navy sleeves needs another
+  independent feature or a design decision.
+- The crates' graffiti (`prop/boxes2x4`, `metal_crate3`, `wood_sm_crate4`)
+  now carry the decal pass (FIXED 2026-09-28, #71). Their images are opaque
+  (DXT1, alpha 255) and draw as a black square; the cartridge's draw
+  transparent. Where the remaster takes their transparency from is not in
+  the item (its state records say ordinary source-alpha blending).
+  FIXED 2026-09-28 (#71): it is in the item's PIXEL PROGRAM - `boxes2x4`'s
+  decal programs take coverage from the image's blue channel, never its
+  alpha (SL_WA_MAT_COVERAGE_BLUE, docs/world-assets.md). `metal_crate3` and
+  `wood_sm_crate4` bind programs that use the image's alpha or none and were
+  already right. STILL OPEN, same program family, not changed: the level
+  item's own draws that bind it - by effect group the Dam background's
+  groups 6 (8 draws, DXT5 images, decal and translucent passes) and 12 (1
+  draw, the 512x64 opaque DXT1 road marking drawn at the level start) - go
+  through the background preparation, which does not yet map a draw to its
+  program; they draw with the image's alpha (the DXT5 images' own alpha,
+  and - inferred, not yet looked at - an opaque box for the road marking).
+  The prop census also leaves 55 of 317 items unmapped (programs shared
+  between effect groups); their draws keep the image's alpha.
+- The taser: its material records carry a three-entry block before their
+  image pair (header `0x00010003`) that the shared material reader frames as
+  one, and its draws are gated draws (op `0x30`) the character reader does
+  not read.
+- The weapon a character holds is drawn inside the character's own walk as
+  an attached model; the prop seam does not reach it.
+- The weapon shown on the watch's inventory page is the game's model.
+- The truck's windshield (`prop/miltruck`, #71): its material names a
+  light-flare environment image (slot 0) and a dark glass image (slot 1) of
+  one size; the base-image rule takes the flare and draws it by the vertex
+  coordinates. Which one the remaster's program uses as the base, and
+  whether the flare is a reflection laid over the glass, is not settled -
+  the draw's pixel program could not be placed in its pool.
+- The Dam's "void" over the reservoir (playtest mark over the dam walkway,
+  2026-09-28): MEASURED as distant geometry drawn and fully fogged, not
+  missing. With `SL_BG_FOG=0` a whole snow mountain range stands behind the
+  dam; under the remaster's row (id 33: fog end 15000 world units, colour
+  133 173 202) its pixels are the fog colour - the mark's centre pixel sits
+  at ~32000 world units (eye 6418 / visibility 0.2). The one reachable
+  console comparison (the level start, no in-level movement in the emulator
+  build) shows the far mountain behind the start yard washed to the same
+  degree. The hard-edged cloud patch overhead is the source dome's own band,
+  present with `SL_SKY_ZENITH=0`. The distance is the source's: every
+  background vertex program exports the fog vector as the position through
+  its modelview rows (c0..c2) and every pixel program fogs by
+  `sat(|v| * c_fog.x + c_fog.y)`; those rows were measured on the running
+  remaster at a uniform scale of 4.280089 (the level scale) with no
+  visibility factor, so the remaster compares its 15000 to the world
+  distance - GL eye distance / 0.2, as the renderer does. Handing it the eye
+  distance instead would show the range at 60-73% (measured by rendering it
+  so at the walkway mark) and is not the source. The original keeps the
+  range visible for a
+  different reason: its mountains are also nearly fog-coloured (16..42,
+  42..70, 81..113 against a fog of 16 48 96), but that navy stands apart from
+  its cloud sky, while the remaster's fog colour is its own horizon sky.
+  PARKED as a presentation choice, not a correctness defect.
+  DONE 2026-09-29 (D-025): Sightline presents this row (xbla, 33) with a
+  fog end of 30000 instead of the authored 15000 - colour, start and the
+  distance equation unchanged, every consumer of the row moved together,
+  the intro row 933 untouched. `SL_XBLA_AUTHENTIC_FOG=1` draws the authored
+  range. At the walkway the range is 11-39% out of the fog colour; 22500
+  left five of nine sampled mountain pixels at pure fog.
+
+## B-XBLA the Dam's replacement world lost the game's wall, window and light state
+## (FIXED 2026-09-29, #75 - replay pending)
+
+### What it measured to be
+
+Three independent causes, one per surface (run 20260929-151132-lvl33):
+
+- Walls at the eye (marks 2-5). Each leaking pixel's first surface is a
+  mesh-1 replacement wall triangle with a vertex behind the eye (clip w
+  -23.4 / 16.1 / 15.5 at mark 2), cut by GL's near plane. The original keeps
+  that population's in-front coverage at the near depth (B-100, ad772496).
+  `SL_DEPTH_CLAMP=1` closed all four leaks as a diagnostic.
+- Windows (marks 6-7). The pane is the game's `PROPDEF_TINTED_GLASS` prop
+  (portal 120, TintDist 200, CullDist 600: opacity 255 beyond 600, 0 within
+  200) under every presentation; the replacement has no surface there. The
+  #68 stage fog on objects measured distance from the render origin under the
+  view-folded projection, so in room 53 the pane was fogged by the room
+  origin's distance. XBLA window-centre luminance: 37.5-39.0 from 750 to 500,
+  22.4 at 450 (room 68), then ORIGINAL's curve; ORIGINAL 18.8 -> 35.2.
+- Tunnel lights (marks 8-9). `lightFixtureBreak` records the fixture in
+  `darkened_light_table`; the replacement fixture is static imagery. One shot
+  (synthetic trigger pull, mark-8 pose) turns the ORIGINAL fixture dark and
+  left the XBLA one lit.
+
+### What ships
+
+- Replacement pass: each depth-writing, non-decal mesh's eye-crossing
+  triangles draw again under `GL_DEPTH_CLAMP`, LESS behind a polygon offset -
+  only the near-cut coverage is added (`SL_BG_NEARKEEP=0` off).
+- `stage_fog_coord`: under the view-folded projection the eye is
+  (camera - render origin) x visibility (`sl_wa_fold_eye`).
+- `sl_wa_light_darkened` / `sl_wa_light_reach` (src/native, read-only) and
+  `sl_wa_light_mark`: replacement triangles wholly within the game's fixture
+  reach of a shot-out vertex draw with colour >> 2 (`SL_BG_LIGHTS=0` off).
+- ORIGINAL and COMMUNITY HD byte-identical at every mark; the per-tick trace
+  unchanged.
+
+### Open
+
+- A second fixture was not framed in the same run after a shot (the tunnel
+  bends; synthetic turns faced walls). Per-instance identity is shown by the
+  dimmed-triangle census (one fixture of 23 in the light mesh) and the
+  self-test, not by a picture.
+
+### Walls and props at the eye, second measurement (2026-09-29)
+
+Run 20260929-174319-lvl33 (XBLA, both marks). The window and light repairs
+were accepted. Two near-camera leaks remained:
+
+- mark-002, four units from the first round's mark-005: the leaking pixels'
+  first surface is the SAME mesh-1 wall triangle, now with all three
+  vertices in front of the eye (clip w 1.41 / 16.28 / 3.06) and two inside
+  znear. The first repair selected only eye-crossing triangles, so at this
+  pose nothing was selected and `SL_BG_NEARKEEP=0` changed nothing. The
+  mark-005 closure was a correct measurement of that one pose; the selector
+  was incomplete. ORIGINAL and COMMUNITY HD show their own, smaller sky wedge
+  at this pose - the cartridge-faithful near cut of the native wall.
+- mark-001: the metal crate is `prop/boxes2x4` (`Pboxes2x4Z`), drawn by the
+  rigid-prop seam, which had no near contract; its eye-crossing triangles
+  opened onto the next crate. The eye-crossing-only rule alone closes it.
+  `SL_PROP_ASSETS=0` (the game's crate) is closed at the same pose.
+
+One contract now covers both seams (`wa_near_fill`, `sl_wa_near_cut_select`):
+any part of a replacement triangle in front of the eye but inside znear is
+drawn at znear. A wooden crate (`prop/wood_sm_crate4`) with the camera at its
+face showed its inside for the same reason and closes too. ORIGINAL and
+COMMUNITY HD, the accepted window and light, fog, clouds, panorama, decals,
+truck, ladder and wall witnesses unchanged; per-tick trace unchanged.
+`SL_WA_NEARKEEP=0` all off, `=eye` the first rule, `SL_BG_NEARKEEP=0` the
+background alone.
+
+### Gate panel, security gate and wooden crates (2026-09-29)
+
+Run 20260929-183031-lvl33, marks 1-3 XBLA, mark 4 ORIGINAL.
+
+- Marks 1-2: the gate's multi-screen door panel (`Pdoorpanel`,
+  `PROPDEF_MULTI_MONITOR`) was the game's model under XBLA - the prop seam
+  took only single monitors. It now draws the remaster's `prop/doorpanel`,
+  its four screens kept the game's, and the replacement near-cut contract
+  closes its corner. Its near cut in ORIGINAL and COMMUNITY HD is the
+  cartridge's own and unchanged.
+- Mark 3: the yard gate (`Pdamgatedoor`, `PROPDEF_DOOR`) is the game's model in
+  every presentation; its wedge in XBLA is the same as ORIGINAL's. PARKED: the
+  gate carries `DOORFLAG_CLIP_TO_BBOX` - it opens by the game rewriting its
+  model's vertices (`doorBuildClippedVertices`) - so a rigid replacement item
+  would stay closed while the game's gate opens; the same holds for the
+  roller door and the gas-plant doors. Its item also needs a texture-scale
+  rule for draws that dip below zero. Needs a seam that reshapes the item as
+  the game reshapes the model (#71).
+- Mark 4 is an ORIGINAL mark: the wooden crate's wedge is the native near cut,
+  cartridge-faithful (B-100). At the same pose under XBLA the replacement
+  crate is closed. The replacement and native crate stacks coincide from a
+  distance; the earlier inside-a-crate pose (camera at z 10855) is inside the
+  native crate too - the native path back-face culls its inside, the
+  replacement draws both sides.
+
+## B-DAMTRUCK the Dam truck close-up shows a grey wedge and see-through grille
+## under ORIGINAL / COMMUNITY HD (FIXED 2026-09-30, #2 - replay pending)
+
+Run 20260929-151132-lvl33 mark-001 (ORIGINAL, eye 16785.0 60.2
+18265.2, the truck arriving from patrol path 7 at ~read 1040). This branch
+and master db232071, built in a scratch clone, are byte-identical at seven
+reads 1000-1120 in ORIGINAL and in COMMUNITY HD, so it is not a regression of
+the XBLA world-asset branch. `SL_DEPTH_CLAMP=1` changes nothing,
+`SL_NEARSAT=0` and `SL_CULL=0` leave the wedge: not GL's near cut, not the
+B-100 near guard, not back-face culling. Texture alpha, model content and
+draw order remain unmeasured. Parked until the XBLA parity objective closes.
+
+### What it measured to be (2026-09-30, run 20260930-102530-lvl33 marks 1-2)
+
+- **The grey wedge is the B-125/B-126 redraw path.** At the mark
+  (teleport, `SL_VI_CATCHUP=0`, read 1060, the truck parked in frame)
+  `SL_Z_REDRAW=0` changes 7754 pixels, all inside the wedge's box, and
+  nothing else in the frame. The wedge is `PmiltruckZ`'s door-jamb quad at
+  x = -1118 (body list, texture 64x32), whose G_VTX load re-loads four
+  positions the perpendicular jamb faces (z = 1902, z = 2715, y = -110) had
+  already drawn. So the load is flagged as a redraw; two of the quad's edges
+  are drawn edges, and they share an opposite vertex - (-1245, -110, 2715),
+  on the PERPENDICULAR face. `rd_classify` read that box corner as a
+  re-triangulated quad, and its "tent difference" was the depth gap between
+  two faces: the inner face won its colour test over the nearer cab front
+  (eye 12..30 against 38..56) and drew through it.
+- **The "see-through grille" is the truck's own headlight.** The rectangle
+  between the two green bars is the translucent headlight quad (texture 0x029c,
+  CI8 over a 5551 palette, 32x32). The decoded image is a round lamp whose alpha
+  is 0 only outside the disc. The quad samples texels s 5.9..22.6,
+  t 8.4..23.1, all of them opaque. Hiding the room list drawn after it
+  (`SL_WR_HIDE=132:2`) changes no pixel there. This is the cartridge's own
+  artwork, drawn as authored, and it is unchanged.
+
+### What ships
+
+- `rd_classify` (`src/gfx/sl_gfx_dl.c`) accepts the fourth vertex only when
+  the four positions are ONE quad: the diagonals p-r and q-s cross, with the
+  closest approach inside both segments and a gap of at most a quarter of the
+  shorter diagonal (`sl_wa_redraw_quad_ok`, `src/gfx/sl_gfx_worldasset.c`,
+  with synthetic tests). A box corner fails it and draws plainly, which is
+  exactly the rendering before B-125. The mark record counts these draws on
+  the redraw-triangles line. Nothing names a model, level or texture.
+- Measured in ORIGINAL and COMMUNITY HD:
+  - At the mark, reads 1000..1120: every changed pixel is inside the wedge's
+    box, and read 1060 equals `SL_Z_REDRAW=0` byte for byte.
+  - Two more truck angles and the earlier truck mark (damtruck mark 4): the
+    wedge is gone.
+  - Same defect class elsewhere: decal mark 3 (a farther wooden crate's face
+    drawn as a diagonal wedge over the nearer crate, 3765 px, gone) and
+    Facility at read 62 (15 px on one edge column).
+  - Byte-identical in all three presentations: the Surface dome witnesses
+    (the skins B-125 and B-127 were built for) and every other Dam witness.
+  - XBLA: the truck is the remaster's item and its frames are unchanged.
+
+## B-DAMCHAIN the Dam's chain-link doors keep the cartridge's artwork under XBLA
+## (ARTWORK FIXED 2026-09-30 through the texture set; full-model parity PARKED, #71)
+
+Under XBLA the chain-link panels with a metal frame (marks 3 and 4 of
+run 20260930-102530-lvl33) are `Pdamchaindoor`, drawn from the game's own
+model with the cartridge's textures. The XBLA texture set has neither 0x0105
+nor 0x02fa. COMMUNITY HD replaces 0x0105 only. The static fences elsewhere
+are the remaster's, drawn by the replacement world. Two steps remain; see
+"The chain-link fences and doors" in `docs/world-assets.md`:
+
+- the item's texture scale, which is the draw's texture matrix (undecoded);
+- a rigid-door intake at the door's live matrix.
+
+The padlock (propdef 285) keeps its item. In mark 4 of that run it is no
+longer drawn after being shot, at the pose where a fresh boot draws it.
+
+### The artwork, without the model (2026-09-30)
+
+The doors keep the game's own model, transforms, state, collision and
+padlock. The XBLA texture set now carries both of its textures, prepared
+from `prop/damchaindoor` into the native tiles. See "Native-domain entries"
+in `docs/texture-packs.md` for the measurement behind each number.
+
+- **Chain field, 0x0105.** The remaster chain tile, flipped vertically.
+  - The chain quad's coordinates are the native tile's own at 1/1024.
+  - Its alpha correlates 0.991 with the ROM image's.
+- **Frame, 0x02fa.** The remaster's riveted bar, resampled across the native
+  band and along one native repeat, levelled to the ROM image's brightness.
+
+This is D-020's contract - a set's image sampled over the same logical tile.
+It is the same kind of row as the mapping's other remaster `prop` images, so
+no new divergence entry. The id is global:
+
+- 0x0105 is tile-exact wherever it is drawn (Facility, Runway and Surface 2
+  rooms).
+- 0x02fa mirrors past the door's band for the cars and rooms that draw it.
+
+COMMUNITY HD keeps its 0x0105. The Community pack has no file for 0x02fa: its
+checksum 019C58C3 is absent, by the method that reproduces community.json's
+checksums, so 0x02fa stays the cartridge's. ORIGINAL is unchanged.
+
+Measured:
+
+- Closed, sliding (the padlocked pair after the padlock is shot) and swinging
+  (294/295): the artwork rides the doors.
+- Live presentation switches during the slide leave every frame equal to the
+  unswitched run.
+- ORIGINAL and COMMUNITY HD are byte-identical at every witness.
+
+Still parked, for full-model parity only: the remaster item's texture matrix
+and a rigid-door intake.
+
+## B-DAMGATE the Dam's yard gate did not follow the game's door outside ORIGINAL,
+## and opened a wedge at the eye in every presentation (FIXED 2026-09-30, #71 / #75, D-027)
+
+### What it measured to be
+
+- The yard gate (`Pdamgatedoor`, setup doors 267 / 268 / 281) is a sliding
+  door with `DOORFLAG_CLIP_TO_BBOX`: the game shrinks its MODEL-space box by
+  `openPosition` (0 .. 0.95), the box under the moved matrix is its collision,
+  and `doorBuildClippedVertices` clamps the model to the box's moving face.
+  Drawn door and collision are one half-space at every tick. A rigid
+  replacement cannot follow it, which is why the gate was parked.
+- The remaster's `prop/damgatedoor` was refused by the preparation: its one
+  draw samples a wrapping 512x512 image on quarters of 16384 with a lip below
+  zero (-1219, -62), and the texture-coordinate rule counted only draws that
+  stay inside zero.
+- Playtest mark m3 (the eye 30 units from gate B's face): a gate triangle wholly
+  in front of the eye is cut at the near plane (B-100, the cartridge's cut),
+  so the jamb and the sky show through a wedge - ORIGINAL, COMMUNITY HD and
+  XBLA alike, the gate being the game's model in all three.
+
+### What ships
+
+- THE DYNAMIC DOOR (`src/sl_chr_asset.h`): every such door is drawn at the
+  game's live box. Without an item the game's own lists draw between two
+  `SL_DOOR_DL_W0` markers and keep their near-cut coverage at the near depth;
+  with an item (`prop/damgatedoor`, `prop/door_rollertrain`,
+  `prop/gas_plant_met1_do1`) the item is cut at the box every frame
+  (`sl_door_cut_mesh`). `SL_DYNDOOR=0` is the cartridge's rendering.
+- The wrapped-lip texture-coordinate rule (`xblachar.texcoord_scale`), used
+  only when the inside-zero rule finds nothing: the gate reads at 1/16384.
+- The stage inventory takes CLIP_TO_BBOX sliding / vertical doors.
+  `prepare-xbla-assets.ps1 -Level dam -Props` adds three door bundles; every
+  other bundle byte-identical.
+
+### Open
+
+- The other Dam doors stay the game's: the chain-link doors (swinging, or
+  sliding without the clip; their item's draws tile past a whole repeat and
+  are still refused) and the tunnel door (vertical, no clip). A rigid door
+  that only moves under its matrix would ride it as a prop does; not taken
+  here.
+- COMMUNITY HD has no image for the roller door's 0x026a (ORIGINAL's
+  decode draws), by the provider's own fallback.
+- The contract takes every such door on every level: Facility's security
+  doors are the gas-plant door model, so under XBLA they draw that item
+  too (measured at one Facility door; ORIGINAL there unchanged). Their
+  opening was measured on the Dam's instances only.
+
+## B-DAMPANEL the Dam gate panel's screen showed grey at range under XBLA
+## (FIXED 2026-09-30, #71)
+
+Run 20260930-211359-lvl33, marks 1 and 2. Mark 1 is about 190 eye units from
+the panel beside gate A: the screen was grey. Mark 2 is close: the screen was
+red.
+
+The mark record proves the game's red screen was submitted at mark 1. The
+depth stored over it was about 480 steps nearer, and the grey matched the
+panel item's own screen texel exactly. The item bridge had inherited the
+polygon offset of the decal drawn just before it: a bullet impact on the
+gate.
+
+Fixed at the bridge, which now enters with no depth offset (see "Monitors,
+screens, and what is not taken" in `docs/world-assets.md`). Reproduced with
+two synthetic shots into the gate. With the fix the screen keeps its colour
+at every range and in every state; ORIGINAL and COMMUNITY HD are unchanged.
+
+### Open
+
+- The item's own screen surface stays 0.12 model units behind the game's
+  screens: a few depth steps at the farthest range ORIGINAL draws the panel.
+  No measured frame loses the screen to it. Not changed here.
+
+## B-WATCHGUN the watch's weapon pages showed the cartridge's weapon under XBLA
+## (FIXED 2026-09-30, #70)
+
+The mission page and the equipment page drew the game's `G<item>Z` model
+while the hand held the remaster's. The watch draws the same first-person
+model file through its own render (gunfire.c
+`set_enviro_fog_for_items_in_solo_watch_menu`), which the view-model seam
+never saw. It now does: `sl_vm_menu_begin`, the same item and map, with the
+watch's look. See "The weapon on the watch" in `docs/world-assets.md`.
+
+### Open
+
+- On the equipment page the translucent weapon blends its nearest surface
+  only; the cartridge blends every face, Z buffer off.
+- Weapons of other stages, and the watch's gadgets without a bundle
+  (the magnet, the taser, the watch laser's own model), are not measured.
+
+## B-FACDOOR Facility's gas-plant doors drew two ways under XBLA
+## (FIXED 2026-10-01, #71)
+
+Facility uses one door model, `Pgas_plant_met1_do1Z`, for fifteen sliding
+doors. Twelve carry `DOORFLAG_CLIP_TO_BBOX`; three do not (setup pads 93,
+113 and 116, the decoder-locked doors into the labs). Under XBLA the twelve
+drew the remaster's item and the three drew the cartridge's door, so the
+same door changed its look from one corridor to the next.
+
+The dynamic door (D-027) took only the clipped doors. For any other door the
+seam returned before it looked for an item. A sliding or vertical door
+without the flag is never reshaped: the game moves the whole model under its
+matrix. Its item now rides that matrix whole, as a rigid prop's item does
+(THE RIGID DOOR in `src/sl_chr_asset.h`). Without an item the game's lists
+draw as before.
+
+Measured with teleport only, seed pinned, over 150 poses (two headings in
+each of 75 rooms): ORIGINAL and COMMUNITY HD are byte-identical to the build
+before at every pose. Under XBLA, 140 poses are identical; the ten that
+differ show those three doors, now drawn from the item. With the lock lifted
+in a scratch build, door 93 opens and the item slides with the game's door
+frame for frame. Every Dam door with an item carries the flag, so the Dam
+does not change.
+
+### Open
+
+- Swinging doors: FIXED 2026-10-01 (#77). A swinging door without
+  `DOORFLAG_CLIP_TO_BBOX` is turned whole under its matrix, so its item rides
+  it like the rigid sliding doors: Facility's 18 swing doors, 9 toilet
+  cubicle doors and 4 glazed lab doors. The per-tick trace of a door opened
+  and walked through is identical under ORIGINAL and XBLA, and the item's
+  edge follows the game's frame by frame. XBLA changes at 11 of the 30 replay
+  marks; ORIGINAL and COMMUNITY HD are byte-identical.
+- Aztec's one `door_rollertrain` door is not measured.
+
+## B-FACXTEX Facility's walls, duct and signs stayed ORIGINAL under XBLA
+## (FIXED 2026-10-01 for the textures that tile exactly and the re-tiled walls; 2026-10-02 the bent floor, #77)
+
+Under XBLA most of Facility's surfaces still drew the ROM's artwork: the air
+duct, the bathroom and second-floor walls, the bulletin board, the stairs and
+the biohazard sign. The source has remastered art for all of them. The
+texture set did not map their ids, because the pixel stage that builds the
+mapping could not pair art the remaster had redrawn. In several cases it had
+paired the remastered image with the wrong id.
+
+Facility's remastered background and its original one describe the same
+rooms. 12040 of the remaster's 19603 triangles sit at exactly the positions of
+an original triangle, so the level pairs its own textures. A rule applied to
+every such pair (see "Pairing by geometry" in docs/texture-packs.md) added 17
+ids: 00a0 0101 0118 011a 0123 029f 02a0 02a1 02a6 02b8 02be 02bf 02c2 0492
+05d0 05d2 05d6. Each of these tiles exactly as the native texture does. The
+geometry also returns every one of the 13 Facility ids the table already
+mapped, with the same images.
+
+Measured at all 30 marks of a Facility XBLA replay, teleport only, seed
+pinned, the 129 existing pack files byte-identical:
+
+- ORIGINAL 30 of 30 byte-identical;
+- XBLA changes at 27 of 30, every change being one of the 17 ids;
+- COMMUNITY HD unchanged by construction (its pack is untouched).
+
+Under XBLA the lamp pools on Facility's walls were already the remaster's art
+(0125) and the wall around them was not (0123). That is why a wall looked
+correct only where a light falls on it.
+
+**The re-tiled walls (FIXED 2026-10-01).** The biggest walls (02cf 02ce 02d1
+02d3 00b5 0137) pair by geometry at a coordinate ratio of about 0.2, 0.37,
+1 or 2.05. Measured exactly per shared triangle, each has one dominant scale;
+the remastered image holds its own grid of repeat cells (5 x 5 tiles, three
+brick blocks, 2 x 2 floor tiles, or one seamless image). A native repeat now
+holds the whole number of cells nearest to the measured scale, resampled into
+the native tile (`nativeuv.retile`, "Re-tiled pairs" in texture-packs.md);
+the drawn artwork differs from the remaster's size by -11.6% to +0.9%. The
+table grows 146 -> 152. Measured at all 30 replay marks, teleport only, seed
+pinned, same binary, pack before and after: ORIGINAL and COMMUNITY HD 30 of 30
+byte-identical, XBLA changes at 25. On the native geometry the floor's
+coordinates carry no seam at its half-repeat tile period (0 of 453 shared
+edges), and close and oblique views at five marks show the tile, brick and
+grout continuous.
+
+**The floor beyond the lockers (FIXED 2026-10-01).** `02b9` pairs with the
+same remastered floor image, identity at phase zero on the dominant third of
+its 90 shared triangles; direct entry, table 152 -> 153.
+
+**The catwalk grating (FIXED 2026-10-01).** The catwalk above the last tank
+room is `02c0`. The cartridge also has `02bf`, the same artwork 17% darker,
+which no background room stream draws. The remaster draws its gratings with
+one image, and the pixel stage named that image `02bf` by 0.0004 of
+correlation, so the geometry rule mapped the grating under the wrong twin.
+On the catwalk the original generation carries the native texture
+coordinates exactly, and the remastered generation draws the same image at
+the same coordinates. Direct entry `02c0`, table 153 -> 154 ("The catwalk
+grating" in docs/texture-packs.md).
+
+**The floor's bent tile lines (FIXED 2026-10-02).** Under XBLA the floor's
+grout lines kinked at triangle edges: in the corridor by the first stairs
+(`02b9`), in the labs and on the floor beyond the tiled pillars (`0137`).
+The cartridge's own texture coordinates change scale and direction from one
+triangle to the next there; its noise tile hid that, and the remaster's tiled
+floor drawn through them showed every bend. The remaster draws the same
+surfaces with coordinates that do not bend, so the XBLA set now carries them:
+`prepare-textures.ps1 -Xbla` derives, from the user's ROM and the remastered
+background, the remaster's coordinates for each native room triangle of a
+direct entry, and the renderer draws a carried triangle with them ("Carried
+coordinates" in texture-packs.md). The rule takes an id only when its
+cartridge coordinates bend and the carried ones do not: on Facility `0137`
+(49 bent edges -> 7) and `02b9` (30 -> 0), 416 triangles; every other id
+keeps its coordinates. Measured, teleport only, seed pinned, the pack's 154
+images byte-identical: the three replay marks where the lines bent are straight under XBLA,
+the two control marks unchanged; across the 42 replay marks ORIGINAL and
+COMMUNITY HD are byte-identical, and XBLA changes only on those floors and on
+the newly prepared characters.
+
+**The floor laid in plates (FIXED 2026-10-02).** With the carried
+coordinates the floor's grout lines no longer bent, but at the replay marks
+in the corridor by the labs, on the floor beside the lab windows and on the
+stairs down from it the tiles read as plates laid over one another. With
+`SL_TEX_UVCARRY=0` the same frames show continuous, bent lines, so the
+plates came from the table. At one of those marks 36 of the 37 floor
+triangles drawn took a row; the 37th drew the cartridge's coordinates,
+(0.60, 0.36) of a repeat off its carried neighbours. It had no row because
+the derivation found no remastered surface under it, and the remaster does
+have one there, at the same three positions. The derivation read the
+remaster's triangles wrong: the reader returns every draw already expanded
+into a flat triangle list, and the derivation expanded Facility's 67 quad
+lists and 13 fans a second time - 19603 triangles where the item has 13913,
+13708 of them not the remaster's and 8200 of its own missing. Taken as
+read, `0137` carries 371 triangles with none uncovered and no bent edge
+left, `02b9` 52; the table grows 416 -> 423 rows, and the steps in the
+pattern over every edge the floor triangles share fall 14 -> 2 (both on
+`02b9` at a seam in the remaster's own map). Measured at the replay marks,
+teleport only, seed pinned, the 154 images byte-identical: the floor beside
+the lab windows, in the corridor and on the stairs reads as one continuous
+tiling under XBLA; ORIGINAL and COMMUNITY HD are byte-identical
+("Carried coordinates" in docs/texture-packs.md).
+
+**What the double read also said (CORRECTED 2026-10-02).** The blocker
+numbers below for the tanks and the conveyor, and the "46.5% of the
+remastered area has no native surface under it", were measured on that
+corrupted triangle set. Re-measured on the item's own triangles the
+remastered area with no coplanar native surface is 0.1%, the tank rooms
+(16, 17, 25, 33) and the conveyor rooms (66, 68, 70) 0.0-0.3% either way,
+and every opaque remastered surface lies within 20 world units of a native
+one. The remaster did not re-model the tanks or the conveyor: it drew the
+same surfaces re-tessellated and re-mapped, the tanks under two materials.
+
+### Open
+
+- The tank room's tanks and pipes (`02bd`, a flat tile under vertex colour)
+  are left as the cartridge draws them by the texture set: the remaster draws
+  those surfaces under two different images (`0101`'s and the painted
+  metal), and one id takes one image. (The "53% with no remastered surface in
+  its plane" first given here was the corrupted triangle set's - see above.)
+  Facility's whole background drawn from the remaster draws them as the
+  remaster does: B-FACXBG.
+- The conveyor in the last tank room stays the cartridge's under the texture
+  set: rails and legs (`0393`), belt (`02a5`) and exit frame (`0134`) are
+  ROOM geometry of rooms 66 and 70, not a prop. The coverage figures first
+  given here (36% / 40% / 9.5%, and "46.5% of the remastered area has no
+  native surface") were the corrupted triangle set's; the conveyor is the
+  same surfaces re-mapped. The whole background draws it as the remaster
+  does: B-FACXBG.
+- The remaster varies the grime from tile to tile across its 5 x 5 image;
+  one cell repeats here. 00b5 is drawn at a second scale (0.53) in about 45%
+  of its shared area and 0137 rotated in about a third; only the dominant
+  relation is reproduced.
+- Facility's props: see B-FACPROP.
+- Not redrawn by the remaster, so nothing to pair: the bulletin-board
+  papers, the lab window frames (0393, 02c4), a small plate (0493) and a vent
+  grille (00f0) - see "What Facility's remaster did not redraw" in
+  texture-packs.md.
+- Not a defect: the lab biohazard sign that seemed to vanish leaves the left
+  edge of the frame; its visible pixels track its projected area at every
+  step between the two cameras, in ORIGINAL as in XBLA.
+- The ids are shared: 0101 0123 011a 0492 05d0 05d6 also draw on other levels,
+  which now show Facility's remaster of the same tile under XBLA.
+
+## B-FACXBG Facility's whole background from the remaster
+## (DEFAULT under XBLA 2026-10-02, #77)
+
+Facility's tanks, conveyor, floor and walls draw the remaster's own static
+background under XBLA, through the Dam's replacement path:
+`prepare-xbla-assets.ps1 -Level facility -Background` prepares
+`background/facility`, the room background emission is withheld, and rooms,
+portals, collision, guards and props stay the game's. It was a preview
+behind `SL_WA_PREVIEW=1`; it is the default now, and `SL_WA_PREVIEW=0`
+keeps the texture set's look on the game's rooms (B-FACXTEX)
+("Facility's background" in docs/world-assets.md).
+
+- **The item's scale.** The source authors every stage background at the
+  room coordinates times 100 / the stage's last `levelinfotable` column;
+  the Dam's is 100, so its item reads at the room coordinates. Measured by
+  least squares on Facility (1.560002 for 1.560000), the Bunker, Silo,
+  Archives, the Frigate and the Cradle. `sl_wa_source_scale` reads it; the
+  Dam's factor is exactly 1.0 and its picture does not move.
+- **Registration and cost.** At ten replay marks the remaster's walls,
+  tanks and conveyor coincide with the game's. The whole item (13913
+  triangles) costs less than the room path it withholds: 8.7 ms a frame
+  against 12.8 at the lab-window mark (`SL_PHASE`, 449 frames).
+- **Drawn whole, not per room.** Every opaque remastered surface lies within
+  20 world units of one of the game's, and the depth buffer resolves what
+  the portals would. Before the backdrop rule below, the game's flat
+  backdrop showed at one of the ten marks (the exit tunnel, 5025 pixels)
+  and at most one pixel at the others.
+- **The backdrop.** A stage with no sky fills the view with its environment
+  colour under the rooms (sky.c); the remaster clears to black. Under the
+  replacement the view is cleared to black, so the conveyor's exit tunnel,
+  which the remaster leaves open, is black as on the cartridge rather than
+  green.
+
+### Closed before the default
+
+- **The floor stripe under the floor.** The remaster tests LESS in its own
+  order, so of two of its surfaces in one plane the first drawn shows. The
+  triangles that lie exactly on an earlier surface of the item now draw
+  LESS (`sl_wa_coplanar_yield`: 44 on Facility, 34 on the Dam); the stripe
+  shows on the floor and the Dam's 27 witness frames are byte-identical.
+- **The glazed lab doors' glass** drew the environment image as its colour;
+  a translucent prop's colour is now the image carrying its coverage.
+- **Room 14** is the vent shaft beside the starting duct; the cartridge runs
+  it 900 units below the bathroom ceiling, the remaster ends it there. Not
+  a gap in the item.
+- **The toxic gas** fogs the replacement and the props in front of it as it
+  fogs the rooms: the remaster's two rows (34 and the gas row 134, whose
+  range and colour are the cartridge's) blended by the game's own fraction.
+  A fixed-pipeline object draw - the destroyed tank - takes the row's fog
+  too instead of none.
+- **Lights.** No Facility triangle carries a light image the game breaks
+  when shot; there is nothing to shoot out.
+- **The door frame's hazard stripes (FIXED 2026-10-02).** The security
+  door frame into the last tank room drew plain concrete: its front face is
+  a 20-vertex pool whose values pile up on no coordinate scale, so the
+  reader refused it. Such a pool now takes the scale the item's other pools
+  agree on ("The door frames' hazard stripes" in docs/world-assets.md);
+  the Dam's bundle regenerates byte-identical.
+- **Two sides of one wall (FIXED 2026-10-02).** At the bathroom corner a
+  strip of the stairwell's wall striped through the tiles, the bathroom's
+  tiles showed through the stairwell's wall below it, and a doorframe edge
+  striped. Both walls of each place lie in one plane, back to back, and the
+  item is drawn with culling off; the order rule gave the pixels to the
+  mesh listed first. Of two such surfaces the one facing the eye now shows
+  (`sl_wa_coplanar_opposed`, "Two sides of one wall" in
+  docs/world-assets.md); the Dam's 27 witness frames are byte-identical.
+
+- **A destroyed tank vanishes when the player looks away - FIXED (a native
+  byte-order defect, not the cartridge's).** `vtxstore_allocate` read its
+  block limit through a halfword pun (`((s16 *)&count)[1]`), the low half
+  on the big-endian cartridge and zero on a little-endian host, so a
+  destroyed tank's 102-vertex crumpled copy took the whole 1500-vertex
+  store and `vtxstore_tick` freed the tank once it left the view; a second
+  tank found no block and was drawn shrunk instead of crumpled. The limit
+  is read by value natively ("The destroyed tank" in docs/world-assets.md).
+  The tank's spot stays unwalkable either way: its footprint is a hole in
+  the level's floor tiles, measured. The B-029 sweep had listed the pun as
+  in bounds, which it is; its byte order was the defect.
+- **The windows look tinted where the glazed doors do not (the cartridge's;
+  not changed).** The windows are the game's own tinted-glass panes
+  (`PROPDEF_TINTED_GLASS`): `glassCalculateOpacity` takes each from its
+  near opacity to fully opaque between its TintDist and CullDist (350 - 400
+  and 550 - 700 units on Facility), and the portal behind closes. The lab
+  doors' glazing is the remaster's door item, a constant tint at 47%
+  opacity. The remaster's own window item carries the same tint as its
+  door; how the remaster draws Facility's tinted panes with it was not
+  measured.
+- **The Dam's prop set regenerated wider than accepted (FIXED 2026-10-02).**
+  Since the rigid-door intake and the hat seam, `-Level dam -Props` also
+  prepared `prop/damtundoor` and `prop/hatpeaked`, which the accepted Dam
+  never had. The Dam now holds them back
+  (`data/overrides/dam/props-held.txt`, "A stage's accepted set" in
+  docs/world-assets.md); its regeneration reproduces the accepted 19
+  bundles byte-identical.
+
+### Open
+
+- **Collision.** The game's surfaces with no remastered surface within 25
+  world units are 0.4% of the level: room 14 (above), and 1.1-1.4% of rooms
+  66, 67 and 68 (up to 53 units). Measured on the room geometry, which the
+  game collides with; nothing about collision changes.
+- The verta of a teleported capture returns to -4 within a few frames
+  (look-ahead centring); the marks were captured at read 80.
+- The Dam's own coincident triangles draw LESS too; none is visible at its
+  witness frames, and they were not looked at elsewhere.
+
+## B-FACPROP Facility's props drew the cartridge's models under XBLA
+## (FIXED 2026-10-01, #77)
+
+Under XBLA Facility's boxes, consoles, lockers, lab benches, door consoles,
+gas barrels and bottling tanks drew the cartridge's models although the
+source carries a remastered item for each. Only the Dam's prop set had been
+prepared; the preparation reads any level's setup.
+
+`prepare-xbla-assets.ps1 -Level facility -Props` now prepares 13 of the
+14 standard, monitor and gas-prop models. The bottling tanks and gas
+barrels are gas props (setup type 36), drawn by the object render as
+one-piece models, so the prop seam takes them as it takes a standard prop;
+the vent, the damage and the destruction stay the game's. The lockers'
+item reads at 1/16384 once the wrapped-lip rule accepts a draw starting
+exactly one repeat below zero. Glass is not taken.
+
+Measured at the 30 replay marks, teleport only, seed pinned:
+
+- The new build with no Facility bundle is byte-identical to the old one at
+  all 30.
+- With the props prepared, 8 marks change. With `SL_PROP_ASSETS=0` those 8
+  are byte-identical to the old build with the same switch, so every
+  change is the seam's.
+- ORIGINAL and COMMUNITY HD are byte-identical.
+
+### Open
+
+- `prop/tvscreen`: the remaster's bundle holds no model and no image in
+  either generation (an empty rendergraph), so the four TV screens stay the
+  game's and there is nothing to pair through the texture set.
+- **The lab glassware (FIXED 2026-10-02, but `glassware2`).** Glass
+  (`PROPDEF_GLASS`) is taken as a one-piece prop; a pane - the Dam's
+  breakable windows, one quad - is refused by the preparation, so no stage
+  can prepare `prop/window` and the Dam does not change. A draw on a flat
+  tint no longer decides the coordinate scale ("The lab glassware" in
+  docs/world-assets.md): `glassware1`, `glassware3` and `glassware4` are
+  prepared. `glassware2` stays the cartridge's: both its images are
+  environment images whose coordinates its program generates. The contract
+  is read (2026-10-02, "The lab glassware" in docs/world-assets.md): no
+  stored coordinate, a view-space sphere map of the vertex normal in both
+  pixel programs, the glass's alpha the inverted blue of the sample. Open:
+  carrying normals in prop bundles and a generated-coordinate material
+  class.
+- **The remaster's windows and glass doors on Facility - not observed.** The
+  private emulator has no input of its own (its input drivers read a
+  physical pad or the focused window's keyboard), and reaching a window or
+  a glazed door means a long route through the level from the vent; neither
+  a scripted route nor a position write into the remaster's player was
+  built. The port draws the windows as the game's own panes and the glazed
+  doors with the remaster's tint (alpha 119).
+- **The console's screen crossed its bezel (FIXED 2026-10-02).** The game's
+  screen quad on `prop/console_sev2b` is a different rectangle from the
+  item's own screen surface (a quad laying the whole image on the monitor
+  face); it is now drawn on that rectangle, in its own plane (THE SCREEN'S
+  PLACE in docs/world-assets.md). `SL_PROP_SCREEN_PLACE=0` is the control.
+- **The rack's tubes vanished (FIXED 2026-10-02).** An item's glass was
+  blended inside the game's solid walk, writing no depth, and the lab bench
+  item drawn after it in the same walk painted over the rack's tubes. A
+  prop item's translucent draws now draw in the game's translucent walk
+  (THE PROP'S TWO PASSES in docs/world-assets.md); `SL_PROP_TWOPASS=0` is the
+  control.
+- **The glazed door (FIXED 2026-10-02).** `prop/gasplant_clear_door` drew its
+  environment sphere image as the pane's colour (black with highlights); a
+  translucent prop's colour is now the image that carries its coverage
+  (`xblachar.coverage_base`, "Glass" in docs/world-assets.md).
+
+## B-FACHAT Facility's guards' hats and the body-armour pickup were the cartridge's under XBLA
+## (FIXED 2026-10-01, #77)
+
+The guards' cloth side caps and helmets, and the vest lying on a crate, drew
+the cartridge's models under XBLA. The source has remastered items for all
+three. They were out of reach for two reasons. A worn hat is drawn inside its
+character's walk, not by the object render the prop seam brackets. And armour
+lying in the level was a kind the prop seam did not take.
+
+- Armour (setup type 21) is now taken by the prop seam like a standard prop.
+- A worn hat is taken by the character seam, riding the hat model's own
+  matrix (THE WORN HAT in `docs/world-assets.md`).
+- Two readers each took one rule. A model with no GROUP is rooted on its
+  GROUPSIMPLE. An item skinned to a single joint of a skeleton is one rigid
+  piece.
+
+Measured at the 30 replay marks, teleport only, seed pinned: the hats and the
+vest change XBLA at 8 marks (the guards' side caps at 4, 5, 14, 16, 17, 24
+and 27, the vest at 15). ORIGINAL and COMMUNITY HD are byte-identical at all
+30 with all of these changes in the build, and the Dam's 27 witnesses, in all
+three presentations, are byte-identical to the build before.
+
+**The cap that sat wrong on some heads (FIXED 2026-10-01).** Riding the hat
+model's matrix kept the hat table's per-head entry, which was fitted to the
+cartridge's heads. On the remaster's heads it sank the side cap into the
+hair of `graham`, `joe`, `joe2` and `pete` and lifted it off others. The
+remaster's own hat code applies that entry only while one of its settings is
+on, and its hat and head items fit without it. A hat item on a head item now
+takes the entry back and rests on that head: it rises only as far as the
+head's top surface needs to stay under it (98th percentile of the cap's
+footprint, derived from the two items). Rests measured for the side cap:
+`neil` 24.5, `mark` 15.25, `steveh` 8.0, the others 0; for the helmet:
+`neil` 25.25. Shown on `graham`, `robin`, `steveh`, `neil` (three views),
+`mark`, `joe2` and `dwayne`, and on Jungle's helmets. On the cartridge's own
+head the item keeps the entry. ORIGINAL and COMMUNITY HD are byte-identical
+at the 30 earlier replay marks and the 5 new ones, and the Dam's 27
+witnesses are byte-identical in all three presentations (see "The hat's
+seat on a remastered head" in docs/world-assets.md).
+
+### Open
+
+- Up to 2% of a cap's footprint can still show hair (the front of `neil`'s
+  side cap, from one side).
+- A hat shot off was not exercised: the synthetic shots hit the body. Its
+  record carries no seat, so it draws as before.
+- Which value of the remaster's settings byte selects its own models was
+  read from the fit, not from running the remaster.
+
+## B-FACCHR 006, Ourumov and the scientists drew the cartridge's bodies under XBLA
+## (FIXED 2026-10-02, #77)
+
+Under XBLA 006 in the last tank room was the cartridge's model, and the
+scientists wore remastered heads on the cartridge's lab coats. Only the
+Dam's character set had been prepared, and three of Facility's four bodies
+are not the Dam's. `prepare-xbla-assets.ps1 -Level facility -Characters`
+derives the stage's set from its own setup and AI lists (`stagechars.py`):
+`oliveguard`, `techman` (the scientists), `boilertrev` (006) and `orumov`,
+and the 25 random heads. All 29 convert; the 26 already prepared for the Dam
+come back byte-identical, and `boilertrev`, `orumov` and `techman` are new.
+No tooling changed. 006 and Ourumov carry their own heads, so their items
+are drawn whole; a scientist's body item meets the remastered head with one
+continuous neck (`sl_chr_compose`). Neither wears a hat.
+
+Measured, teleport only, seed pinned: 006 walking into the last tank room
+and a scientist at a lab bench draw the remaster's models under XBLA;
+ORIGINAL and COMMUNITY HD are byte-identical at the 42 replay marks. The
+bodies are global: `techman` also stands on Silo and in the Caverns, and
+`orumov` on Silo and the Train ("Facility's set" in docs/world-assets.md).
+
+## B-SRFROOMS Surface's room triangles cost the interpreter 46 ms a frame under ORIGINAL (OPEN 2026-10-05, #80)
+
+Measured at three outdoor replay poses on Surface (frame-time harness, 449
+presented frames, the replay's 1365x768 window): under ORIGINAL the frame
+averages 45, 48 and 21 ms, steady, with the display-list walk at 93% of it
+and `GE_TRI4` at 95% of the walk - about 8 microseconds per drawn room
+triangle over four thousand a frame, in the interpreter's immediate-mode
+emission (`emit_tri_slots`: `tex_apply`, the per-vertex colour, texture
+coordinate and `glVertex` calls, the B-125 redraw set). Under XBLA the same
+poses run at the pacer's 60 ticks a second: the replacement background
+suppresses those triangles and its own 69 draws are cheaper than what they
+replace. This is the game's own path, not the presentation's, and it is the
+same on every stage in proportion to its room triangles; Facility's walk
+measured 12.8 ms a frame (#77). Nothing was changed for it. A fix is a
+renderer change - batching the room emission into vertex arrays - and is
+Phase 1 work of its own, not a world-asset round's.
+
+## B-SRFATM Surface atmosphere follow-ups after D-030 (OPEN 2026-10-05, #80)
+
+Recorded while the atmosphere, the far-pass streaks and the sniper tower's
+platform were fixed (D-030; docs/world-assets.md "The game's atmosphere on
+Surface", "Beyond the game's far plane", "Two sides of one wall"). Not done:
+
+- **The remaster's mountains stay in the haze.** They lie 20000 - 38700 world
+  units out, past D-029's end (12071, the game's prop cut). Showing them
+  needs a longer end AND the prop cut lifted on the draw side under XBLA
+  (`fogGetPropDistColor` -> chrobjRenderProp / the character render), or
+  the satellite dish pops again. Needs a design ruling; it touches src/game draw
+  paths (a character's render matrices feed hit tests, so the character side
+  is not a pure presentation change).
+- **Every skydome in the source is one image.** All eleven skydome items
+  (bunker, bunker2, caverns, complex, dam, egyptian, frigate, runway,
+  surface, surface2, temple) carry the same clear-blue sky - the beta never
+  authored per-stage skies. Any later stage given a dome should expect the
+  same placeholder.
+- **The far clip's shortfall is measured, not explained.** The second range
+  stops up to ~0.3% short of the far plane recovered from the matrix, more
+  than float rounding of z - w accounts for; the overlap covers it. A blended
+  draw other than the shell can still leave a hairline in that strip.
+- **Remaster beta colours elsewhere.** The remaster's Facility row changes
+  the decomp's blue 0x10 to 0x01 (16 32 1); unexamined.
+- **The #77 load line's mesh count** ("N triangles of M meshes lie exactly
+  on an earlier surface") now also counts meshes holding only opposed
+  pairs; wording only.
+
+## B-SRFPROPS Surface's remaining cartridge models under XBLA (DEFERRED 2026-10-05, #80 - sprint moved to Bunker 1; parked, not being worked)
+
+From playtest run 20261005-120919-lvl36, marks 8 and 10 - 13. Not fixed:
+
+- **Mark 8, the fenced shed's front (LOAD-BEARING).** Seen through the
+  chain-link, the front of the open shed by the cabins alternates between
+  the remaster's plank wall (background mesh 5, item x 11833.3 - 11850,
+  world x 5885.9 - 5894.2) and the shelf standing inside it (`Pbookshelf1Z`,
+  room 29, world box x 5878.2 - 5943.4, so it crosses the wall). What was
+  measured: the shelf draws after the background on every frame; the
+  native fill, the two-sided and coplanar rules, the far pass, the prop
+  seam, the dynamic door, the RDP scissor, the near keep, the prop's two
+  passes and the linear shade each switched off leave the alternation
+  frame-for-frame identical; the same frames change under ORIGINAL (a few
+  levels, inside the game's opening); replacing the shelf with the
+  remaster's item (bookshelf1, above) does not stop it. The remaster itself
+  (private emulator, debug camera at the mark) shows the closed wall and no
+  shelf. The decision that flips per frame is not identified.
+- **`jerry_can1`, `stool1` (marks 10, 12).** No scale rule decides them.
+  The jerry can's coordinates reach 0.51 of its 512x512 atlas at 1/32768
+  (1.02 at 1/16384, past the slack), on an atlas that holds two can faces;
+  the stool's reach 0.836 x 0.5 of a 512x256 image whose lower half is
+  empty. Which scale is right was not settled: taking the reader's base
+  scale for both (the largest at which nothing overruns its image) drew the
+  can's face across a light edge strip of the atlas and two of the stool's
+  legs from the image's empty black half, so it was not kept.
+- **`carbmw` (mark 11).** A 16-byte vertex buffer, a layout the reader
+  does not take; not measured.
+
+## B-BNK1 Bunker 1 under XBLA: what the first round left (OPEN 2026-10-05, #81)
+
+- **Facility and Surface change on their next background re-preparation
+  (CORRECTNESS DEBT).** The untextured-surface rule (#81, docs/world-assets.md
+  "The railings, and the surfaces with no image") is general: re-prepared into
+  a scratch root, Facility's item gains two draws of five triangles (two white
+  quads, one black triangle) and Surface's three draws of 100 triangles (white
+  quads below the snow at the bunker shaft); the Dam's and Runway's are
+  byte-identical. Not witnessed in a frame. The play machine's Facility and Surface
+  bundles were not re-prepared, so both stages draw as accepted until they are.
+- **Props that keep the game's model (CORRECTNESS DEBT).** `mainframe2` (the
+  rock cavern's server racks; its draws answer 1/16384 and 1/8192 - taken
+  since #95 at 1/8192, THE GAME'S REPEATS), and the
+  four CCTV cameras (setup type 6, a kind the prop seam does not take; they
+  pan under the game's own matrix, so taking them is a moving-prop seam like
+  the autogun's).
+- **The control room's porthole (FIXED 2026-10-05, playtest mark 2):** one
+  sphere-mapped dome now, as the remaster draws it (docs/world-assets.md,
+  "The floor and the porthole"). What remains is the rails' limit: the
+  reflection is held still and the room's fisheye panorama the remaster shows
+  in the dome is not drawn (CORRECTNESS DEBT).
+- **The rock caverns are remodelled (to watch).** At room 14's far corner
+  (world -1700, 3350, a standable point of the game's floor) the eye stands
+  inside the remaster's rock; collision stays the game's, as on Runway's and
+  Surface's cliffs.
+- **The GoldenEye key's gold dome (FIXED round bnk3, playtest mark 3).** The
+  dome's 20-byte record carries a unit normal where the reader took a
+  coordinate; it is read as the held-still sphere coordinate now (the level
+  reader's rule). A one-pixel dark spot at the dome's apex is present before
+  and after (CORRECTNESS DEBT, not investigated).
+- **The rule changes frozen props on their next re-preparation (CORRECTNESS
+  DEBT, round bnk3).** Re-prepared into a scratch root with this round's
+  tools: `chrkeyyale` (every coordinate becomes a sphere coordinate),
+  `sevdoorwind` (5 vertices) and `glassware2` (prepared now, was refused);
+  every other frozen prop byte-identical. The play machine's bundles were not
+  re-prepared; not witnessed in a frame.
+- **Monitor images still the cartridge's (CORRECTNESS DEBT, round bnk2).**
+  `0894` (`screen3`, NCC 0.765) and `0896` (`screen6`, 0.642) paired below
+  the bar; `0898`, `08a7`, `08a9`, `08b7`, `07bc` paired with nothing. The
+  Cyrillic labels and the `drax` panels are carry-overs (no change needed).
+- **The level's coverage read (FIXED round bnk3).** The pool is walked with
+  each repeated pixel object sharing or carrying its own program, kept only
+  when exactly one walk accounts for the whole pool; every stage item places
+  now. Background preparation reads it: blue coverage on 4 Bunker 1 draws (the
+  hazard strips, playtest mark 1), and 4 blended draws whose alpha is one drawn
+  opaque (the handrails, playtest mark 2). On a re-preparation the Dam gains blue
+  coverage on one 4-triangle draw, and Facility, Runway and Surface gain
+  nothing from it (Runway's item re-prepares byte-identical; Facility's and
+  Surface's differ by the first round's untextured debt above only).
+  CORRECTNESS DEBT: the play machine's frozen bundles were not re-prepared; the
+  Dam's draw is not witnessed. The Dam's water (19626 triangles, no image
+  factor) is left blended: a program with its own contract is not assumed.
+- **The decal plane depth on the frozen stages (round bnk3, witnessed once).**
+  The plane rule changes every background decal: the start frames of the Dam,
+  Facility and Runway are byte-identical; Surface's differs on 130 pixels by
+  at most 9 levels (snow decals; SL_BG_DECAL_PULL=0 restores it exactly).
+- **The frozen stages' shared-seam changes (round bnk2, to confirm).** The
+  open-hole fill rule removed fill slivers on Runway (crate rims, a rail) and
+  the Dam (road edge) and kept Runway's door strip; Facility's monitors show
+  the remaster's images. Witnessed at a few playtest marks only.
+
+## B-SILO1 Silo under XBLA: what the first round left (OPEN 2026-10-06, #82)
+
+- **The oil drum and the desk lamp change on their next re-preparation
+  (CORRECTNESS DEBT).** The environment-pair rule (#82, docs/world-assets.md
+  "Silo's background, props and characters") colours `oil_drum7`'s lid with
+  its own rust image instead of the shared sphere image, and `desk_lamp2`
+  with its own dark 32x32 image instead of the grey sphere image. Both are
+  shared with frozen stages (the drum with the Dam, Runway and Surface, the
+  lamp with Surface). Re-prepared into a scratch root, every other frozen
+  prop is byte-identical to what the build before writes. The play machine's two
+  bundles were not re-prepared, so Silo's drums keep the sphere lid too
+  until they are; not witnessed in a frame on a frozen stage.
+- **The fuel rooms' steel frame (to watch).** Where the cartridge stands a
+  steel truss and stair beside each fuel room's console, the remaster draws
+  a black piped machine with the stair behind it. Read as the remaster's own
+  remodel (INFERRED): the reader drops only one 4-vertex pool and three
+  image-less draws, too little to be a truss. Not checked in the running remaster.
+- **The first-person pistol on the teleport frame (TOOLING-EVIDENCE DEBT).**
+  At one pose (silo 1's walkway) the remastered view model's hand and pistol
+  show at the bottom of the frame on the frame where the cartridge's gun is
+  not drawn yet. Shared view-model behaviour, not Silo's; not seen in normal
+  play.
+- **A guard inside the eye is the teleport's, not a defect.** A teleport
+  that lands on a guard puts his remastered head a few units in front of
+  the eye, where the cartridge's model is near-clipped away; normal play
+  keeps him at his collision radius.
+- **The rails' reflection is not drawn (CORRECTNESS DEBT, round silo2).**
+  The walkway rails now take their grey metal base (slot 2); the
+  remaster's normal-mapped shading and its landscape reflection (slot 1,
+  looked up by the shading normal) are not carried.
+- **The emulator's debug camera off Runway (TOOLING-EVIDENCE DEBT).** At
+  Silo's mark 1 it framed the mark's view; at marks 2 - 4 it did not land
+  on the same framing (position or pitch mapping), so only mark 1 was used
+  as reference.
+- **The white rail-end caps are the source's own colour (DESIGN DECISION,
+  round silo3).** Inside the silos the ribbed band's end caps are one
+  untextured draw (no image: drawn by vertex colour, the white-texel path),
+  and the source carries 0xFFFFFFFF on half of them and a dark teal on the
+  rest - 15 white caps, 30 triangles. Ray-cast at the two playtest marks of
+  run 20261006-114157 (hit depth equal to the marks' own centre depth): the
+  white end and the teal end differ in that colour word and nothing else -
+  same draw, pool, image, blend, culling. The source's ORIGINAL-generation
+  background carries the same white, while the game draws that cap teal
+  (vertex colour 002f2f, shade only, witness mark at the same pose). Not a
+  regression: the first Silo bundle drew it so too. The remaster runs a
+  program with no texture for these draws (private emulator, a Dam frame),
+  so it most likely draws them white as well (INFERRED). No rule picks the
+  wrong whites out from the right ones - Bunker 1, Facility and Surface draw
+  white untextured surfaces of their own - so a change is a divergence to
+  decide: take the game's own colour where the remaster whitened it.
+  DECIDED (round silo4): **D-033** - Silo's background is prepared with the
+  game's shade (derived from the ROM's rooms, carried through the stage's
+  measured colour curve: 002f2f -> 002121) on all 30 whitened triangles;
+  enabled for Silo alone (enabled elsewhere it changes no frozen stage);
+  `SL_WA_AS_AUTHORED=D-033` prepares it as authored. That round
+  re-prepared the play machine's `background/silo` bundle (Silo's alone).
+- **The steel door's stripes are black and white in the source (DESIGN
+  DECISION, round silo3).** `prop/steel_door1` (the remaster's own name for
+  the game's model, from its executable's table) is one draw of one 256x512
+  image with black and white bars painted into it, vertex colour 255,
+  pixel constant 1, no second image; its program multiplies the image by the
+  vertex colour and the scene light and nothing else. Its ORIGINAL
+  generation draws the same black-and-white bar image as an opaque draw at
+  vertex colour 255. The game draws those bars as a translucent decal tinted
+  yellow by its vertex colour (e4e42d, alpha 0x72; witness mark at the
+  door) - the remaster's conversion whitened it, as it did the caps above,
+  and the new art was painted from that. Recolouring needs a decision: a
+  tint cannot reach the bars alone in the one-image door.
+  DECIDED (round silo4): **D-032** - the preparation multiplies the bar
+  texels the game tints (derived from the game's model in the ROM) by the
+  game's tint; `SL_WA_AS_AUTHORED=D-032` prepares the door as authored. That
+  round re-prepared the play machine's `prop/steel_door1` bundle alone (drawn by
+  Silo alone), through the converter `-Props` calls: a whole
+  `-Level silo -Props` run would also re-prepare the props Silo shares with
+  frozen stages (the oil drum and desk lamp above), so it was not run.
+
+## B-FRG1 Frigate under XBLA: what round frg2 left (OPEN 2026-10-06, #83)
+
+- **The interior handrails are blue by the remaster's own data (DECISION
+  POINT).** The rails of the lower decks are one source draw of a grey tube
+  image under a vertex colour of 146 210 255 on every rail vertex (the light
+  fixtures beside them carry the same word, and 255 146 146 on a second
+  set); the console remaster draws them blue-steel as well (its debug
+  camera beside marks 4 and 5). Sightline's are the same family but more
+  saturated (distinctly blue pixels: mean 39 51 92 against the console's
+  44 53 79 at mark 4). The cartridge's rails are dark grey. Whether to
+  take the game's grey is a divergence to decide; nothing was changed.
+- **The game's underwater fade is not drawn under XBLA (CLOSED, round
+  frg3).** D-035 now cuts the remaster's hull at the game's waterline (the
+  lowest opaque room corner) instead of withholding whole triangles, and
+  the renderer draws the game's fade where the replacement has no surface
+  (sl_gfx_dl.c nf_fade_kept, SL_BG_FADE=0 off).
+- **White shards beside the boarding boat (TO WATCH).** Thin white wedges
+  show over the sea beside the boat's hull at some poses (round frg2 s3, s4,
+  m1), unchanged by D-035 and by the fill's alignment. Not attributed.
+- **A static object below 0x0130_0000 can still read as segment 1.** The
+  allocation rule (sl_gfx_dl.c seg_reading_wins) refuses a segmented reading
+  that leaves the segment base's allocation; a static whose segment-1
+  reading stays inside the game heap (the first 0x46c00 bytes above
+  0x01000000 - the obseg image, no display-list operand measured there)
+  would still be misread, and the non-Windows build keeps the old order.
+- **The stage's world-asset pointers are latched for the process.**
+  `sky_frame_begin` looks `g_bg_asset` and `g_sky_asset` up once and never
+  clears them, so a later stage in the same process would draw the first
+  stage's background. Mode switching is not affected (assets stay
+  resident and the gate is re-asked every frame).
+
+## B-FRG2 Frigate under XBLA: what round frg3 left (OPEN 2026-10-06, #83)
+
+- **The bridge's corkboards are missing (PARKED, playtest run
+  20261006-185746 mark 2).** The game draws each as a primary-list decal on
+  the radio-room wall (texture 64x32 tinted 241400, world x -75.3, y 876 ..
+  991) with the map sheets over it. The source's NEW generation carries the
+  wall and the map sheets (1.9 units proud) and no backing; its ORIGINAL
+  generation carries both boards (one draw, 4 triangles, colour 24 12 0).
+  Restoring them needs a rule that selects a backing between the two
+  generations: measured, 224 original-generation decal triangles are left
+  at least 30% uncovered by the new generation's decals (199 on a new
+  surface), 29 of them partly covered, of which the boards are 4 - no rule
+  tried picks the boards alone.
+- **The engine-room deck checker reads as a mat (PARKED, mark 4).** The
+  game's checker (room 30, texture 0x1fa) is an intensity-alpha decal
+  blended over the floor: its dark squares are transparent and its yellow
+  ones 225/255, so the floor plate and its baked shadow show through. The
+  remaster's (both generations) is an opaque DXT1 black and white image
+  whose program takes coverage from the vertex alpha (255), so it covers
+  the floor; the floor's own shadow region beside it then reads as a cast
+  shadow. The geometry lies on the floor plane (y -246.4) and the decal
+  depth rule moves depth only. A fix needs the game's decal alpha at
+  preparation time, and the ROM's textures are compressed with no decoder
+  under tools/.
+- **The helicopter is the remaster's own model.** prop/tiger is selected
+  and drawn (SL_PROP_ASSETS=0 changes the frame); its lettering images are
+  the source's 129x32 ones, so it reads close to the cartridge's. Its
+  canopy's reflection is now carried (b78c2704). The same plain-record
+  normal mapping is not taken for three civilian bodies, the FN P90 and
+  rocket launcher view models and the ammunition cartridges, which carry
+  such draws too; they keep their vertex-colour reading until measured.
+- **D-036 also turns nine placements of a near-uniform grain tile** (game
+  texture 0x21a, engine room starboard wall); not visible, recorded.
+- **Mark 4's pose differs by 2 pixels after this round's background**
+  (x 688 .. 704, y 335 .. 348; the same with the previous executable and
+  the new background), not attributed further.
+
+## B-FRG3 Frigate: a held weapon's attach node read as 0xff2c4e2c (OPEN 2026-10-06, #83; the writer of its class found 2026-10-07, B-CRASH1)
+
+Playtest run 20261006-201517-lvl26 faulted while leaving the engine room:
+ACCESS VIOLATION reading 0xff2c4e2c (region FREE), eip 0x004ae9ea, frame
+0x7123, pose 429.529 234.279 -3726.669 theta 356.41 room 30, presentation
+XBLA (the log's last cycle), 41 live characters, chr-bad-count 0 (every
+weapons_held, hat and prop pointer was an element of g_Props). Binary:
+build\win32\sightline.exe sha256 ab21c82d... built from 6abf9fb8, resolved
+before any rebuild (mingw addr2line/objdump/gdb against that file).
+
+- **The faulting read.** eip is `movzwl (%eax)` - node->Opcode - in
+  modelFindNodeMtxIndex (model.c:306). The frame chain is modelFindNodeMtx
+  (model.c:335) <- chrRenderHeldWeapon (propobj.c:12530) <- chrTick
+  (chr.c:2592) <- propsTick (chrprop.c:2006) <- lvlRender (lv.c:744). The
+  report's stack words 0x004b14a3 / 0x004b1937 (modelUpdateDistanceRelations,
+  modelApplyReorderRelations) are not on that chain; they are stale words.
+  So the node was the weapon model's attachedto_objinst, which
+  chrEquipWeapon sets to the carrier body's Switches[3] (right) or
+  Switches[5] (left).
+- **The value is the field itself, not a stale heap pointer (INFERRED from a
+  measurement).** On the Frigate guard body (body 17) Switches[3] is a GROUP
+  node (opcode 0x0002, parent opcode 0x0102; scratch probe, fresh session),
+  so a legitimate attach returns at the first node after reading Opcode and
+  Data inside the body file, and never reads Parent. A stale pointer into
+  the game heap would read without a fault. The faulting address is
+  therefore the attachedto_objinst word as read through the weapon's Model,
+  a non-pointer. Its bytes in memory are 2c 4e 2c ff. A heap scan
+  (SL_CHR_WATCH_SCAN=ff2c4e2c over 0x2000_0000..0x2100_0000, five scans) at
+  the fault pose in a fresh session finds the value nowhere.
+- **Which record (INFERRED).** The report's in-image stack words include
+  g_Props+6500, +6448 and +8996 = g_Props[125], [124] and [173]. In a fresh
+  session (g_ChrSlots at 0x20164860, the address in the report) prop 125 is
+  chrnum 23 (body 17, starting at 605 184 -3325, room 23, ahead of the fault
+  pose), prop 173 is the weapon it holds in its right hand, and prop 124 is
+  chrnum 22. The record consumed was most likely chrnum 23's right-hand
+  weapon.
+- **Presentation code does not write the fields involved.** Tree-wide,
+  `grep -rn "\->obj = \|RootNode = \|->Parent = \|Switches\[[^]]*\] = "
+  src/native src/gfx src/platform` and `grep -rn "shadecol\|nextcol"
+  src/native src/gfx src/platform` both come back empty; held_begin and
+  hat_begin (sl_chr_asset.c) only read the weapon's model. The fault is not
+  attributed to the presentation; it is not excluded either, since a stray
+  write would not name its writer.
+- **Same class as the Aztec fault of 2026-09-17 (#35, above):** a
+  weapon-related pointer field holding a non-pointer (there 0x3333fb4c in
+  weapons_held), producer not demonstrated.
+
+Not reproduced, bounded (this binary, and a scratch build of the same source
+adding a per-render check that the attach node is the carrier's Switches[3]
+or [5] with a dump of the weapon's Model slot; seed 000000007e5dc49d, cheats
+invincible,invisible,maxammo, +allguns where noted): standing at the fault
+pose under XBLA (3600 frames); two full replays of the run's input recording
+under XBLA with allguns (31000 pumped frames each; the replay diverges from
+the session and rendered only four armed characters); the fault pose with
+the presentation cycled every 300 frames; walking out of the engine room
+from the mark-7 pose under XBLA with cycling and under ORIGINAL; walking
+forward from the fault pose with the use buttons; firing and turning in room
+23 beside chrnum 23 under XBLA with cycling and under ORIGINAL. Every run
+survived; the check never fired (chrnum 23 drew its weapon from the right
+switch node).
+
+**The same fault on Bunker 2 (B-BNK2B, 2026-10-07) names the byte.** There the
+read was 0x1417bee8 where the slot's word should hold the rack node
+0x2017bee8. Read the same way, Frigate's 0xff2c4e2c is a heap node 0x202c4e2c
+(the guard body's nodes lie in the game heap at 0x2000_0000) with its top byte
+replaced: in both, the low three bytes are a valid node and only the slot's
+last byte, Model + 0x1f, is wrong (INFERRED for Frigate, whose valid value was
+not observed). That is hypothesis 1 below, sharpened to one byte.
+
+Hypotheses, ranked, with what separates them:
+
+1. **A stray write into the weapon's Model slot.** Weapons use the 32-byte
+   non-animated slots (g_ModelSlots, struct ModelSlot), and attachedto_objinst
+   is a slot's last word, so a write running past a neighbouring slot, or an
+   animated-model field (Model is 0xbc bytes) written through a non-animated
+   model, lands on it. Separates: the slot and its neighbours dumped at the
+   fault; a data watchpoint on that slot's +0x1c.
+2. **The weapon prop no longer names a weapon.** chr-bad-count 0 proves only
+   that weapons_held held g_Props elements; a prop freed and reused while
+   weapons_held still named it would hand chrRenderHeldWeapon another
+   record's +0x14 as the model. Separates: prop->type and whether obj->model
+   lies inside g_ModelSlots at the fault.
+3. **A colour word over a pointer.** The bytes read as an RGBA colour with
+   alpha 255 (44 78 44). Separates: the producer hunt above, by the value.
+
+A recurrence's crash.txt (and run directory) is the whole ask from play;
+nothing was changed.
+
+## B-FRG4 Frigate under XBLA: what round frg4b left (OPEN 2026-10-06, #83)
+
+- **The sea is the game's; the remaster's is flatter (DECISION POINT,
+  playtest run 20261006-201517 mark 1).** Measured in one bounded console
+  session (private emulator, the remaster's own start view and its debug
+  camera at mark 1): the remaster's sea is not part of `background/frigate`
+  (188 draws, no wave program, extent y -1124 .. 2795) nor of
+  `skydome/frigate` (two dome draws); the engine draws it - one translucent
+  quad per screen band after the background (depth test, no depth write,
+  SRC_ALPHA blend), a 32x32 8888 image - and every sea pixel is one colour,
+  6 32 82, from the boat to the horizon and unchanged over four seconds: no
+  texture detail, no near-to-far shade, no motion, no reflection. The game's
+  sky.c sea (texture 0x5e5 under the two-tile water lerp, shade 223 226 177
+  near to 16 48 96 at the horizon) is what every presentation draws. The
+  source's sea image is `texture/bg/water2` (32x32, the size and format the
+  console binds); the texture set does not map 0x5e5 to it. Reproducing the
+  remaster means replacing the game's animated textured sea with one colour
+  that no shading of either image reproduces; mapping water2 instead needs
+  the decoder fix below. Nothing changed.
+- **The 8888 decoder swaps red and blue (FOUND, not fixed).**
+  `tools/texpack/xdecode.py` reads format 6 as A R G B; the accepted HUD
+  shotgun-shell icon (0877, `texture/bg/ammoiconshell`) decodes as a blue
+  shell with a cyan head where the game's is red with a brass head, and
+  `texture/bg/water2` decodes orange-brown where it is a navy ripple. The
+  same decoder prepares Silo's background (two format-6 images, flags
+  18280086) and the monitor screens in the texture set, so the fix moves a
+  frozen stage and every stage's HUD and monitors; it needs its own round.
+- **The boarding boat's white shards are the native fill (PARKED, marks 1
+  and 2).** Room 57's opaque triangles (vertex colour fefefe) that register
+  within 8 world units of the remaster's remodelled boat and are holed
+  (the gunwale strip 3.38 item units against 3.04, hull panels at x 39 .. 47)
+  are drawn 12 units behind their plane, and outside the remaster's
+  silhouette they show against the sea; `SL_BG_FILL=0` removes them. Runway's
+  accepted bunker-door strip is the same class (room 4: 13 of 13 registered
+  triangles holed, open behind), so no rule tried separates the two. The grey
+  slab at mark 1 is the remaster's own boat bow.
+- **D-038 fits one item.** Only `chrplastique` is named; any other item the
+  remaster authored as another object still draws as the game's.
+- **D-037's other placements.** The rule also dims the deck number "-06-",
+  four sign images and a near-white grain tile to the game's decal alpha
+  (102, 127 or 76 of 255), as the game draws them; measured at the "-06-"
+  wall (it reads, dimmer) and the helipad, not elsewhere.
+
+## B-FRG5 Frigate under XBLA: what round frg5 left (OPEN 2026-10-06, #83)
+
+- **The deck paint (D-037, widened).** The dashed arcs and circles of
+  playtest run 20261006-220209 (marks 1-3) were an opaque decal draw the
+  first rule did not reach; the rule now takes the whole decal pass, by
+  placement and only where a placement redraws a game decal (extent overlap
+  0.25 or more). Reach: 12 draws, 433 triangles - images 61 (dashes), 69
+  (hazard stripes), 0 (a red wall arrow), 63, 64, 73-77. The near-white
+  studs (image 78, 100 triangles) left the rule: they lie on the game's
+  wall-sized grain overlay, which they do not redraw. Four triangles of the
+  dash draw lie on no game decal and stay opaque. Measured at the three
+  marks, the engine-room arrows and checker, the helipad, the "-06-" wall,
+  the red arrow and a vent; the stage was not walked.
+- **The boarding boat takes no native fill (closes B-FRG4's shards).**
+  `sl_presentation_fill_withheld` lists (xbla, frigate, 57). Another object
+  the remaster remodelled whole would show the same shards and needs its own
+  entry; none is known.
+- **The sea is Sightline's own (D-039).** The reflection form is the default;
+  `SL_XBLA_SEA=0` is the game's sea. Frigate only. The remaster's own sea
+  image is still unused, and the 8888 decoder's red-blue swap (B-FRG4)
+  remains open for its own round. The program assumes the sea's texture
+  coordinates are sky.c's (world x, world z plus the cloud scroll); a sea
+  drawn any other way would misplace the reflection.
+- **Still open from earlier rounds:** B-FRG3 (the held weapon's attach node)
+  and the bug-tracker defect were out of this round's scope.
+
+## B-SRF2A Surface 2 under XBLA: what round srf2a left (OPEN 2026-10-06, #84)
+
+- **The crash in the player's line test (PARKED, LOAD-BEARING, not
+  reproduced).** Playtest run 20261006-230603-lvl43 ended in an access
+  violation reading 0x00000008 at frame 0xa9fb (eip 0x0045f122, the build of
+  f0a134e5): `propIsOfCdType` chrprop.c:2683 reads `obj->flags` of a prop
+  whose `obj` is NULL, called from `stanTestLineUnobstructed` stan.c:1686 over
+  the props `roomGetProps` lists, from `bondviewProcessInput` (bondview2.c:6264)
+  in `MoveBond`; `explosionSmokeTick` and `chrpropUpdateRoomList` are among
+  the stack words. The pose was 8373 191 -15750, room 9, beside a hut. One
+  bounded reproduction at that pose - three rockets into the hut and the
+  ground, then walking forward and back through the smoke for 500 frames -
+  survived 1000 frames. A prop the room lists still hold with its object
+  pointer cleared (smoke or debris after an explosion is the suspect, not
+  shown) would explain it. No src/game change was made.
+- **Three prop bundles prepare differently with the current tools.**
+  Re-prepared to a scratch root, `prop/desk_lamp2` (E720EA24 -> 185BEB0B),
+  `prop/oil_drum7` (10716BB5 -> 7C397E91) and `prop/sevdoorwind` (38F765C0 ->
+  078DF788) differ from the bundles in use (why - tool change or source - was not
+  investigated). They are shared with accepted
+  stages and were left as they are.
+- **`prop/hatchsevx` is refused** at preparation (its texture coordinates
+  reach no atlas edge at any power-of-two scale); the game's hatch draws.
+- **The intro's dome shade is unwitnessed.** Row 943 is named for D-040's
+  shade, but at read 40 of the intro the frame is identical with and without
+  it; no intro frame showing the dome was found.
+- **The dish at the mark is faint.** With the fog end at the game's prop cut
+  (D-040) the dish at mark 6 (about 7000 units) is mostly fog-coloured; it
+  clears steadily on the approach. A longer view than the game's cut needs
+  the game's prop cut (bgfog.c) to move, a game-code change not made here.
+- **The dish appeared late (CLOSED 2026-10-07 by D-041, round srf2b).** The
+  cut tests the dish's origin while its faces lie up to 780 units nearer; on
+  row 43 props are now drawn past the cut, fogged by the row. Left as they
+  are: the game's characters keep their cut (chr.c; a character's extent is
+  small at the end 7662) and monitors keep theirs (their draw advances the
+  screen animation). Past the end the dish reads as a fog-coloured silhouette
+  against the cloud shade above the horizon, sliced in by the far plane; a
+  sky that met the fog colour higher up would hide it, a D-030 question not
+  opened here.
+
+## B-BNK2A Bunker 2 under XBLA: what round bk2a left (OPEN 2026-10-07, #85)
+
+- **The rock room's server racks stay the game's (RESOLVED 2026-10-10, #95:
+  read at 1/8192 by THE GAME'S REPEATS and taken; playtest mark 7).** `prop/mainframe2` is refused at preparation: no rule of
+  `texcoord_scale` decides it (its draws answer 1/16384 and 1/8192, as B-BNK1
+  recorded). Measured this round: its back face carries exactly the raw
+  coordinates of `prop/mainframe1`'s back, on the same image, which
+  mainframe1 reads at its decided 1/8192, and it shares two more images with
+  mainframe1. Prepared at a forced 1/8192 in a scratch root (an experiment,
+  not a rule) it reproduces the game's own front - two by two panels over four
+  by three blades - where 1/16384 shows one panel and two by one and a half
+  blades. Two general fallbacks were measured over all 317 source props and
+  refused as rules: the level reader's unit pile-up agrees with only 177 of
+  the 221 items the rules decide (it would read `jerrycan1` at 1/256), and a
+  whole-repeat rule with 70. Deciding it needs a rule over another item's
+  coordinates, which the per-item preparation does not have.
+- **The dome is the source's daylight image (to watch).** `skydome/bunker2`
+  is prepared and drawn behind the enclosed item; row 27 is a night row (fog
+  16 0 0, clouds 58 17 0) that no D-030 entry names. No mark showed the sky.
+- **`prop/tvscreen` is refused** (no model data in its bundle); the control
+  room's hanging screens are the game's, as on Bunker 1.
+- **The CCTV cameras are the game's** (setup type 6, not taken; B-BNK1).
+- **`prop/chrkeyyale` prepares differently with the current tools**
+  (B54803E1 -> 8877BAEC, the sphere-coordinate rule of round bnk3); the
+  bundle in use was left as it is.
+
+## B-BNK2B Bunker 2 under XBLA: what round bk2b left (OPEN 2026-10-07, #85)
+
+- **The crash heading down to the control room (CLOSED 2026-10-07 by B-CRASH1:
+  its 0x14 is a blood paint value written through an unswapped link, INFERRED for this run; was PARKED, BLOCKER, not
+  reproduced).** Playtest run 20261007-073850-lvl27 (build 9E02C295, seed
+  ffffffffbbb65eb9, cheats invincible,invisible,maxammo,allguns, keyboard and
+  mouse, the watch magnet selected from the watch with the mouse earlier in
+  the session) ended in an access violation reading 0x1417bee8 (RESERVE) at
+  frame 0x67f3, eip 0x004ae9ea - the instruction of B-FRG3:
+  `modelFindNodeMtxIndex` model.c:306 reading `node->Opcode`, from
+  `modelFindNodeMtx` model.c:335, the embedded branch of `sub_GAME_7F0442DC`
+  propobj.c:3684, `objTick` propobj.c:6402 (the parent on screen),
+  `propsTick`, `lvlRender`. Pose -364.6 117.2 1642.8, room 5, XBLA.
+  - **Localised (measured, scratch probe).** The stage's only embedded
+    children are the eight monitors (model 75, props 86-89 and 91-94) of the
+    two hanging racks (model 76, props 85 and 90, at -52 412 697 and
+    -52 412 176, room 6). `setupSingleMonitor` (prop.c) sets each monitor's
+    `attachedto_objinst` to the rack's `Switches[0..3]`: 0x2017bee8, 0x2017bf00,
+    0x2017bf18, 0x2017bf30. `Switches[0]` is a GROUP node with no children, so
+    the walk returns at the first node: the faulting pointer is a monitor's
+    `attachedto_objinst` word itself, 0x2017bee8 with its top byte 0x20 turned
+    0x14. The monitors' Models are consecutive 32-byte slots (0x2015e870 ..),
+    so that byte is the slot's last (Model + 0x1f), and the first monitor of
+    each rack sits at its rack's Model + 0x3c.
+  - **The same byte as B-FRG3 (INFERRED).** Frigate's 0xff2c4e2c reads as the
+    heap node 0x202c4e2c with its top byte turned 0xff. Two stages, two
+    callers, one byte of a 32-byte model slot.
+  - **Not a use-after-free of the parent.** Nothing frees a rack, a monitor or
+    their models in any run (a probe logged every `objFree` of a parent or
+    child, every `modelInit` reusing a registered slot): the rack's file and
+    node stay valid; only the stored word changes.
+  - **Not reproduced (two rounds).** Scratch builds of this source with the
+    probe, a per-frame check of every model slot's attach word, and hardware
+    write watchpoints on four monitor attach words of the game thread: the
+    crash pose (stand, turn); the run's input recording replayed (30000
+    frames; it diverges); the magnet equipped and fired at the crash pose, at
+    the cells (it pulls the cell key: "Picked up a cell key") and walking into
+    the control room; the watch opened, the equipment list stepped item by
+    item to WATCH MAGNET ATTRACT and equipped with A; automatic fire; 18
+    presentation cycles; mark 3 with cycles and the magnet. No word changed,
+    no watchpoint fired, nothing faulted. The pointer seam of the watch
+    (`sl_watch_pointer.c`) was read: a click on an equipment row writes the
+    list index (`watch_inventory_cursor_pos`, `g_curWatchItemIndex`) and asks
+    `sub_GAME_7F0A8378` to equip, the pad's A path; it writes no model state.
+    The mouse itself was not driven (the synthetic pad has no pointer).
+  - **No fix was made.** A validity test at model.c:306 would hide a stray
+    write whose writer is unknown. What would name it: the slot's 32 bytes and
+    its neighbours in the crash report, or a write watch on a monitor's
+    Model + 0x1c in a playtest build.
+- **Closed this round:** the cell stains' flicker (two decal-pass surfaces in
+  one plane) and the floor drawn through the walls at mark 3 (the pull of a
+  decal with nothing in front of it); see `docs/world-assets.md`, Bunker 2.
+- **Still open from earlier rounds:** B-BNK2A (the server racks, the dome,
+  `tvscreen`, the CCTV cameras, `chrkeyyale`'s drift).
+
+## B-BNK2C Bunker 2 under XBLA: what round bk2c left (OPEN 2026-10-07, #85)
+
+- **Closed this round** (playtest run 20261007-085655-lvl27, build 96D8525B):
+  the clear colour under a doorway and round the helipad (two refused
+  two-layer pools, read at their layout's scale and carried by its
+  assignment), and the next room's floor through a corridor's far wall (the
+  decal offset's slope term on a decal that lies on nothing); see
+  `docs/world-assets.md`, Bunker 2, round bk2c. The emblem's dome is dark in
+  the source and in the remaster: no change.
+- **The threshold's and the rim's look is the layout's, not a program's
+  (INFERRED).** Neither draw's program confirms the two-layer blend (the rim's
+  cannot be placed; the threshold's one placed variant samples the stripe
+  layer alone). They are drawn by the assignment all 42 confirmed two-layer
+  draws share. The remaster's own frame of a threshold or the rim was not
+  taken.
+- **Bunker 1's helipad rim stays refused (to watch).** Its item carries the
+  same 56-vertex pool (pool 13) and no measured 32-byte pool for it to agree
+  with, so `layout_scale` has no answer there; whether any Bunker 1 view
+  shows that rim was not checked.
+- **Three frozen backgrounds prepare differently from the bundles in use**
+  (pre-existing, not this round's): the Dam (E5B1E234 in use, 6B3468A7
+  now), Facility (8673BBBA, 9E185127) and Surface (BB32A0C1, E9D0D161) give
+  the same bytes with the tools before and after this round, so the bundles
+  in use predate earlier tool changes. Left as they are.
+- **The crash of B-BNK2B did not recur** in this run; it stays parked.
+- **Still open from earlier rounds:** B-BNK2A (the server racks, the sky
+  dome, `tvscreen`, the CCTV cameras, `chrkeyyale`'s drift).
+
+## B-BNK2D Bunker 2 under XBLA: the helipad's rim (OPEN 2026-10-07, #85)
+
+- **The rim's look is the remaster's own (WITNESSED).** Playtest run
+  20261007-102158-lvl27 (build 49F38EA8) reported the rim round the helipad
+  as hard-edged white wedges and cracked patches. The remaster draws the same
+  wedges from the same data, and its pixel program for the rim's draw is the
+  two-layer blend `layout_layers` assigns (base slot 1 at +20 with +28, layer
+  slot 0 at +16 with +24, weight the layer image's alpha times +24's alpha);
+  see `docs/world-assets.md`, Bunker 2, round bk2d. The source's charts lay
+  the snow image's alpha edge across the rim in every quad. No reader change.
+- **Proposed divergence (not taken).** A smooth snow border, as in the
+  original, comes from a derived weight: a vertex of a layout-carried
+  two-layer draw that stands on a vertex of the base image's own surface
+  (here the pad, 28 of 56 vertices) takes layer weight zero, so the snow
+  fades from the snowfield edge to the pad across each quad. Measured only in
+  a scratch bundle, with and without transposing the layer coordinate; the
+  transposition alone does not remove the wedges. It would be a D-xxx
+  presentation change behind a switch to the authentic look.
+- **Bunker 1's helipad rim** (its pool 13, the same 56 vertices) stays
+  refused; nothing in this round touches it.
+- **Divergence taken: D-042 (round bk2e).** The preparation's `band_fade`
+  fades a shaped layer laid as a band onto its base image's own surface
+  and turns its image to run across the band (`docs/divergences.md`
+  D-042, `docs/world-assets.md` round bk2e), enabled for Bunker 2 alone;
+  `SL_WA_AS_AUTHORED=D-042` prepares the remaster's look. Forced on, it
+  changes no other prepared background. Open: the playtest recheck of the
+  rim, and one quad of 14 (corners 40-43, west side) charted the other way
+  round, whose turned snow edge runs along the rim - a per-quad turn is the
+  candidate if that quad reads wrong.
+
+## B-CRASH1 The model-state crashes: a blood stain painted through an unswapped link (CLOSED 2026-10-07, #85)
+
+Three playtest faults died in model.c following a pointer read out of model
+state whose top byte was wrong while its low three bytes were a valid node:
+B-FRG3 (Frigate, a held weapon's attach node, 0xff2c4e2c), B-BNK2B (Bunker 2,
+a monitor's attach node, 0x1417bee8) and run 20261007-120643-lvl27 (Bunker 2,
+build DE9D43B1, READ 0x3e188a0c (FREE), eip 0x004b2011 = `modelUpdateMatrices`
+model.c:2215 reading `node->Opcode`, from `instcalcmatrices` 2305 <-
+`subcalcmatrices` 2417 <- `chrTick` chr.c:2582 <- `propsTick` chrprop.c:2006
+<- `lvlRender` lv.c:744; pose -2380.2 325.0 2190.6, room 37, about a minute
+into the run). All three ran XBLA (the last cycle of the first two; the
+third never cycled) with the cheats invincible, invisible, maxammo, allguns.
+
+- **The writer (WITNESSED).** `chrCreateBloodStain` (chr.c) paints the hit
+  piece's nearest merged point and the point it merges with in the
+  neighbouring piece: `relatedrwdata->Vertices[index].a = paintval`
+  (chr.c:3344), `index` taken from the related piece's collision table at
+  `CollisionRelatedIndex` (chr.c:3286). That field - the s16 at +0xC of a
+  collision point, the number of the merged point in the related table
+  ("Display Lists and Object Generation/Objects/Point Merging.txt": `FFF7 0030
+  FFFC 0005 05000190 000D 0000`) - was never byte-swapped:
+  `sl_model_collision_vertices_swap` swapped the coordinates, the id and the
+  link offset only, and a tree-wide `grep -rn CollisionRelatedIndex src/`
+  finds the struct, this one reader and nothing else. Read as 0x0D00 it
+  indexed tens of KB past the table, and the garbage `index` / `PointUsage`
+  chain wrote the blood value (20..169) one byte at a time at
+  `vertices + index * 16 + 15`: the top byte of a word at +0xC of a 16-byte
+  boundary, which is where a Model slot keeps `render_pos` (+0xC) and
+  `attachedto_objinst` (+0x1C) and a node keeps `Next` (+0xC).
+- **Measured (scratch builds, round crash1).** At level start on Bunker 2,
+  203 of body 16's 210 merged points and 164 of body 38's 170 named a point
+  out of range as stored, none once swapped. A heap-wide watch (every word
+  whose low three bytes held while its top byte changed, compared at six
+  checkpoints a frame) and a guard hunt (stand beside each guard, aim, fire)
+  caught a paint of 67 turning ModelSlot 35's `render_pos` 0x200681e0 into
+  0x430681e0 between `propsTick` and the end of `lvlRender`. B-BNK2B's 0x14
+  (20) and the 12:06 run's 0x3e (62) are paint values; B-FRG3's 0xff is not
+  (the paint never exceeds 169), so that fault matches by place and
+  instruction only (INFERRED, not shown).
+- **The failure rate, before and after (hunt mode, 6000 pumped frames a run,
+  seeds 00000000c1a50001..4, Bunker 2 and Frigate, each under XBLA and under
+  ORIGINAL).** Before: 2 failures in 8 runs per presentation - Bunker 2 seed
+  1 faults in `matrix_4x4_multiply_homogeneous` reading 0x3405b260, the
+  `render_pos` of a window (`PwindowZ`) painted 52; Frigate seed 4 HANGS, the
+  garbage chain cycling between two indices and painting a desk's
+  `render_pos` 382 times until the watchdog fires - and 2 to 8 paints
+  outside the copy in every other run. XBLA and ORIGINAL give identical
+  lines seed for seed: the paint is simulation, and ORIGINAL was never
+  immune; the playtests ran XBLA because that is what was played. After: 16
+  runs, no fault, no hang, no paint outside the copy. A 60000-frame walk,
+  watch and presentation-cycle soak with no guard shot saw nothing either
+  way, which is why every earlier reproduction (scripted walks, replays,
+  fire at nothing) failed: a stray byte needs a bullet in a guard where its
+  pieces merge points.
+- **Fixed** (`src/native/sl_swap_model.c`): the related number and its
+  reserved s16 are swapped with the rest of the point, and
+  `sl_model_links_check` checks every merged link of every model file after
+  its swap and says so on stderr if one is out of range (it named both
+  Bunker 2 body files before the fix; silent after). Self-test
+  `tools/windows/modeltest.ps1`: Point Merging.txt's own rows in wire order
+  and the check on a synthetic two-piece file; without the two new swaps it
+  fails ("merges with related point 0x000D (13), not 0x0D00").
+- **The crash report names the Model** (`src/native/sl_crash_model.c`, the
+  `[models]` section after `[characters]`): every frame of the Ebp chain
+  with its first three argument words, any that is a live Model dumped, and
+  every live Model whose pointer fields (obj, render_pos, datas, attachedto,
+  attachedto_objinst, the model file's node links) leave the game's memory
+  or are unreadable, with its slot, owner (character slot, chrnum and body,
+  or prop, type and model file), the presentation, whether a presentation
+  item rides that model file, and the bytes from 0x20 before the slot to
+  0x40 after its start. Nothing of it runs outside the fault handler. The
+  before-build's natural fault above was reported, unaided, as
+  `model-bad prop model=2015DF30 slot 12 (render_pos) ... render_pos=3405B260`,
+  `model-owner prop=12 proptype=1 objtype=42 model#=104(PwindowZ)`.
+- **Per-tick traces unchanged.** The three playtest streams of these
+  faults (Bunker 2 runs 20261007-120643 and -073850, Frigate run
+  20261006-201517) replayed headless with SL_TRACE_OUT under each run's seed,
+  the build before the fix against the build after: byte-identical traces
+  (3531, 13319 and 14619 frames). The corpus trace gate still cannot replay
+  in this checkout (the recorded traces declare another ROM's sha1, as
+  earlier rounds recorded), so simulation identity rests on these.
+- **Left as it is:** a changed top byte that lands back inside the heap or
+  the image and stays readable passes the report's checks; the blood paint
+  itself (chr.c) is Rare's and untouched.
+
+## B-STA1 Statue under XBLA: what round sta1 left (OPEN 2026-10-07, #86)
+
+- **The cobbled paths round the helicopter compound draw as thin stripes
+  (CORRECTNESS DEBT).** Pools 2 (264 vertices, 32-byte, the two-layer path
+  edges) and 3 (162 vertices, 24-byte) of `background/statuepark` both
+  measure 1/64 from thin pile-ups (1.5% and 1.3% of their values) and draw
+  the cobble image (`_0x0DAACB61`, 512x512) as narrow parallel bands under
+  the path lights (rooms 12 to 16); the remaster (private emulator, debug
+  camera) shows large cobbles there. Prepared with pool 2 forced to 1/256 in
+  a scratch root (an experiment, not a rule) the stones come back at about
+  the remaster's size; pool 3 forced to 1/256 or 1/1024 barely moves the
+  frame. Every vertex program of the item that fetches a 24- or 32-byte
+  record carries 1/256 in its literal bank, but a rule taking the literal
+  for thin pile-ups would also move Runway's pool 6, Silo's pools 1 and 7
+  and Surface's pools 8 and 9 (frozen stages), and Bunker 1's control-room
+  floor reads at 1/512 against its literal 1/256 to match the cartridge's
+  tile count, so the literal is not the scale on its own. The image-repeat
+  rule (#86) does not decide them: pool 3 draws images 5 and 49 at a
+  twentieth of pool 1's repeat and the cobble image only with pool 2, and
+  no single divisor brings all three within the factor.
+- **The flight recorder stays the game's (CORRECTNESS DEBT).**
+  `prop/chrblackbox` is refused at preparation: 2 of its 4 measured draws
+  stay inside zero and reach 0.771 at 1/32768, and no rule of
+  `texcoord_scale` decides it. Forced in a scratch root, 1/32768 and 1/16384
+  both lay the hazard bands where the cartridge paints them and 1/8192 and
+  1/4096 do not; nothing in the item chooses between the first two (the
+  mainframe2 class, B-BNK2A).
+- **The helicopter, Trevelyan, the Janus guards and Natalya were not seen
+  on stage.** They come on later in the mission; their bundles are prepared
+  (`char/trevelyan`, `char/trevguard`, `char/greatguard`, `head/headmishkin`
+  new this round; `char/natalya`, `prop/tiger` from earlier stages) and the
+  helicopter was seen standing in its compound at level start. Their draws
+  are inferred from the generic character and moving-prop paths.
+- **The park gate was seen shut only.** It stays shut under the pad's use
+  presses at level start (game state); the item rides the model's own
+  matrix, so it swings with it (inferred).
+- **The container's inner long wall runs the panel's bands across (to
+  check).** With pool 4 at 1/256 the walls, roof and floor carry the
+  corrugations at the remaster's density, but the long wall's bands run
+  horizontally where the remaster (debug camera, round sta1) shows them
+  upright; the roof's run along the container in both. Not measured further.
+- **`prepare-xbla-assets.ps1 -Level statue -Skydome` is refused**: the
+  source holds no dome for the stage, and the game's cloud layer draws.
+
+## B-STA2 Statue's frame time under XBLA (OPEN 2026-10-07, #86)
+
+**Area:** renderer (src/gfx), world-asset native fill.
+
+- **The pacing model (measured, `src/platform/sl_ultra_shim.c`).** One
+  presented frame per 60 Hz VI: `sl_pace_frame` sleeps to the VI schedule
+  (`SL_FPS`, default 60) and, when a frame runs late, the VI catch-up
+  (`SL_VI_CATCHUP`, default on) services the missed retraces so the game
+  keeps real time while fewer frames are presented. Swap interval 0 unless
+  the VSYNC setting asks for 1. There is no uncapped or high-refresh mode:
+  `SL_FPS` moves the VI rate itself, which is the simulation's clock, so a
+  higher value runs the game faster. The ceiling is 60 presented frames a
+  second by design; below it the build is CPU-bound in the display-list
+  walk (presentation of a frame measured 0.05-0.6 ms).
+- **What a playtest saw.** Run 20261007-183945-lvl22 (`input.vis`, VI
+  advances per presented frame): 30392 frames over 36834 VIs, 49.5 presented
+  frames a second on average, 17.7% of frames late, 600-frame windows from
+  30.2 to 60.0.
+- **Measured and repaired (#86, round sta2).** Unpaced, one VI per frame,
+  `SL_VI_CATCHUP=0`, 31 teleport poses, an in-process sampling profiler:
+  (1) `aeq_mode_enabled` called getenv on every triangle and texture
+  application (62.8% of ORIGINAL's frame at the start pose) - latched;
+  (2) under XBLA the #81 open-hole trace (`sl_wa_fill_open`) dominated the
+  denser park views: about 930 traces a frame, 24 sphere-trace steps each,
+  about 100 candidate triangles a step (84% of a 62 ms frame at room 2's
+  pose) - a bounding-box test with an exact margin, an exact integer floor,
+  and no trace for a triangle wholly outside the view. All frames
+  byte-identical (31 poses in ORIGINAL and XBLA, nine frozen stages' XBLA
+  start frames). Unpaced medians, ORIGINAL: 10-62 ms before, 1.5-5.1 ms
+  after at every pose. XBLA: open views (start, gates, helicopter compound,
+  armour, rooms 5 and 11) 5-12 ms; the denser park views 15-29 ms (room 2
+  22.4, room 7 24.7, room 18 28.7, room 20 27.4, room 26 26.5). With the
+  player's pacing (60 Hz, catch-up on): ORIGINAL 57.5-59 presented frames a
+  second at seven poses (was 16.5-58); XBLA start and helicopter 58.5,
+  Valentin's container 50.4 (was 24.9), room 2 41.8 (14.3), room 18 31.6
+  (15.9), room 24 35.6 (16.4).
+- **What is left (PERFORMANCE DEBT).** In the dense XBLA views the open-hole
+  trace is still most of the frame (room 2's pose: 29% of the traces
+  skipped as unseen, the rest about 24 steps each of about 100 box tests). Finer grid cells do not cut the candidates (cells of 8, 4 and
+  2 registration radii, larger spans per level: 85-260 tests a step), and
+  free-space steps are 32% of all steps, so a conservative distance field
+  would save at most that. What would cut it changes the trace's sample
+  points (larger steps, an analytic segment test) or reuses decisions
+  across frames, so it can change pixels; decide with byte-identity
+  waived. Also measured, smaller: the background pass 3-4.6 ms a frame
+  (58701 vertices transformed on the CPU, 93 client-array draws, driver
+  synchronisation under `glDrawElements`), and `sl_wa_active` calling
+  getenv per call (1-5%; the self-test rewrites `SL_WORLD_ASSETS` at run
+  time, so a latch needs a reset hook).
+- **The darkest XBLA views stay dark.** D-043 moves the stage fog's start;
+  the remaster's baked vertex colour (area mean 61 of 255) still leaves
+  room 1's fence line, room 7, room 10 and the helicopter compound's far
+  side at a third to a half of ORIGINAL's mean luma, fog or no fog.
+
+## B-HR1 High-refresh presentation: what round hr1 established and left (OPEN 2026-10-07, #87)
+
+**Area:** frame pump (src/platform), renderer (src/gfx). Decision record:
+docs/decisions/high-refresh-presentation.md.
+
+- **The chain (read from the code, then measured).** `boss.c` blocks on
+  `gfxFrameMsgQ`; the pump (`sl_ultra_shim.c`, `sl_pump`) answers. On a
+  retrace message the game runs `waitForNextFrame` (frametiming.c: the VIs
+  elapsed become `speedgraphframes`, then `g_ClockTimer`, lv.c:1027), ticks,
+  builds the display list and calls `rspGfxTaskStart`, which walks it at once
+  into the GL back buffer (`sl_gfx_frame_dl`). The pump's next service runs
+  the retrace (`sl_vi_retrace_once`: input advance, AI drain,
+  `__scHandleRetrace`, audio step), sleeps to the next VI (`sl_pace_frame`),
+  captures the trace, presents (`sdl_end`, swap), polls SDL (the mouse is
+  read here, once per game frame) and clears. Every displayed frame was one
+  simulation frame, and nothing could re-present one.
+- **The accepted pacing jitters (WITNESSED).** Regular presents land
+  8.8 / 16.6 / 25 ms apart at p10 / p50 / p90 (Facility, 60 Hz, vsync off).
+  The cause is nanosleep on this toolchain: 200-sample overshoot means of
+  14.6 ms (1 ms requested) and 10.6 ms (5 ms requested), max 29.8 ms, unchanged by
+  timeBeginPeriod(1); Sleep at period 1 is 0.4 ms and a high-resolution
+  waitable timer 0.3-0.4 ms (max 1.1). The swap itself returns in 0.05 ms.
+  The default keeps nanosleep (the accepted behaviour); `render_fps` != 0
+  uses `sl_precise_wait_until`, and `render_fps=60` alone gives 16.67 /
+  16.81 ms p50 / p95 with no extra frame.
+- **Measured, round hr1 (Facility pose 3121,-179,-708, catch-up on, 3600
+  pumped frames, a turn-and-walk pad script, second monitor 720x1280 at 60 Hz
+  under the desktop compositor, machine at ~35% background CPU).** VI and
+  game clock 60.0/s in every arm. Presented frames a second, vsync off: 0 ->
+  58.4; 60 -> 58.4; 120 -> 112.2; 144 -> 112.3; 165 -> 135.5; 240 -> 155.9;
+  uncapped -> 292 (repeat runs on a quieter machine: 240 -> 144-187,
+  uncapped 455-503). Vsync on: 58-59 at every cap - on a 60 Hz panel every
+  swap waits a refresh, so there is no room for an extra frame. Per frame:
+  game work 3.0 ms (SL_PHASE), a re-walk 0.6-2.4 ms, the restore blit
+  0.5-0.9 ms; the pump arrives 2.5-7 ms after the regular present depending
+  on load, which is what limits the 120 cap to 112.
+- **Identity (WITNESSED).** Per-tick traces (`SL_TRACE_OUT`, one VI per
+  frame) byte-identical across head and six candidate arms (off, 60, 120,
+  uncapped, uncapped + vsync, 120 without the camera blend): Facility
+  6C73509B6F2DB4C1 (turn, walk, fire, use, watch open and close), Dam
+  92226C27A05CE1D0 (gate B through its panel, the airlock walk). Headless
+  traces unchanged. With `SL_RENDER_INTERP=0` every extra frame hashes equal
+  to its regular frame (1236 of 1236; 442 of 442 at the 60 Hz VI) and the
+  regular frames equal the off arm's (450 of 450); with the blend, 1069 of
+  1223 (488 of 525 at 60 Hz) extra frames are new images. Audio on: queue
+  0.18-0.23 s, growth about 0, 4 startup underruns in every arm.
+- **Seen, not explained.** Three hr arms in one batch stalled for 0.28,
+  0.44 and 1.38 s in a game frame (frames 443-470 of a 240 arm); seven repeat
+  runs and every later arm did not. The default arm's worst in the same
+  batches was 75 ms. Watch for it in physical testing.
+- **What steps at the simulation rate (KNOWN).** Everything but the camera:
+  characters, props, doors, the weapon's animation, muzzle flash and HUD
+  advance once per simulation frame. The original sky is CPU-projected
+  screen-space triangles drawn under no named projection, so it holds its
+  frame while the world moves; on the XBLA sky and background the native
+  passes take the corrected projection, but per-frame decisions made from
+  the game's eye (the #81 open-hole trace, the coplanar eye test) use the
+  simulation frame's camera. Per-room scissor boxes are the frame's own;
+  geometry moved by the blend can be cut at a portal edge by a pixel or two.
+- **Not done (PARKED).** Interpolating props and characters (needs their
+  previous matrices matched across frames); a VSync mode that lets the
+  display's own cadence time the extra frames; testing on a display above
+  60 Hz (the development rules place automated launches on the 60 Hz second
+  monitor, so a 120+ Hz panel showing the frames is for physical testing).
+- **The FRAME RATE row (round hr2, 2026-10-08).** Both menus carry it beside
+  VSYNC: the watch's SIGHTLINE -> DISPLAY child (a named row, latched
+  LEFT / RIGHT, a click on the name steps up) and the front end's DISPLAY
+  tab (`-` rate `+`; the value and the label step up). Values in order,
+  wrapping: ORIGINAL (`render_fps=0`, the default and the accepted pacing),
+  30, 60, 120, 144, 165, 240, UNLIMITED (-1). One store row through
+  `sl_render_fps_step` / `_set` / `_name` (sl_window.c); write-on-change.
+  SL_RENDER_FPS stays a launch value the rows show until a row is changed;
+  from then on the store governs (the VSYNC rule).
+  - *The first broken stage:* `sl_pres_cap` cached `render_fps` on its first
+    call, so no change made after the first frame could reach the pump. It
+    reads the value in force every frame now and logs each change.
+  - *30, a cap below the VI:* the regular present is held (the swap and the
+    B-124 colour blit skipped, the mark and the shot still read the frame);
+    each VI earns N / VI-rate of a present. The sim, the VI clock, the trace
+    capture and the audio are not touched.
+  - *The front end's DISPLAY tab* is the first tab with eight rows. At the
+    accepted 0x20 pitch its BACK would sit at y 0x150, below the cursor's
+    clamp (y 310), so a nine-slot tab packs at 0x1B below a non-slider row
+    (0x20 below the FOV slider): BACK at y 301. Every other tab keeps its
+    layout.
+  - *Measured (hr2, Facility, 60 Hz second monitor):* per-tick traces
+    (catch-up 0, 900 pumped frames) AE6644E8B5AA8068 in eight arms - head,
+    ORIGINAL, 30, 60, 144, UNLIMITED + vsync, 30 + vsync (all set through
+    the config row), SL_RENDER_FPS=240. Presents a second: 30 -> 30.2
+    (p50 33.34 ms), 60 -> 56.8, 144 -> 105.4, 240 -> 156.5, UNLIMITED with
+    vsync on -> 55.1 (the display's refresh limits it). A live change from
+    the watch to 120 -> 112.8-119.9 in play. Audio on: 600 / 604 / 605
+    submits, 0 refused, 4 startup underruns at ORIGINAL / 30 / 144.
+  - *Seen in the evidence tooling, not a defect:* the watch reopens on the
+    SIGHTLINE page's ROOT view, so a pointer probe aimed at a DISPLAY child
+    row in a second watch session lands on the root's rows (head behaves
+    the same).
+- **The SHOW FPS counter (round hr3, 2026-10-08).** A two-value row
+  (OFF / ON, default OFF) after FRAME RATE in both menus: the watch's
+  DISPLAY child (`SL_WROW_TOGGLE_SHOWFPS`, eight rows with one bar) and the
+  front end's DISPLAY tab (`SR_SHOWFPS`). The store row `show_fps`;
+  SL_SHOW_FPS=0 / 1 holds for a launch until the row is changed. The decision
+  record says what is counted and where it is drawn.
+  - *The front end's DISPLAY tab* now has nine rows, ten slots with BACK. A
+    ten-slot tab packs at 0x18 below a non-slider row (0x20 below the FOV
+    slider): BACK at y 304, the widest pitch that keeps BACK above the cursor's clamp
+    (0x19 would put it at 312). A nine-slot tab would keep 0x1B; tabs of up
+    to eight slots keep 0x20.
+  - *Accuracy (Facility, 60 Hz second monitor, catch-up on, 1024x768, 20 s;
+    after 4 s):* the counter's values against the same presents counted by
+    SL_PRES_STATS and SL_PRES_LOG. Vsync off: ORIGINAL 60.0 (60.0 / 60.0),
+    30 -> 30.0, 60 -> 60.0, 144 -> 119.8 (119.8 / 119.8), 240 -> 174.2
+    (174.1 / 174.3), UNLIMITED -> 303.4 (300.7 / 303.5). Vsync on: 60.0 at
+    every cap but 30 (30.0). Largest difference 0.9% (UNLIMITED against the
+    5 s statistics windows, which start at a different present); 0.07% or
+    less against the per-present log.
+  - *Cost:* the draw's CPU time 0.006-0.065 ms mean per present (max
+    0.6 ms, at UNLIMITED where any GL call can wait on the queue). UNLIMITED
+    presents a second, counter off / on, three interleaved pairs: 304.9 /
+    296.4, 332.3 / 318.9, 325.7 / 342.9 - inside the run-to-run spread.
+  - *Identity:* per-tick traces AE6644E8B5AA8068 in eight arms (head; off;
+    on; on at 30, 144, UNLIMITED + vsync; off at 144; SL_SHOW_FPS=1 at
+    UNLIMITED). SL_SHOT with the counter on shows no counter.
+  - *Small windows:* one font unit per 360 lines, so below about 540 lines
+    the glyphs are 7 pixels tall.
+
+## B-PERF1 Renderer performance: XBLA frame time (OPEN 2026-10-08, #88)
+
+**Area:** renderer (src/gfx), world-asset native fill and background pass;
+measurement tooling.
+
+- **Where an XBLA frame went (round perf1, measured).** A per-walk split
+  (regular walk, presentation re-walk, restore) of the open-hole trace, the
+  native-fill registration and the background pass, a GL_TIME_ELAPSED query
+  per walk, the swap, and an in-process EIP sampler; 1365x768 window on a
+  240 Hz panel, FRAME RATE UNLIMITED, vsync off. Statue's dense park views:
+  the regular walk 16-27 ms, of it the #81 open-hole trace 10-19 ms (63-72%)
+  and the background pass 3-4.5 ms; game work 0.2-0.3 ms. Open views and
+  other stages: the background pass is the largest share of every walk
+  (Statue's start 2.8 of 4.8 ms, Frigate's deck 4.8-5.9 of 6.3-8.5, the Dam's
+  start 6.7 of 12.6). The GPU query reads a span close to the CPU walk (the
+  GPU waits on submission), so the frame is CPU-bound.
+- **Repaired, exactly (#88).** (1) The open-hole answers are remembered
+  under the eye, the hole point and the scale (`nf_open_traced`): every
+  re-walk's asks recur, and 46% of a regular walk's. (2) The fill grid's box
+  test runs four candidates at a time in SSE2 with the scalar test's own
+  arithmetic (`fill_run_scan`). Regular and fixed-alpha extra frames hash
+  identically to the commit before both at Statue rooms 2 and 18, Statue's
+  start and Frigate's deck, and the regular frames at the ten frozen
+  stages' starts; per-tick traces identical. Means of two interleaved runs
+  (before -> after, presented frames a second, 1% low): room 2 46.3 -> 62.5
+  (36.2 -> 55.8), room 18 35.8 -> 59.2 (26.9 -> 43.6), room 24 42.3 -> 60.0
+  (31.1 -> 51.3), Valentin's container 57.2 -> 60.0, Statue's start 108.6 ->
+  141.0, Frigate's deck 60.0 -> 60.0. ORIGINAL and COMMUNITY HD do not run
+  either path.
+- **Tried and rejected.** A bounding-volume tree over the grid's triangles
+  (exact, slower: 15.1 -> 16.8 ms of trace at room 2); glDrawRangeElements
+  and buffer objects for the background pass's arrays (no change: its draw
+  time is about 300 calls a pass, not the client-array copies).
+- **What is left (PERFORMANCE DEBT).**
+  - *The background pass* is now the first stage on most XBLA views and
+    the whole of what keeps Frigate and the Dam at 60: the CPU transform is
+    13-22 ns a vertex over every vertex of the item (192082 on Frigate,
+    150993 on the Dam, 58701 on Statue) on every walk, re-walks included,
+    and about 300 draw calls a pass (the coplanar runs). Moving the transform
+    to the GPU is the remaining lever; the near-cut fill, the two far
+    ranges, the decal pull and the coplanar push all read or rewrite the
+    CPU's clip positions, and GPU arithmetic is not shown to match the CPU's
+    to the bit, so it needs a pixel-difference decision before it ships.
+  - *The trace in a regular walk* is still 5-9 ms in the dense park views
+    (about 94 candidate entries a step, under 5 within reach). Exact
+    structures that visit fewer candidates cost more per step than the grid
+    (the tree above); anything that changes the sample points or reuses an
+    answer across frames changes pixels.
+  - *The extra-frame budget* (sl_ultra_shim.c, sl_pres_budget) charges an
+    extra frame 1.15 times the REGULAR walk; with the answers remembered a
+    re-walk at room 2 costs 4.7 ms against a 13.7 ms walk. No measured view
+    has the room for one either way today, so the estimate was left alone.
+    Until the first extra frame sets up the kept-frame copy, the restore is
+    budgeted as a whole re-walk; the copy is set up early in a session, so
+    no measured run was held back by it.
+- **The measurement harness's own hitch (TOOLING-EVIDENCE DEBT).** A game
+  launched by `Start-Process -RedirectStandardError` writes stderr into a
+  pipe PowerShell drains, and the walker's two heartbeat lines every 60
+  walks then block for about 40 ms (measured 40.3 mean, 49.5 max; a test
+  program: 59 ms a pair against 0.04 ms into a file the C runtime opened).
+  That is every 40-60 ms frame in the 1% lows of sta2, hr1-hr3 and the
+  first half of perf1. The player's default launch is not affected (run
+  capture reopens stderr onto a file); `play.ps1 -MeasurementMode` is. Timing
+  launches should hand the game file handles (cmd's own redirect).
+- **The dominant thread (round perf2, measured).** Every thread's cycles
+  (QueryThreadCycleTime) over a 10 s window at six poses, 1365x768,
+  UNLIMITED, vsync off: the game's main thread is the one busy thread -
+  52-96% of a core (Frigate's deck 52, Statue's room 2 77, room 18 96) - and
+  every other thread but the sampler's own is under 0.01% (the driver runs
+  no busy thread of its own). Its walk is CPU work, not a wait in GL: the
+  walk's thread cycles are 96-98% of its wall time. An EIP sampler that
+  records the phase the thread is in: at room 18 the open-hole trace is 53%
+  of the samples (closest-point tests 26, the query's cell walk 22), the
+  background pass 19, the rest of the walk 17, waits under 1%; at room 2 the
+  trace 32, the pass 19, the pacing sleep 26; at Statue's start, Frigate's
+  deck and the Dam's start the background pass is the first stage (79, 78
+  and 64% of the regular walk). Inside the pass at Statue's start: its own
+  code (chiefly the vertex loop) 41% of its samples, the driver inside
+  glDrawElements about a third, the stage-fog coordinate 9%.
+- **The trace, again (three exact reworks, none faster).** A census of the
+  trace's queries at room 18: about 8500 a walk, 9.6 closest points each of
+  which 1.3 lower the best. Nearest box first (gather the candidates, test by
+  box distance; exact, self-tested): slower, room 2's trace 5.2 -> 9.9 ms.
+  The previous step's nearest triangle tested first when the query meets it
+  (exact, self-tested, a mutant fails): no change (9.06 -> 9.19 ms). Finer
+  grid levels (coarsen 4, five levels): a sixth of the level-1 candidates,
+  the same time. With perf1's tree that is four exact reorganisations of the
+  same work without a gain; the trace is left as it is.
+- **Repaired (#88): the background pass's arrays in buffer objects.** The
+  pass's draws read client-side arrays, and the driver copied each draw's
+  index list and every vertex its indices span: Frigate's largest mesh
+  (391620 indices over 126365 vertices) cost 1.1 ms in one call; at
+  Statue's start the spans added up to about 14 times the item's vertices a
+  walk. (perf1's buffer experiment re-pointed the vertex array at the client
+  array on every coplanar run, so most of its draws were still client draws:
+  its "no change" did not measure buffer objects.) The item's records and
+  indices now sit in buffer objects per item, the walk's positions and fog
+  coordinates are uploaded once a walk, and a rewritten mesh's span again
+  (sl_gfx_dl.c; SL_BG_VBO=0 the A/B). Regular and fixed-alpha extra frames
+  hash identically to the commit before at Statue rooms 2 and 18, Statue's
+  start, Frigate's deck, the Dam's start, Bunker 1's shaft and hazard-strip
+  wall, four Bunker 2 marks, three Frigate decal and waterline marks and
+  Surface's start (turning pad, 200 regular and 200 extra frames each), at
+  the ten frozen levels' starts, and under ORIGINAL and COMMUNITY HD; a
+  build that skips the second range's upload changes every frame at
+  Surface's start, and one that draws alternate walks from stale positions
+  every frame at room 2. Per-tick traces (Facility, Statue room 2) are
+  identical; audio is byte-identical over a room-2 run; GPU memory at
+  Statue's start is flat after load (103.0 MB against 97.5 before).
+- **What the repair bought (interleaved repeats, presented frames).**
+  Background pass, regular walk, median ms (before -> after): room 2 3.06 ->
+  2.34, room 18 3.21 -> 2.33, room 24 3.13 -> 2.26, Statue's start 3.05-3.30
+  -> 2.34-2.42, Frigate's deck 4.75-5.30 -> 3.44-3.72, the Dam's start
+  6.10-6.21 -> 6.07-6.19 (no gain). Presented frames a second: Statue's start
+  130.6 -> 184.1, 146.2 -> 187.4 and 137.2 -> 179.6 in three repeat sets
+  (1% low 63 -> 90); room 18 57.9 -> 61.3 (1% low 38 -> 48); Frigate 60.0 ->
+  74.1 and 66.2 -> 79.0, and 66.5 -> 60.0 in the third set - its walk sits
+  at the extra-frame budget's edge, so its frame rate is bimodal. The FPS
+  counter at Statue's start read 122-145 before and 172-185 after.
+- **What is left (PERFORMANCE DEBT).**
+  - *The Dam's start gained nothing*: some 48 meshes a walk are rewritten
+    (decal pulls), each re-uploaded into a buffer that issued draws still
+    read, and the driver waits inside the pass (about 10% of the pass's
+    samples). Layouts that never write a buffer in flight - each range in
+    fresh storage, a rewritten mesh from a copy of its own or from the
+    client arrays - were each slower than the shipped one at Statue's start
+    (pass 3.4-3.7 ms against 2.3-2.4), for a reason not isolated.
+  - *The vertex loop* is now the largest part of the pass. Its item box,
+    nearest vertex and fog / depth statistics feed diagnostics only; an
+    experiment that skipped them measured 0.4-0.8 ms of the pass in single
+    runs (Frigate 4.98 -> 4.52, Statue's start 3.65 -> 2.84 ms). Computing
+    them only for a census is the next exact step.
+  - *The trace* (above) is still the first stage in Statue's dense views.
+  - *The extra-frame budget* still charges an extra frame 1.15 times the
+    regular walk (perf1's note stands); with the re-walk now cheaper than
+    the walk at every Statue pose, it is what holds rooms 2-24 near 60.
+    (Round perf3, below, measured this and found it does not: the rooms
+    have no room for an extra frame under any charge.)
+- **Where the presentation scheduler leaves time unused (round perf3,
+  measured).** Every admission decision of the extra-frame scheduler logged
+  (a scratch build: the time left to the VI, the charge, each extra frame's
+  cost from its start to its swap's return, each restore, each regular
+  present's lateness), six poses, XBLA, 1365x768, UNLIMITED, vsync off.
+  Time left at the first decision against what one extra frame actually
+  costs (median; p90): Statue's room 2 4.7-5.4 ms against 4.9-5.4 (6.1-6.4),
+  room 24 2.7-2.9 against 5.2-5.9, room 18 none (its regular walk alone runs
+  past the VI on most frames), the Dam's start 5.2 against 9.3 (measured at a
+  30 Hz VI), Statue's start 12.3-12.6 against 3.3-3.5 (4.4-4.7), Frigate's
+  deck 9.3-10.1 against 5.9-6.1 (8.3-8.4). With the 1.5 ms margin, the dense
+  Statue rooms and the Dam have no usable headroom whatever the charge
+  (under 1.3% of room 2's frames would have fitted one). Statue's start
+  already takes about two extra frames a frame.
+- **Repaired (#88): the untried kept-frame copy.** The restore after a
+  frame's extra frames was charged as a second re-walk until the kept-frame
+  copy had been tried, and only an admitted extra frame tries it: on
+  Frigate's deck (walk 5-6 ms) one extra frame fits but two walks do not, so
+  a session that did not happen to admit one early never admitted any - six
+  of nine HEAD runs there with vsync off presented 0 extra frames for the
+  whole run.
+  `sl_gfx_restore_is_copy` now reports an untried copy (where it can run) as
+  a copy; a copy that fails its first try turns itself off and is charged as
+  a re-walk from then on. Interleaved, two repeats each (HEAD -> repair):
+  Frigate UNLIMITED 59.8 -> 97.5 presented frames a second (1% low 45.1 ->
+  56.9, interval p99 21.3 -> 17.2 ms), capped at 144 60.0 -> 103.4; Statue's
+  start, room 2 and the Dam's start unchanged; VSync on (60 Hz panel)
+  presents no extra frame at any pose either way.
+- **What it costs (MEASURED, kept).** Frigate's extra frames bring HEAD's
+  own misses with them - restores that end past the VI, the regular present
+  late by 0.03-1.4 ms (one 5.4 ms) - 7-8 in 20 s, the same as HEAD's runs
+  whose copy did come up (2-7 in 10 s, up to 3.6 ms). The regular presents
+  late for any reason over the UNLIMITED pair: 14 -> 9. The extra frame's
+  cost there varies from frame to frame on the same list (re-walks 3.6-12.4
+  ms in one run, the regular walk 4.4-7.9 at a fixed pose), so no charge
+  that admits Frigate's extras is free of misses.
+- **Tried and rejected: a measured charge.** An extra frame charged the
+  largest of the last eight measured extra frames plus 0.25 ms (samples
+  counting 1 s, the walk rule as the seed, a stall guard after a missed VI):
+  Statue's start 187.3 -> 175.0 presented frames a second (the charge, about
+  5.2 ms, sits above the walk rule's 4.6, which overruns 17% of extra frames
+  and loses them in the 1.5 ms margin - one miss in 20 s), Frigate's misses
+  unchanged (2 against HEAD's 2-7), no other pose changed. The walk rule's
+  stall memory (a stall's size held and decayed 2% a frame) left 155 of 596
+  frames at Statue's start without an extra frame in one run with four 17-45
+  ms stalls, and none in the eight runs since: not repaired on one sample.
+- **What is left (PERFORMANCE DEBT).** The frame rate in the dense Statue
+  views and at the Dam is the regular walk's (rooms 2-24 at 60-71, room 18
+  over budget on most frames): extra frames there need a cheaper regular
+  walk first (the trace, the background pass: above). Frigate's misses are
+  the extra frame's cost variance, which looks like the GPU's or the
+  driver's queue (the walk's GPU span 10-14 ms on frames without an extra
+  against a 6 ms CPU walk) - not isolated.
+
+## B-ARC1 Archives under XBLA: what rounds arc1 and arc2 left (OPEN 2026-10-08, #89)
+
+- **The street face of the building is open (MISSING IN THE SOURCE).** Along
+  the street the exit runs down (room 64, world z -2700 .. -1900), the
+  remaster's `background/archives` carries the building's baseboard (y -83)
+  and cornice (y 538) and its window frames (x 194 .. 200), but no wall
+  between them: its only faces there are the library's inner walls, facing
+  the rooms (x 161 .. 188). Every draw of the item is carried (121 of 121).
+  The game's wall stands 18 or more units from any remaster surface, so the
+  native fill never registers it, and XBLA shows the library's interior
+  through the frames, as the remaster itself does (private emulator, debug
+  camera, the same two poses). A divergence that draws the game's own wall
+  there needs a rule for unregistered game surfaces in front of the
+  replacement; none is written.
+- **The bookshelves show a quarter of each row (CORRECTNESS DEBT).**
+  `prop/bookshelf1` (39 on the stage; also on Surface and Surface 2) reads
+  at 1/4096: its frame draw starts one raw unit below zero, so its eight
+  book rows alone decide the scale, and each row - a 256x128 picture of one
+  upright row of books, v running 0 .. 1024 - shows its top quarter, the
+  books four times too large. The item's vertex programs carry 1/1024 in
+  their literal banks, and forced to 1/1024 in a scratch root the shelves
+  hold full rows of books like the cartridge's. Taking the literal over the
+  measured scale was tried and refused: it also moves `card_box6_lg` (whose
+  draw lies exactly on 0 .. 16384 at the measured scale) and `dest_exocet`
+  by a factor of two, and Facility's glassware, so the literal is not the
+  scale on its own (the same finding as B-STA1's pools). No second rule was
+  grounded.
+- **The flight recorder stays the game's** (`prop/chrblackbox`, B-STA1; the
+  Secret and 00 Agent objective on this stage).
+- **`prepare-xbla-assets.ps1 -Level archives -Skydome` is refused**: the
+  source holds no dome for the stage.
+- **Bullet holes stay in the air after a pane is shot out (ORIGINAL
+  BEHAVIOUR, round arc2).** ORIGINAL and XBLA alike keep the impacts in the
+  opening's plane after the game's glass breaks, and later shots land on
+  that plane too. Kept by rule; clearing them would be a runtime toggle
+  defaulting to the original.
+- **A two-layer draw's layer over a decal-pass base yields to its own base
+  (UNVERIFIED, round arc2).** The pair rule (round bk2b) pairs the two
+  decal-pass meshes prepare.py makes of one two-layer draw, so the layer
+  draws under LESS and without the offset on its base's very triangles, and
+  is expected to lose everywhere to the base and the floor under it
+  (inferred, not measured): on Surface the fence shadow's layer (mesh 65 over mesh 64, 14
+  triangles). Drawn where its base is cut out (a scratch
+  candidate of round arc2), it darkened the snow between the shadow's wires,
+  which the source's single draw would discard. Whether the layer belongs
+  over the base's opaque texels has not been compared with the remaster.
+
+## B-STR1 Streets under XBLA: what round str1 left (OPEN 2026-10-08, #90)
+
+- **The untextured backdrop at the end of the start alley draws too bright
+  (CORRECTNESS DEBT).** Mesh 70 of `background/streets` (draw 150, pool 3: a
+  20-byte record with a unit normal, 76 triangles, style 0x4701, no image)
+  is a flat silhouette of the buildings behind the alley's fence. The
+  preparation draws a draw that names no image by its vertex colour over one
+  white texel (`prepare.UNTEXTURED`, round bnk1), so it stands grey, about
+  (67, 73, 75) at the start view, where the remaster's own frame (private
+  emulator, the remaster's start view) draws the same silhouette at about
+  (19, 24, 26), close to the fogged sky. The draw's pixel program fetches no
+  image, so the reader cannot place it, and its arithmetic (a lighting term
+  on the normal is the likely difference) is not recovered; no rule was
+  written. `SL_BG_HIDE=70` shows the sky and the far buildings there instead.
+- **The rooms inside the building blocks are seen only from inside a block.**
+  The setup places `st_pete_room_*` (35 props) at bound pads inside the
+  blocks; teleport poses that land inside a block (the floor tile found by
+  `nearest`) see the remaster's rooms and closed buildings where ORIGINAL
+  sees through its one-sided facades to the street. From the streets
+  neither presentation shows them. Not reachable in play (inferred).
+- **Not witnessed:** a jeep moving along its path (the AI's vehicle path near
+  pad 266 did not start from the pose tried), the red-uniformed guards
+  (`char/redman`, AI spawns), the landmines and the grenade pickups; their
+  bundles are prepared and their draws are inferred from the generic paths.
+- **`prepare-xbla-assets.ps1 -Level streets -Skydome` is refused**: the
+  source holds no dome for the stage, and the game's cloud layer draws.
+  (Round str2: the stage now draws Frigate's dome, lent - D-044.)
+
+Round str2 (2026-10-08) answered the sky (D-044), the jeep (D-045) and the
+landmines (the static reader's coordinate-only record), and left:
+
+- **The lent sky is brighter overhead than the game's.** Looking up, the
+  cloud cover lit by row 29's cloud colour measures luma 122 against the
+  game's cloud layer at 91 (the cover is denser than sky.c's cloud image);
+  near the horizon both fade to the fog navy. Not tuned.
+- **The jeep's wheels hold the rest pose.** The remaster's item is one rigid
+  piece; a jeep the stage drives would slide on still wheels. No jeep was
+  seen moving (the vehicle path near pad 266 was not started).
+- **Tool drift in the play root, not installed.** Re-preparing every
+  accepted stage's props with the current tools rewrites three bundles the
+  play root holds from 2026-10-05 (`chrkeyyale`, `desk_lamp2`, `oil_drum7`)
+  and prepares two it lacks (`chrdoordecoder`, `glassware2`, Facility). The
+  static reader's change moves none of them (its output differs from the
+  previous reader's on `landmine` and `carescort` alone), so the difference
+  comes from earlier tool changes; it is unmeasured on screen.
+- **Three other items carry coordinate-only records:** `carbmw` (refused: a
+  16-byte buffer), `carescort` (read correctly now; no accepted stage
+  places it) and `carzil` (refused: its pose records).
+
+Round str3 (2026-10-08) answered playtest run 20261008-222210-lvl29: the
+untextured backdrop (mesh 70) now draws at the material colour its program
+multiplies by (c13 = 0.5, read from the item), and the blocks at the ends of
+the long streets no longer come in whole (D-046: the lent dome is the fog
+colour below the game's cloud-layer edge). It corrects one finding above and
+leaves:
+
+- **Correction: the long streets are props.** Along rooms 21 - 25 the game's
+  rooms carry no geometry; the `st_pete_room_*` props ARE the street there
+  (with the background item hidden the XBLA frame at mark 3 is
+  byte-identical), not only rooms inside the blocks.
+- **The untextured rule reaches four accepted stages on re-preparation (not
+  installed).** Bunker 1, Surface, Silo and Facility carry the same
+  colour-times-c13 program and their untextured draws upload c13 (0.5;
+  Facility 0.099). Re-prepared into a scratch root: Bunker 1 changes by this
+  rule alone (A74208BE -> 55478B1B); Surface, Silo and Facility change on top
+  of earlier tool changes (HEAD tool: E9D0D161, A100CAC0, 9E185127; with the
+  rule DB94E93A, A6EA4A9A, AF9C6AD3); the Dam changes by earlier tool changes
+  alone (6B3468A7). Which draws bind the program is inferred from the uploads
+  and the program's presence, not decoded per draw; each needs the
+  emulator's frame beside it before its bundle is installed.
+- **The remaster's whole Streets frame is darker than Sightline's** at the
+  start alley (the fence 9.5/8/6 against 20/17/14, a facade 31/23/15 against
+  34/29/21; the backdrop 17/20/21 against 28/32/33). The draws share the
+  game's light state here (`LAYER_GAME_STATE`, measured on the Dam); Streets'
+  own c196..c198 and c7 were not dumped. Not tuned.
+- **The emulator's pitch on Streets.** `xr.ps1 -Action goto` lands on the
+  mark's position but the pitch is held at -4 (`447F0A04` is rewritten every
+  frame here and a hold does not take); captures were made at that pitch and
+  compared with Sightline at the same pitch.
+
+## B-DEP1 Depot under XBLA: what round dep1 left (OPEN 2026-10-09, #92)
+
+- **The train's body (CORRECTNESS DEBT, unresolved).** The background item's
+  train is a rusty freight car (mesh 46, image 45, style 0x4701 like every
+  draw of the item) with wooden interiors, under the remaster's green
+  hazard-striped door props; the game's car is a green armoured one. The
+  private emulator's debug camera at the platform (pose p38, background only)
+  shows rails and fence where Sightline draws the car. The Bond-view teleport
+  that would show the remaster's play frame (props drawn) refused on Depot:
+  `tpcalc.py` finds no stan from the player block's tile pointer (NOSTAN,
+  addresses measured on Runway), at 12 s and 40 s after the load. Whether the
+  remaster draws the car in play is not established.
+- **The sky.** The remaster draws Depot's sky black (no cloud layer); the
+  source holds no dome. Sightline keeps the game's teal cloud layer.
+- **Darker than ORIGINAL.** Mean frame luma over 79 poses: ORIGINAL 32.70,
+  XBLA 24.82, XBLA with the stage fog off 27.55. The remaster's own frames
+  are darker still. Drawn as authored.
+- **The prop cut against the remaster's row.** The game's far-fog cut is at
+  view depth 2974.7 on row 30, where the remaster's row (-100 .. 5000) is 60%
+  fogged; doors are cut at 2997 - 3993 at 15 survey poses. One head-on
+  approach (yard 8, doors 41/42) showed no pop above the step noise; a door
+  facing the eye in open view at the cut was not found. No fog row was added.
+- **Not witnessed:** the roof gun firing, the arms cache (objective a,
+  difficulty 2), the hangar's roller doors and the office doors pressed, a
+  guard in the open past the cut.
+- **`prop/chrkeyyale` prepares differently with the current tools** (the
+  drift B-BNK2A and B-STR1 record); the bundle in use was left as it is.
+### Round dep2 (2026-10-09, #92)
+
+- **The sky: lent a dome (D-044 extended).** Depot draws `skydome/frigate`
+  under its own row 30 with D-046's edge, as Streets does. Overhead the cover
+  reads about twice the game's luma looking straight up (v28: 82.3 against
+  ORIGINAL 39.8) and mottled where the game draws sparse soft wisps; level
+  views move toward ORIGINAL. Not tuned. No prop or building edge was seen
+  against the dome on either approach series or the yaw strip.
+- **The yard tag (mark 1): D-047.** The level reader now pairs an effect
+  group that repeats its vertex half (Depot's first group), so every draw of
+  the item has a coverage answer; a two-image coverage draw is prepared as
+  one image; Depot's tag takes its coverage inverted. Whether the remaster's
+  own frame draws the dark rectangle its program describes is not witnessed:
+  the private emulator's debug camera draws no container at the mark (two
+  sessions; it also showed that the camera's pitch is `360 + verta`, the
+  opposite sign of what `xr.ps1 -Action view` assumes - looking down needs
+  a pitch near 360, and every earlier `-Verta -4` capture looked 4 degrees
+  UP).
+- **The rocket launcher (mark 2, PARKED).** The pickup in the warehouse is
+  the game's PchrrocketlaunchZ; `prop/chrrocketlaunch` loads. First wrong
+  stage, fixed: the seam refused it as "the model moves 2 parts" - both of
+  its matrices are GROUPSIMPLE offsets (`sl_prop_parts_fixed`), which move
+  nothing; WITNESSED, the refusal is gone. Next stage, PARKED (the round's
+  repair limit): the box test refuses it ("not the model's on axis 0, turned
+  or not"). Model box -527.4 -41.9 -85.8 .. 464.6 51.1 199.2 (992 x 93 x
+  285, centred on its grip); item box 583 x 7038 x 1363 item units. The
+  carried items the seam has related measure one scale: 16 of them (the AK,
+  the MP5K, the sniper rifle, the briefcase, ...) at 4.68 .. 4.71, the keys
+  at 2.34, the C4 fitted (D-038), and at 4.70 the
+  launcher's height agrees (1363 against 1340) while its length is 1.5 times
+  the game's (the remaster's warhead stands out in front). A fitted, turned
+  item (D-038's FIT has no turn) would need a rule for which way it points:
+  the model is centred on its grip, so THE TURNED ITEM's side test cannot
+  choose, and no validator shows the remaster's own pickup (props are not
+  drawn by the emulator's free camera; its Bond teleport is refused on
+  Depot). The game's white tube still draws under XBLA.
+
+## B-TRN1 Train under XBLA: what round trn1 left (OPEN 2026-10-09, #93)
+
+- **The last car's louvres are covered by the outer hull (CORRECTNESS
+  DEBT, mechanism unresolved).** At room 50's outer windows the remaster
+  (private emulator, debug camera) shows the louvres (`background/train`
+  mesh 48, image `_0x0BE00575`); Sightline draws the back of the outer hull
+  over them - mesh 11, source draw 15 (2498 triangles, one large quad of
+  2000 item units along the car side, facing out), 0.2 - 3.6 item units in
+  front of the louvres' plane. `SL_BG_HIDE=11` shows them. A ray cast at the
+  window hits the hull's back face first and the louvres first among front
+  faces. The remaster issues the hull draw in that frame (draw log: the same
+  381 draws at rooms 50 and 44, the hull's 4996-index quad list three times
+  each), so it is not a visibility cut; and at room 44's +z window the same
+  arrangement (hull back face in front of the blinds, mesh 18) is drawn dark
+  by the remaster as by Sightline, so a back-face cull would be wrong there.
+  The draw log carries no cull state and the bundle no `c_zadjust` value;
+  the louvres are a cutout draw of style 0x4b01, the hull 0x4701. Not
+  changed.
+- **`prop/brakeunit` was refused - RESOLVED in round trn2.** Its one draw
+  reaches 0.521 of its image at 1/32768 and 1.042 at 1/16384, and no
+  texture-scale rule decided it; THE WRAPPED OVERRUN
+  (`xblachar.overrun_scale`, docs/world-assets.md) reads it at 1/16384.
+- **Bond in third person drew the game's - RESOLVED in round trn2.** The
+  suit body `char/suitbond` (Train's costume, `CUFF_BLUE`) had never been
+  prepared: the stage recipe ran `-ViewModels`, which leaves the body out.
+  It is the same gap on every suit and parka stage (docs/world-assets.md,
+  "The costume's body is the stage's own item").
+- **The sky.** The source holds no `skydome/train`; the exterior rooms and
+  the ending keep the game's cloud layer, where the remaster draws black.
+  No dome is lent; the sky is seen only below the train and in the ending.
+- **Performance.** XBLA at 1365x768, vsync off, unlimited frame rate: the
+  long corridors present 68 - 80 frames a second (1% lows 57 - 59), the
+  saloon 156, the exterior 61 (ORIGINAL 66 there); every regular frame is
+  presented. Parked.
+- **Not exercised:** the floor hatch (the watch laser on the hatch bolts -
+  the mission run placed Bond below the train), difficulty 2's "crack
+  boris' password", `train_door2`, the keyboard, monitor and hatch-bolt
+  props on screen. With the invisibility cheat withheld, Bond and the guards
+  of the first crate car exchanged fire for 2600 frames without a crash.
+
+## B-JNG1 Jungle under XBLA: what round jng1 left (OPEN 2026-10-10, #94)
+
+- **The drone guns draw as the game's (CLOSED, round jng2).** The runtime
+  refused `prop/groundgun` because the bundle names its joints' matrices by
+  the game's skeleton names, and the item's two barrels trade them: the
+  model turns matrix 3 at node (-1000, 177.2, -247.2) and matrix 4 at
+  (-1000, 177.2, 247.2), both about their own x axes; `SKEL_BARREL` sits
+  exactly on the second and `SKEL_BAR2` on the first. Round jng1's reading
+  (a pivot on the barrel's axis, a point check) was wrong. The seam now
+  relates an item refused by name by place (`prop_parts_by_place`), and the
+  gun draws, turns and fires with the game's model.
+- **The crashed plane's canopy glass and one metal part are refused
+  (CORRECTNESS DEBT).** `background/jungle` pools 8 (407 vertices, two draws
+  on a four-slot material: a panel image, a blob, a reflection image) and 10
+  (14 vertices, one draw: a 54x54 image and a 32x32 teal tint at alpha 119)
+  carry coordinates with no measurable unit (pool 10: 28 values 108 ..
+  1149; pool 8: 256 of 407 vertices on one value pair) and the item has no
+  single scale to fall back on, so the reader refuses them. The cockpit
+  draws open (seat visible) in the intro.
+- **The placeholder canopy (OPEN, presentation call).** Draw 79 (448
+  triangles, image `_0x0E1DF475`, 16x16 solid black) and draw 80 (16
+  triangles, gated op 0x30 with condition 2, image `_0x0EEA7685`, 16x16
+  magenta stripes) form angular crowns on trunks around the start clearing
+  (rooms 1 - 5, x -2063 .. 1702, z -946 .. 2772). The remaster draws such
+  crowns bright magenta (private emulator, debug camera, background only):
+  unfinished content in the source. Sightline draws the black ones fogged
+  to the stage's olive and the magenta one beyond room 1's edge.
+  `SL_BG_HIDE=42,43` removes both. Withholding them would be a divergence
+  with a switch; not done.
+- **`mainframe2` is held on Bunker 1 and Bunker 2 (RESOLVED 2026-10-10, #95:
+  the hold is lifted on both, the item read at 1/8192).** THE WHOLE IMAGE reads
+  it at 1/16384 (the panel draw spans its image; the rack and side draws
+  wrap at half-image offsets); its scale on those stages is unreviewed, so
+  their held lists keep the accepted sets.
+- **Performance.** XBLA at 1365x768, vsync off, unlimited frame rate, ten
+  seconds from frame 600: the start 94 frames a second (1% low 59), dense
+  foliage 124 - 126 (60), the bridge and its approach 95 - 100 (60), the
+  large clearing 73 (58), the bunker approach 69 (59), the ammo dump 271
+  (125); ORIGINAL 176 - 630 at the same poses. Every regular frame is
+  presented. Parked.
+- **A cutout's colour under coverage zero (TO WATCH).** The source's cutout
+  and translucent images keep rgb 0 under alpha 0 (Jungle's canopy image:
+  151974 texels), so a bilinear edge between a leaf and a transparent texel
+  darkens with its alpha. Round jng2 measured it with the stage fog off
+  (`SL_BG_FOG=0`: dark fringes on lit leaves) and left it: under the fog the
+  outlines of mark 1 were the draw order, now fixed. Bleeding the covered
+  colour into those texels and reducing the pyramid by coverage removes the
+  fringe in that measurement; it would change the pyramid of every cutout
+  and translucent image on the accepted stages, and is not applied.
+- **The placeholder crowns stay as authored (OPEN, presentation call).** At
+  Jungle playtest mark 1 the dark angular shapes at the upper right are
+  draw 79 (`SL_BG_HIDE=42` removes them), unchanged by round jng2.
+- **The game's fade on Train and Statue (CHANGED, round jng2).** The #83
+  fade is drawn on Frigate alone (`sl_presentation_game_fade`); Train's 22
+  track-strip triangles at its rail ends (one a white line over the
+  remaster's rails) and Statue's one no longer draw under XBLA.
+- **Not exercised:** difficulty 0 and 2 runs, the watchtowers' ladders, the
+  ammo dump by remote mine (the crates were shot), the death camera, the
+  rope bridge's own presentation at close range, and the remaster's view of
+  the placeholder crowns from the same pose as Sightline's (the emulator's
+  debug camera framing does not match the native pose on this stage).
+
+## B-CTL1 Control under XBLA: what round ctl1 left (OPEN 2026-10-10, #95)
+
+- **Four of the six armoured mainframes draw as the game's (RESOLVED
+  2026-10-10, #95 round ctl2: THE GAME'S REPEATS reads `prop/mainframe2` at
+  1/8192 against the game's own model, and Control, Bunker 1 and Bunker 2 take
+  it; docs/world-assets.md, Control round 2).** Before: THE WHOLE IMAGE reads `prop/mainframe2` at 1/16384. There its top
+  face shows a quarter of its image and its panels are twice `mainframe1`'s
+  on the images the two share. Its back face carries `mainframe1`'s raw
+  coordinates on the same image, `mainframe1` reads 1/8192, and the game's
+  own front (two by two panels over four by three blades) matches 1/8192. At
+  1/8192 the rack and side draws start at half-repeat offsets (-1.5, -3.02),
+  so no rule over the item alone separates the two scales. Control holds it
+  (`data/overrides/control/props-held.txt`), as Bunker 1 and Bunker 2 do.
+  The private emulator's debug camera draws no props, and its memory
+  teleport found no floor tile on this stage, so the remaster's own
+  mainframe was not seen.
+- **The floors' reflection layer is not drawn (to watch).** The floor draws
+  name a normal map, a pre-rendered view of the control room fetched at a
+  computed coordinate, and the marble tile. The tile is drawn; the reflection
+  is not, as on Silo's rails.
+- **The mission was not completed end to end (EVIDENCE DEBT).** Driven by
+  teleport and the game's own actions at difficulty 1 with the invisibility
+  cheat withheld: the autoguns and the six guards of the caves fall, Natalya
+  leaves the lift and works the first computer, Boris surrenders and flees,
+  Natalya moves to the second computer, the alarm brings the respawning
+  guards, and the remote mines from the cave crate destroy the six
+  mainframes ("destroy armored mainframes" complete). Natalya's second
+  timer was not survived: without the max-ammo cheat the 9 mm runs out
+  first; with it the crate is refused (the US pickup rule) and the guards
+  either kill her or shoot her computer. "Protect Natalya", "disable
+  GoldenEye satellite", her escape and the ending in the lift were not
+  reached. ORIGINAL and XBLA reach every recorded event on the same frame.
+
+## B-CTL2 Control under XBLA: what round ctl2 left (OPEN 2026-10-10, #95)
+
+- **What the remaster does with an overlay outside its decal pass is not
+  read (TO WATCH).** Control's mesh 81 (source draw 0x5090, the cutout gate
+  0x4b01, coplanar with the wall and floors it lies on) is absent from the
+  remaster's frame at both playtest marks; the preparation now withholds such
+  an overlay where the source draws its image nowhere else. Whether the
+  remaster culls it, loses it to the surface's depth or never issues it was
+  not settled (its cull state 0x38 is 0x10 where the surfaces under it carry
+  0, a value only Control's item uses; its triangles face the eye like the
+  sign and rock the remaster does draw under the same state). Archives' mesh
+  60, Depot's mesh 64 and Surface's two-layer base are overlays of the same
+  gate whose image is drawn elsewhere and keep the decal pass as accepted.
+- **Silo's mesh 61 is withheld on the next preparation (TO WATCH).** Two
+  triangles of a black-coloured image on the floor of room 23, the foot of a
+  shaft no stand tile reaches; no Silo playtest mark sees it (each of the six
+  frames is byte-identical with it hidden), and the remaster's frame there
+  was not seen. The play root's Silo bundle was not replaced.
+- **The autoguns' destroyed shade.** Measured against ORIGINAL at the same
+  shot counts (five hits destroy, four more each further level): level 1
+  stays blue-grey and smoking, level 2 turns dark, in the game's model and
+  the remaster's item alike. The game's own behaviour; nothing to do.
+- **The mission (EVIDENCE DEBT, from B-CTL1)** is unchanged by this round:
+  the paired ORIGINAL/XBLA run with the new Control bundle and the mainframe
+  item completes objective c on frame 8707 under both, as before; objectives a and b, Natalya's escape and the ending
+  remain unwitnessed.
+## B-CAV1 Caverns under XBLA: what round cav1 left (OPEN 2026-10-11, #96)
+
+- **The eyelid doors are the game's (CORRECTNESS DEBT) - RESOLVED
+  2026-10-12.** `prop/door_eyelid` was refused by the texture-scale rules:
+  its four draws sample two clamped steel images and reach 0.645 of them at
+  1/32768 and 1.29 at 1/16384, so no rule finds an edge. Its coordinates are
+  the game model's own at 1/16384 (THE GAME'S COORDINATES, world-assets.md
+  "The eyelids"); it now prepares and rides the game's matrices.
+- **The water does not move (TO WATCH) - RESOLVED 2026-10-12 by D-048.** The
+  item's water draws carry no animation data of any kind; ORIGINAL scrolls
+  texture 1508, and they now move through the game's own two-tile blend at the
+  water controller's phases. Whether the remaster's engine scrolls the same
+  image at run time is still not established. The outlet water reads near
+  black, from the black corners of the game's own vertex colours the item
+  keeps; its motion there is correspondingly faint.
+- **The intro swirl shows the lift wall's back (OWNER CALL).** For about 30
+  reads the game's intro camera stands behind the start lift's wall; ORIGINAL
+  sees the lift's inside, XBLA and the remaster's own intro (private
+  emulator) the wall. Caverns' item carries no face cull, so nothing in the
+  source says to cull it.
+- **The floor's autoshotgun is the game's.** `prop/chrautoshot` prepares and
+  the seam refuses it at run time (its box is not the model's on axis 0); the
+  bundle is not installed.
+- **The mission (EVIDENCE DEBT).** At difficulty 1 the nine consoles fall and
+  objectives a, b and c complete on the same frames under ORIGINAL and XBLA;
+  the scientists at the consoles die in the consoles' explosions in every
+  scripted attempt (seven plans, aiming at them and bursts to scatter them
+  included), which fails "minimize scientist casualties", so the ending with
+  every objective complete at difficulty 1 is unwitnessed. At Agent the exit
+  lift completes that objective and the ending plays under both
+  presentations. Difficulty 2 (the radio objective) was not run.
+- **`skydome/caverns` is not composed.** A daylight dome; the stage's sky
+  item is the background's (`cavern`), none is provided, and no view of the
+  caverns opens onto a sky.
+## B-CRD1 Cradle under XBLA: what the first round left (OPEN 2026-10-12)
+
+- **The helicopter in the real ending (CLOSED by owner playtest).**
+  `prop/helicopter` prepares (the two-layer record) and rides the model (the
+  parts about their own pivots). Owner playtest run 20261012-142635 played
+  the ending with the bundle ("LOADED prop/helicopter", "rides
+  PhelicopterZ") and confirms the aircraft fixed; the teleport tooling never
+  reached the ending itself.
+- **The lent sky's density (TO WATCH).** D-044 extended to Cradle: under the
+  row's yellow cloud colour the cover reads 15 to 25% brighter and denser
+  than the game's soft layer. The remaster itself draws a plain blue sky
+  over Cradle (round crd5).
+- **The shadows' shapes (TO WATCH).** D-049 gives Cradle's black shadow
+  overlays the remaster's own shadow alpha; their shapes stay the remaster's
+  sharp truss silhouettes where the game's shadows are soft. Owner playtest
+  run 20261012-142635 confirms the shadows fixed.
+- **The shaft ladder's climb (EVIDENCE DEBT).** D-050 draws the game's
+  ladder in room 7; collision and the ladder tile are the game's and
+  untouched. A climb was not completed by bounded local actions (three
+  approaches from the platform walked past it, identically under ORIGINAL
+  and XBLA), so the climb under XBLA is the owner's to confirm.
+- **The mission (EVIDENCE DEBT).** The console objective was not driven;
+  every capture so far ran with it failed at its timer or not yet due.
+## B-AZT1 Aztec under XBLA: what the first round left (OPEN 2026-10-12, #96)
+
+- **The launch-pad decals (CLOSED by measurement, owner to confirm).**
+  Playtest run 20261012-195917 mark 5: reproduced with the exhaust bay open
+  and explosions at the shuttle's base (laser, VSync on, 240 fps); the pad's
+  untextured markings now take the decal pass their gate names
+  (`prepare.background_decal`) and hold steady over the same reads. Why the
+  tie broke only during the explosions is not established.
+- **The shuttle's markings (D-053, owner to confirm).** Playtest run
+  20261013-075405 marks 1 .. 4: the remaster's atlas prints the emblem and a
+  "4" roundel swapped from the game's places, baked into one photograph.
+  The shuttle is now the source's original generation, its "4", emblem and
+  chevron at the game's blend alphas (89, 89, 191), where ORIGINAL draws
+  them. Under the remaster's lighting it reads brighter than ORIGINAL, the
+  right wing's orange fading toward white; not matched.
+- **The stone doors' tone (D-052, owner to confirm).** The doors now take
+  the remaster wall's tone times the game's door-to-wall ratio; on screen
+  they read 1.36 .. 1.47 times their wall where ORIGINAL reads 1.25.
+- **The shuttle's tan band (SUPERSEDED by D-053).** The remaster shows a
+  tan band over the orbiter's belly that its new generation, as converted
+  here, did not draw; the pool-12 draws once taken for it are the pad's
+  markings. Its source in the remaster was not established. The original
+  generation the shuttle is now converted from draws the game's own chevron
+  there (draw 2, at the game's alpha 191).
+- **The TV walls' drax panels (NO SOURCE ART).** Room 23's screens draw the
+  game's `drax` monitor images (ids 0245 .. 0248, 0899 .. 089e); the
+  remaster's copies are pixel-identical to the legacy 32x32 ones and the
+  remaster draws them so. Nothing owned would replace them.
+- **The sky (OWNER JUDGMENT).** No `skydome/aztec`; the remaster draws black
+  above the silo's canopy, XBLA draws the game's own dark cloud layer (row
+  28, cloud colour 83 72 65) there, as ORIGINAL does.
+- **The placeholder draws (D-051).** The tube sleeves draw by vertex colour;
+  the three alpha-shaped draws stay out. The images the authors meant are
+  not in the source.
+- **The stone door's opening (EVIDENCE DEBT).** D-052 shades `door_aztec`;
+  a walk to it and a press of use did not open it under ORIGINAL or XBLA,
+  so the door moving under XBLA was not witnessed.
+- **The chairs' swivel (EVIDENCE DEBT).** The boardroom chairs ride the
+  game's door matrix (door type 9); a bounded push did not reach a chair.
+- **The mission (EVIDENCE DEBT).** "Reprogram shuttle guidance" and "launch
+  shuttle" were not driven; the launch, the exhaust bay's opening and
+  Jaws' fight were not witnessed under XBLA beyond the room survey. The
+  shuttle's item rides the model's root matrix; how it follows the launch
+  was not measured.
+## B-EGY1 Egyptian under XBLA: what the first round left (OPEN 2026-10-13)
+
+Visual integration CLOSED on playtest acceptance 2026-10-15: the stage as
+presented under XBLA, the crypt doors with the secret wall's before/after
+captures. The entries below stay as recorded limits and evidence debt; the
+acceptance is visual, not a parity claim, and the mission, Baron Samedi's
+fight and the ending are not witnessed by it.
+
+- **The palms' trunks (D-051, SOURCE).** The remaster adds 19 palms
+  round the temple and over its courtyards (`background/temple` pools 3 and
+  4; the original generation and the game have none). Their trunks are drawn
+  on the source's magenta placeholder - the remaster draws them magenta - and
+  under D-051 draw by their vertex colour, pale stubs under the fronds. The
+  art meant for them is not in the source; the stage was accepted with them
+  drawn so.
+- **Runway's and Caves' pools under the chart rule (NOT APPLIED).** The rule
+  that reads Egyptian's palms (`xblaworld.chart_short`) would also read
+  Runway's pools 3 and 8 (two draws) and the multiplayer Caves' pool 2 (three
+  draws), which those items refuse today; it is named for Egyptian alone
+  (`prepare.CHART_SHORT_ITEMS`), so the accepted Runway draws as it was
+  accepted. What those draws are was not looked at.
+- **The crypt doors (D-054, ACCEPTED in playtest 2026-10-15).** The remaster draws them as
+  open doorways (its items translucent at near-zero alpha) though they are
+  shut; under D-054 four models draw opaque with their faces in the
+  background's own images (406 and 1174 matched at 100% and 80% of the
+  rooms' triangles), their frames (410, 404, at most 39%) in the game's
+  32x32 stone, and `cryptdoor4` (every draw on texture 410) is the game's
+  door. The secret wall's whole face into room 10 (its 404 panel and both
+  410 strips) continues the wall round it at the wall's own texture map (one
+  wall's evidence); its face into room 42, the end of a passage with no wall
+  facing its way, keeps stone strips above and below its capitals, and a
+  one-pixel line stands at each vertical edge of its room-10 face (the face
+  0.4 room units behind the wall). Captured at room 20's far end (its door
+  shut, opening and closing), room 19's covers, the secret wall from room 42
+  and from room 10; the other door sites, the secret wall opening and the
+  covers sliding open for a deployed gun are not captured under the face
+  art.
+- **A prop's reflection (TO WATCH).** The Golden Gun's pickup carries its
+  reflection image and draws it as the in-hand gun does
+  (`prepare.PROP_REFLECTIONS`); the other props whose draws name a
+  reflection (the gas tank, the oil drums, the missile, on accepted stages)
+  carry none and draw as accepted.
+- **The water reads dark slate (SOURCE).** The hall's pool and the channel are
+  the remaster's own translucent water at the game's heights; over the
+  hall's basin it reads dark slate where ORIGINAL's reads blue, as the
+  private emulator draws it.
+- **The private emulator's props (TOOLING).** Its free camera draws the
+  remaster's background from anywhere, but its props only round Bond's own
+  room, and its teleport (`xr.ps1 goto`) found no floor table on this stage
+  (NOSTAN), so the remaster's props (the Golden Gun, its case, the drone
+  guns, Baron Samedi) were not seen in it. The in-hand gun, which shares the
+  pickup's images, was.
+- **The mission (EVIDENCE DEBT).** The Golden Gun's recovery, Baron Samedi's
+  appearances and the ending were not driven; no capture of them exists under
+  either presentation, and the fade after Samedi's second death is captured
+  only forced (D-055).
+- **The fade's sky (D-055, NOT CLAIMED).** Across the fade after Baron
+  Samedi's second death the game's clouds turn 83 10 10 and its fog black;
+  D-055 brings the remaster's rooms into the black, but its daylight dome is
+  drawn as authored over the open courtyards.
+- **The floor plan's route (D-056, EVIDENCE DEBT).** The route on the Q Branch
+  attachment is checked statically against `ai_17`'s pads (every stone about
+  165 units from the nearest trap pad, 164.9 at the closest step between two
+  stones, against the trap's 90); it was not walked across room 19 in the
+  game.

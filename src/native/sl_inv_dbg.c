@@ -1,7 +1,7 @@
 /**
  * Inventory witness, native side. Inert unless SL_INV_DBG is set.
  *
- * WHAT THIS IS FOR. "I can't pick up the remote mines" (Control, owner mark
+ * WHAT THIS IS FOR. "I can't pick up the remote mines" (Control, playtest mark
  * 20260915-204906/mark-001) is a claim about INVENTORY, and until this file
  * nothing in a bounded run could witness it: the mission probe prints the
  * right-hand weapon, a screenshot window shows the HUD message if one was

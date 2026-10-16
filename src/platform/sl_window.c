@@ -48,9 +48,168 @@ static int stored_pair(int id_w, int id_h, int *w, int *h)
 int sl_window_stored_windowed(int *w, int *h)   { return stored_pair(SL_SET_WINDOW_WIDTH, SL_SET_WINDOW_HEIGHT, w, h); }
 int sl_window_stored_fullscreen(int *w, int *h) { return stored_pair(SL_SET_FULLSCREEN_WIDTH, SL_SET_FULLSCREEN_HEIGHT, w, h); }
 
+/* SL_VSYNC=0 / 1 overrides the stored row for one launch (read here, never
+ * written: the store keeps what the player chose). */
 int sl_vsync(void)
 {
+    const char *e = getenv("SL_VSYNC");
+    if (e != NULL && (e[0] == '0' || e[0] == '1') && e[1] == '\0')
+        return e[0] == '1';
     return sl_settings_get(SL_SET_VSYNC) == 1;
+}
+
+/* High-refresh presentation: 0 = off (the accepted pacing), -1 = uncapped,
+ * N > 0 = a cap in presented frames per second. SL_RENDER_FPS overrides the
+ * stored row for one launch: "0" / "off", "uncapped" / "max" / "-1", or a
+ * number 1..1000. Anything else is ignored with the row in force. Once the
+ * FRAME RATE row is changed (sl_render_fps_set) the store governs for the
+ * rest of the launch: the override is a launch value, the row the choice -
+ * the VSYNC row's rule (SL_VSYNC is read when the window is created, and a
+ * press commits the swap interval read back). Read on every call: the
+ * frame pump asks every frame, so a change applies on the next frame. */
+static int s_render_fps_chosen;
+
+int sl_render_fps(void)
+{
+    const char *e = s_render_fps_chosen ? NULL : getenv("SL_RENDER_FPS");
+    int v;
+    if (e != NULL && *e != '\0') {
+        if (!strcmp(e, "off")) return 0;
+        if (!strcmp(e, "uncapped") || !strcmp(e, "max")) return -1;
+        {
+            char *end = NULL;
+            long n = strtol(e, &end, 10);
+            if (end != e && *end == '\0' && n >= -1 && n <= 1000) return (int) n;
+        }
+    }
+    v = sl_settings_get(SL_SET_RENDER_FPS);
+    return (v >= -1 && v <= 1000) ? v : 0;
+}
+
+/* THE FRAME RATE ROW: the values the two editors step through, in order -
+ * ORIGINAL (0: the accepted pacing, one present per VI, nanosleep), the
+ * caps, UNLIMITED (-1). 60 is the precise wait at the VI rate with nothing
+ * extra; 30 holds every second regular present (sl_ultra_shim.c,
+ * sl_pres_hold). A value off the list (a hand-edited file, SL_RENDER_FPS)
+ * is shown as its number and steps to its nearest neighbour on the list. */
+static const int s_fps_menu[] = { 0, 30, 60, 120, 144, 165, 240, -1 };
+#define SL_FPS_MENU_N ((int) (sizeof s_fps_menu / sizeof s_fps_menu[0]))
+
+static long fps_order(int v)
+{
+    return v == 0 ? 0L : v < 0 ? 100000L : (long) v;
+}
+
+int sl_render_fps_menu_next(int cur, int dir)
+{
+    int i;
+    if (dir == 0) return cur;
+    for (i = 0; i < SL_FPS_MENU_N; i++)
+        if (s_fps_menu[i] == cur)
+            return s_fps_menu[(i + (dir > 0 ? 1 : SL_FPS_MENU_N - 1)) % SL_FPS_MENU_N];
+    /* off the list: the nearest entry in the step's direction, wrapping */
+    if (dir > 0) {
+        for (i = 0; i < SL_FPS_MENU_N; i++)
+            if (fps_order(s_fps_menu[i]) > fps_order(cur)) return s_fps_menu[i];
+        return s_fps_menu[0];
+    }
+    for (i = SL_FPS_MENU_N - 1; i >= 0; i--)
+        if (fps_order(s_fps_menu[i]) < fps_order(cur)) return s_fps_menu[i];
+    return s_fps_menu[SL_FPS_MENU_N - 1];
+}
+
+void sl_render_fps_set(int v)
+{
+    if (v < -1 || v > 1000) return;
+    s_render_fps_chosen = 1;
+    sl_settings_set(SL_SET_RENDER_FPS, v);
+}
+
+void sl_render_fps_step(int dir)
+{
+    if (dir == 0) return;
+    sl_render_fps_set(sl_render_fps_menu_next(sl_render_fps(), dir));
+}
+
+const char *sl_render_fps_name(int v)
+{
+    static char buf[8];
+    int i = 0, d, started = 0;
+    if (v == 0) return "ORIGINAL";
+    if (v < 0) return "UNLIMITED";
+    if (v > 1000) return "?";
+    for (d = 1000; d > 0; d /= 10) {
+        int c = (v / d) % 10;
+        if (c != 0 || started || d == 1) { buf[i++] = (char) ('0' + c); started = 1; }
+    }
+    buf[i] = '\0';
+    return buf;
+}
+
+/* THE SHOW FPS ROW (#87): SL_SHOW_FPS=0 / 1 overrides the stored row for one
+ * launch, until the row is changed (the FRAME RATE rule above). */
+static int s_show_fps_chosen;
+
+int sl_show_fps(void)
+{
+    const char *e = s_show_fps_chosen ? NULL : getenv("SL_SHOW_FPS");
+    if (e != NULL && (e[0] == '0' || e[0] == '1') && e[1] == '\0')
+        return e[0] == '1';
+    return sl_settings_get(SL_SET_SHOW_FPS) == 1;
+}
+
+void sl_show_fps_set(int on)
+{
+    if (on != 0 && on != 1) return;
+    s_show_fps_chosen = 1;
+    sl_settings_set(SL_SET_SHOW_FPS, on);
+}
+
+/* THE SHOW FPS COUNTER (see sl_window.h). Swaps, not simulation frames and
+ * not the cap: the backend notes each SDL_GL_SwapWindow it makes. */
+void sl_fps_meter_reset(struct sl_fps_meter *m)
+{
+    m->t0 = 0.0;
+    m->n = 0;
+    m->open = 0;
+    m->value = -1;
+    m->span = 0.0;
+    m->count = 0;
+}
+
+int sl_fps_meter_note(struct sl_fps_meter *m, double t)
+{
+    double span;
+    if (!m->open || t < m->t0) {        /* the first swap, or a clock that went back */
+        m->open = 1;
+        m->t0 = t;
+        m->n = 0;
+        return 0;
+    }
+    m->n++;
+    span = t - m->t0;
+    if (span < SL_FPS_WINDOW)
+        return 0;
+    m->value = (int) ((double) m->n / span + 0.5);
+    m->span = span;
+    m->count = m->n;
+    m->t0 = t;
+    m->n = 0;
+    return 1;
+}
+
+void sl_fps_place(int cx, int cy, int cw, int ch, int cols, int rows,
+                  int *x, int *y, int *scale)
+{
+    int s = (ch + 180) / 360, bw, margin;
+    if (s < 1) s = 1;
+    bw = (cols * SL_FPS_CELL_W + 1) * s;          /* one unit of padding each side, less the last cell's gap */
+    (void) rows;
+    margin = 2 * s;
+    *scale = s;
+    *x = cx + cw - margin - bw;
+    if (*x < cx) *x = cx;
+    *y = cy + margin;
 }
 
 /* ---- the lists: pure ---------------------------------------------------- */
@@ -376,7 +535,7 @@ void sl_window_size_text(int w, int h, char *buf, int n)
 
 /* ---- THE QUIT REQUEST ---------------------------------------------------
  *
- * Owner-observed 2026-09-20: the dossier's main menu had no QUIT GAME, so at
+ * Observed in play 2026-09-20: the dossier's main menu had no QUIT GAME, so at
  * a large resolution or in fullscreen there was no normal way to close the
  * game. The front end's QUIT GAME row files this ONE flag and the frame pump
  * (src/platform/sl_ultra_shim.c) honours it at the next frame boundary,
@@ -428,7 +587,7 @@ static void wck(int cond, const char *what)
 void sl_window_selftest(int *checks, int *fails)
 {
     struct sl_window_list modes, wl;
-    /* the owner's display as SDL 2.32.10 lists it (95 modes over 15 sizes,
+    /* the reference display as SDL 2.32.10 lists it (95 modes over 15 sizes,
      * measured 2026-09-20), plus a portrait mode and two undersized ones */
     static const int mw[] = { 5120, 5120, 3840, 3840, 3840, 2560, 2560, 2560, 2560, 1920, 1920, 1920, 1680, 1600, 1440,
                               1280, 1280, 1280, 1152, 1024, 1024, 800, 800, 640, 640, 480, 320, 720 };
@@ -471,7 +630,7 @@ void sl_window_selftest(int *checks, int *fails)
             "40 sizes -> the 32 largest kept, ascending");
     }
 
-    /* 3. the windowed list at the owner's 5120x1440 desktop: the distinct
+    /* 3. the windowed list at the reference 5120x1440 desktop: the distinct
      *    heights that fit, as (height x aspect) x height */
     sl_window_list_windowed(&modes, 5120, 1440, SL_ASPECT_4_3, &wl);
     wck(wl.n == 12 && wl.h[0] == 480 && wl.w[0] == 640 && wl.h[2] == 720 && wl.w[2] == 960 && wl.h[11] == 1440 && wl.w[11] == 1920
@@ -620,6 +779,101 @@ void sl_window_selftest(int *checks, int *fails)
     }
     sl_quit_request_clear_for_test();
     wck(!sl_quit_requested(), "quit: cleared for the rest of the fixture");
+
+    /* 10. the FRAME RATE row: the menu order and its wrap, off-list values
+     *     to their neighbours, the names, and SL_RENDER_FPS - in force until
+     *     the row is changed, never written by itself. */
+    {
+        static const int order[] = { 0, 30, 60, 120, 144, 165, 240, -1 };
+        int k, ok = 1, okd = 1;
+        for (k = 0; k < 8; k++) {
+            if (sl_render_fps_menu_next(order[k], +1) != order[(k + 1) % 8]) ok = 0;
+            if (sl_render_fps_menu_next(order[(k + 1) % 8], -1) != order[k]) okd = 0;
+        }
+        wck(ok, "frame rate +1: ORIGINAL 30 60 120 144 165 240 UNLIMITED, then ORIGINAL");
+        wck(okd, "frame rate -1: the same order backwards, ORIGINAL to UNLIMITED");
+        wck(sl_render_fps_menu_next(100, +1) == 120 && sl_render_fps_menu_next(100, -1) == 60
+            && sl_render_fps_menu_next(500, +1) == -1 && sl_render_fps_menu_next(500, -1) == 240
+            && sl_render_fps_menu_next(10, -1) == 0 && sl_render_fps_menu_next(144, 0) == 144,
+            "frame rate off the list: 100 -> 120 / 60, 500 -> UNLIMITED / 240, 10 -> ORIGINAL; dir 0 stays");
+        wck(strcmp(sl_render_fps_name(0), "ORIGINAL") == 0 && strcmp(sl_render_fps_name(-1), "UNLIMITED") == 0
+            && strcmp(sl_render_fps_name(30), "30") == 0 && strcmp(sl_render_fps_name(1000), "1000") == 0
+            && strcmp(sl_render_fps_name(165), "165") == 0,
+            "frame rate names: ORIGINAL, UNLIMITED, 30, 165, 1000");
+        sl_settings_set(SL_SET_RENDER_FPS, 0);
+        putenv("SL_RENDER_FPS=144");
+        wck(sl_render_fps() == 144 && sl_settings_get(SL_SET_RENDER_FPS) == 0,
+            "SL_RENDER_FPS=144 is the value in force (the row shows it); the store keeps 0");
+        sl_render_fps_step(+1);
+        wck(sl_settings_get(SL_SET_RENDER_FPS) == 165 && sl_render_fps() == 165,
+            "a step from the override's 144 stores 165, and the store governs from then on");
+        sl_render_fps_step(-1);
+        sl_render_fps_step(-1);
+        wck(sl_settings_get(SL_SET_RENDER_FPS) == 120 && sl_render_fps() == 120,
+            "two steps down: 120, the override still out of force");
+        sl_render_fps_set(1001);
+        wck(sl_render_fps() == 120, "an out-of-range set is refused");
+        putenv("SL_RENDER_FPS=");
+        sl_render_fps_set(0);
+        wck(sl_render_fps() == 0 && sl_settings_get(SL_SET_RENDER_FPS) == 0, "back to ORIGINAL");
+    }
+
+    /* 11. SHOW FPS (#87): the row, SL_SHOW_FPS (in force until the row is
+     *     changed, never written by itself), the meter on known swap
+     *     streams, and the corner placement. */
+    {
+        struct sl_fps_meter m;
+        int k, ups, ok, x, y, sc;
+        sl_settings_set(SL_SET_SHOW_FPS, 0);
+        wck(!sl_show_fps(), "show fps: off by default");
+        putenv("SL_SHOW_FPS=1");
+        wck(sl_show_fps() && sl_settings_get(SL_SET_SHOW_FPS) == 0,
+            "SL_SHOW_FPS=1 is the value in force; the store keeps 0");
+        putenv("SL_SHOW_FPS=x");
+        wck(!sl_show_fps(), "SL_SHOW_FPS=x is ignored: the store's 0");
+        putenv("SL_SHOW_FPS=1");
+        sl_show_fps_set(0);
+        wck(!sl_show_fps() && sl_settings_get(SL_SET_SHOW_FPS) == 0,
+            "a set (OFF) ends the override: the store governs with SL_SHOW_FPS=1 still set");
+        sl_show_fps_set(1);
+        wck(sl_show_fps() && sl_settings_get(SL_SET_SHOW_FPS) == 1, "ON stored and in force");
+        sl_show_fps_set(2);
+        wck(sl_show_fps(), "an out-of-range set is refused");
+        putenv("SL_SHOW_FPS=");
+        sl_show_fps_set(0);
+        wck(!sl_show_fps(), "back to OFF");
+
+        sl_fps_meter_reset(&m);
+        wck(m.value == -1 && !sl_fps_meter_note(&m, 10.0) && m.value == -1,
+            "meter: nothing before the first window closes");
+        for (k = 1, ups = 0; k <= 144 * 2; k++)
+            ups += sl_fps_meter_note(&m, 10.0 + k / 144.0);
+        wck(m.value == 144 && ups == 4, "meter: 144 swaps/s for 2 s -> 144, four updates (0.5 s each)");
+        for (k = 1, ups = 0; k <= 30 * 3; k++)
+            ups += sl_fps_meter_note(&m, 12.0 + k / 30.0);
+        wck(m.value == 30 && ups == 6, "meter: then 30 swaps/s for 3 s -> 30, six updates");
+        sl_fps_meter_reset(&m);
+        for (k = 0, ok = 1; k <= 3000; k++)          /* uneven: 2 ms and 5 ms alternating = 285.7/s */
+            if (sl_fps_meter_note(&m, 20.0 + (k / 2) * 0.007 + (k % 2) * 0.002) && m.value != 286) ok = 0;
+        wck(ok && m.value == 286, "meter: alternating 2 / 5 ms intervals -> 286 (the swaps' rate, not a frame's)");
+        sl_fps_meter_reset(&m);
+        sl_fps_meter_note(&m, 5.0);
+        wck(!sl_fps_meter_note(&m, 4.0) && !sl_fps_meter_note(&m, 4.4) && sl_fps_meter_note(&m, 4.5) && m.value == 4,
+            "meter: a clock that goes back reopens the window");
+
+        sl_fps_place(0, 0, 1365, 768, 7, 1, &x, &y, &sc);
+        wck(sc == 2 && x + (7 * SL_FPS_CELL_W + 1) * sc + 2 * sc == 1365 && y == 2 * sc,
+            "place: 1365x768 -> scale 2, flush with the right edge less the margin, at the top");
+        sl_fps_place(0, 0, 640, 480, 7, 1, &x, &y, &sc);
+        wck(sc == 1 && x == 640 - 2 - 43 && y == 2, "place: 640x480 -> scale 1");
+        sl_fps_place(0, 0, 2560, 1440, 7, 1, &x, &y, &sc);
+        wck(sc == 4, "place: 1440 lines -> scale 4");
+        sl_fps_place(400, 30, 2560, 1080, 7, 1, &x, &y, &sc);
+        wck(sc == 3 && x == 400 + 2560 - 6 - 129 && y == 36,
+            "place: a pillar-/letterboxed content rect's own corner, not the window's");
+        sl_fps_place(10, 0, 20, 100, 7, 1, &x, &y, &sc);
+        wck(x == 10, "place: a rect narrower than the box keeps the box's left edge inside it");
+    }
 
     /* leave the store as the display test expects it */
     sl_window_commit(SL_WINDOW_WINDOWED, 0, 0, 0, 1, 0);

@@ -9,7 +9,7 @@ WHY THIS EXISTS
     label, sixty to eighty times minified: the renderer's mip chain averages
     a 3-texel line at 72-point contrast into nothing, and the symbols read
     as plain white discs (measured 2026-09-20, #63 / #64 rounds 5 and 6; the
-    owner: "Would like for the symbols to show on the buttons too").
+    playtest report: "Would like for the symbols to show on the buttons too").
 
     A darker, thicker glyph is the fix, and CC-BY-4.0 permits the edit - but
     the tile is the third party's work, so the edit is a SCRIPT with its

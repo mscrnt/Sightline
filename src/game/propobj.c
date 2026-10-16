@@ -612,6 +612,27 @@ void update_color_shading(rgba_u8 *dest, rgba_u8 *src)
 */
 void lerp_rgba_s32_with_rgba_f32(rgba_s32* dest, s32 enable, rgba_f32* src)
 {
+#if !defined(__sgi)
+    /* #68. RENDER-ONLY, and inert unless the renderer says so. The two
+     * callers (chrobjRenderProp, and the character render in chr.c) use this
+     * to fold fogGetPropDistColor's distance fog into the object's fog colour.
+     * Where the presentation's replacement background carries its own stage
+     * fog (the remaster's environment row, sl_gfx_worldasset.h SLEN), the
+     * remaster fogs props and characters with that row per pixel and folds
+     * none of this distance term into them - measured on its pixel programs,
+     * see sl_wa_object_fog_env - so the colour is left as the object's shade
+     * and the renderer applies the row. Nothing else moves: whether the object
+     * is drawn, and the character shadow's fade, still read
+     * fogGetPropDistColor's own answer; every other presentation, a stage
+     * without a replacement, and missing metadata lerp exactly as before. */
+    {
+        extern int sl_gfx_native_stage_fog(void);
+        if ((enable == 1) && sl_gfx_native_stage_fog())
+        {
+            return;
+        }
+    }
+#endif
     if (enable == 1)
     {
         src->r *= 255.0f;
@@ -5854,7 +5875,7 @@ s32 objTick(struct PropRecord *prop)
 #ifndef __sgi
 		/* B-051 PROBE, native only, inert unless SL_GLASS_DBG names it.
 		 *
-		 * This is the mechanism the owner's report is about. Rule 7,
+		 * This is the mechanism the playtest report is about. Rule 7,
 		 * 'object block types.txt' type 2F: offset 0x80 is "distance to
 		 * full illumination" and 0x84 "distance before you can see
 		 * through window", both signed 4-byte, and a NEGATIVE first
@@ -7462,7 +7483,23 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
         }
 
         mrData->gdl = gdl;
+#ifndef __sgi
+        /* #71: a presentation's replacement for a rigid prop's model, drawn
+         * in place of its lists, and a door the game reshapes drawn at the
+         * game's own box (src/sl_chr_asset.h, THE STAGE'S RIGID PROPS, THE
+         * DYNAMIC DOOR). Render-only; the walk below is unchanged. */
+        {
+            extern void sl_chr_prop_begin(PropRecord *prop, ModelRenderData *mr);
+            sl_chr_prop_begin(prop, mrData);
+        }
+#endif
         subdraw(mrData, model);
+#ifndef __sgi
+        {
+            extern void sl_chr_prop_end(ModelRenderData *mr);
+            sl_chr_prop_end(mrData);
+        }
+#endif
         gdl = mrData->gdl;
 
         if (obj->type == PROPDEF_DOOR)
@@ -7514,8 +7551,8 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
  * its OWN variable - not SL_TABLE_DBG - so it can be turned on without also
  * turning on the two per-frame fog dumps that already exist beside it.
  *
- * The question it exists to answer: the owner shoots props with the KF7 and
- * they pop out at a distance that looks wrong. Popping can happen in two
+ * The question it exists to answer: props shot with the KF7 in play
+ * pop out at a distance that looks wrong. Popping can happen in two
  * completely different places and the fix is different for each:
  *
  *   GAME-SIDE CULL  chrobjRenderProp returns early and emits NO display list.
@@ -7544,7 +7581,7 @@ void sub_GAME_7F04AC20(PropRecord *prop, ModelRenderData *mrData, s32 arg2)
  * That distinction is not academic; it is what produced the B-051 prop
  * finding. Every outcome field said SUBMITTED, 68386 of 68386, and the
  * mechanism was still there: the number of props REACHING this function
- * jumped 12 -> 24 in a single frame (read=13927 of the owner's native
+ * jumped 12 -> 24 in a single frame (read=13927 of the native playtest
  * recording 20260827-182143), six room-56 props appearing at once. The
  * load-bearing measurement was the PER-FRAME COUNT of lines, not the outcome
  * on any line. Anyone extending this should count first and read outcomes
@@ -7595,7 +7632,7 @@ static void sl_prop_note(PropRecord *prop, const char *outcome, f32 fogalpha,
     /* mode 1: only what the player has damaged. mode 2: everything. */
     if (on == 1 && !(dmg > 0.0f)) return;
     /* SL_PROP_FROM/SL_PROP_TO window the probe by INPUT RECORD INDEX, the
-     * unit the owner's marks are written in.
+     * unit the playtest marks are written in.
      *
      * The budget is the dangerous part of this probe and it is why the window
      * exists. A per-frame line cap silently drops whatever comes LAST in the
@@ -7651,6 +7688,30 @@ Gfx *chrobjRenderProp(PropRecord *prop, Gfx *gdl, s32 arg2)
 
     objAlpha = 0xFF;
     spAC = fogGetPropDistColor(prop, &spB0);
+
+#ifndef __sgi
+    /* D-041. RENDER-ONLY. Where the presentation's replacement background
+     * fogs the per-object draws with its own row and the presentation draws
+     * props past this cut (sl_gfx_prop_fog_drawn), a prop the cut would
+     * remove is drawn, its colour left to that row as lerp_rgba_s32_with_
+     * rgba_f32 leaves it, so a large prop comes out of the fog with the
+     * world around it instead of appearing whole when its ORIGIN crosses the
+     * cut. fogGetPropDistColor's answer, PROPFLAG_ONSCREEN and every other
+     * gate below are untouched; the model's matrices are the tick's, as for
+     * any drawn prop. Monitors keep the cut: their draw advances the screen
+     * animation (process_monitor_animation_microcode). */
+    if ((spAC == 0)
+        && ((u8) obj->type != PROPDEF_MONITOR)
+        && ((u8) obj->type != PROPDEF_MULTI_MONITOR))
+    {
+        extern int sl_gfx_prop_fog_drawn(void);
+        if (sl_gfx_prop_fog_drawn())
+        {
+            sl_prop_note(prop, "PAST-fog-cut (D-041, drawn)", spB0.rgba[3], -1);
+            spAC = 1;
+        }
+    }
+#endif
 
     if (spAC == 0)
     {
@@ -8883,7 +8944,7 @@ bool bgTestHitOnObj(coord3d *arg0, coord3d *arg1, coord3d *arg2, Gfx *gdl, Gfx *
                          * natively (sl_ultra_shim.c:1005), so the word already IS the host pointer.
                          * The native game heap lives at 0x20000000, so the PHYS_TO_K0 tag turned a
                          * valid 0x200xxxxx pointer into an unmapped 0xa00xxxxx one and faulted on
-                         * the read - measured on two of the owner's Facility runs, both at this
+                         * the read - measured on two Facility playtest runs, both at this
                          * instruction, when a guard's weapon-fire hit test walked a prop DL.
                          * The texnum halfword 8 bytes ahead of the data is written by the compiler
                          * (image.c:2570), so it is in native order. */
@@ -9017,7 +9078,7 @@ bool bgTestHitOnObj(coord3d *arg0, coord3d *arg1, coord3d *arg2, Gfx *gdl, Gfx *
                              * natively (sl_ultra_shim.c:1005), so the word already IS the host pointer.
                              * The native game heap lives at 0x20000000, so the PHYS_TO_K0 tag turned a
                              * valid 0x200xxxxx pointer into an unmapped 0xa00xxxxx one and faulted on
-                             * the read - measured on two of the owner's Facility runs, both at this
+                             * the read - measured on two Facility playtest runs, both at this
                              * instruction, when a guard's weapon-fire hit test walked a prop DL.
                              * The texnum halfword 8 bytes ahead of the data is written by the compiler
                              * (image.c:2570), so it is in native order. */
@@ -9926,7 +9987,7 @@ void objHit(ShotData *shotdata, BulletHit *hit)
                  * bit and GCC from the least, so this raw byte-0 mask selects
                  * hitTexture on the N64 and hitSound natively.
                  *
-                 * MEASURED on the owner's own native recording
+                 * MEASURED on a native playtest recording
                  * 20260827-181853: 12 of 12 PROPDEF_TINTED_GLASS hits read
                  * texture 654 with hitSound=4 (HIT_GLASS) and hitTexture=12
                  * (HIT_GLASS_XLU) - the nibbles differ, which B-032 measured
@@ -9942,7 +10003,7 @@ void objHit(ShotData *shotdata, BulletHit *hit)
                  * depth, so a pass-0 decal on a window is painted over by
                  * whatever is drawn behind the glass afterwards.
                  *
-                 * DEFAULT ON.  Confirmed by the owner in live play: bullet
+                 * DEFAULT ON.  Confirmed in live play: bullet
                  * holes appear on a pane with a wall behind it, where before
                  * there were none.  SL_HITTEX=0 restores the raw-byte read for
                  * A/B.  chr.c:3561 reads hitTexture by name for this same
@@ -13757,11 +13818,11 @@ f32 chrobjFogVisRangeRelated(PropRecord *prop, f32 size)
     }
 
 #ifndef __sgi
-    /* B-133 (Gitea #26). OWNER-REQUESTED PRESENTATION DIVERGENCE, native only.
+    /* B-133 (Gitea #26). SPECIFIED PRESENTATION DIVERGENCE, native only.
      *
-     * Owner ruling, Bunker 2 replay of 0f07002b, 2026-09-15: "the level is
-     * mostly good, but there are LOD issues on doors and props like crates
-     * that I want resolved even if the ROM does the same thing."
+     * Ruling, Bunker 2 playtest of 0f07002b, 2026-09-15: the level is
+     * mostly good, but the LOD issues on doors and props like crates are
+     * to be resolved even if the ROM does the same thing.
      *
      * WHAT THE "LOD" IS. The fraction this function returns is not a model
      * LOD and not a texture level: it is the distance FADE against the level's
@@ -13775,13 +13836,13 @@ f32 chrobjFogVisRangeRelated(PropRecord *prop, f32 size)
      * and on that path every authored vertex alpha and texel alpha becomes
      * real translucency - the crates' plank strips carry vertex alpha 0x7f
      * and turn into 48% glass, the doors' panels go translucent against the
-     * corridor behind them. Owner marks 1-4, 6, 7 of run 20260915-120832-
+     * corridor behind them. Playtest marks 1-4, 6, 7 of run 20260915-120832-
      * lvl27; the cartridge at mark 3's pose draws the same dark, faded crates
      * (romtele.py, stage 27), so this IS the cartridge's own look - which is
-     * exactly what the owner ruled against.
+     * exactly what the ruling rejects.
      *
      * THE RULE, derived rather than tuned: the translucent band contributes
-     * nothing the owner wants (a 2-7% fade over thousands of units, invisible
+     * nothing worth keeping (a 2-7% fade over thousands of units, invisible
      * as a fade, visible only as the path switch), and the only value in this
      * function that matters to play is the CULL at MaxVisRange, which is kept
      * exactly. So a prop is either fully visible or culled - no constant, no
@@ -13793,7 +13854,7 @@ f32 chrobjFogVisRangeRelated(PropRecord *prop, f32 size)
      * rejected: it moves the switch outward but the artefact remains.
      *
      * KILL SWITCH (project rule 5): SL_PROP_FADE=1 restores the cartridge's
-     * translucent distance fade exactly. Default 0 is the owner's ruling.
+     * translucent distance fade exactly. Default 0 is the B-133 ruling.
      *
      * STATE: the return value feeds objAlpha / chrfadealpha, i.e. the render
      * path, the DL's env colour and the draw-pass flags, and nothing that is
@@ -13818,7 +13879,7 @@ f32 chrobjFogVisRangeRelated(PropRecord *prop, f32 size)
      * 1500.8 and the monitor at 2230.4 are CULLED-visrange with the fog at
      * 0% while the gate's crates (size 94) at 2047-2376 draw; the cartridge
      * at the same pose (romtele.py, parallel_n64) draws neither - the
-     * formula is Rare's (B-090: disassembly and the owner's log agree at
+     * formula is Rare's (B-090: disassembly and the playtest log agree at
      * 9 of 9 points). A draw-budget rule of the N64, not a fidelity one.
      *
      * THE ENHANCED POLICY, expressed here and nowhere else: the rejection is
@@ -14756,7 +14817,7 @@ void handle_gas_damage(void)
 #ifndef __sgi
     /* B-045 PROBE, native build only, inert unless SL_GAS names it.
      *
-     * Replaying the owner's recorded facility session with SL_TOUGH=1000 does
+     * Replaying a recorded facility play session with SL_TOUGH=1000 does
      * not reach the gas: measured, the environment never switches and the
      * backdrop fill stays 102110 for all 11999 replayed frames. That is NOT
      * evidence that replay diverges from live play - SL_TOUGH is itself the

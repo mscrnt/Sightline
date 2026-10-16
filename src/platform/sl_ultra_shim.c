@@ -423,7 +423,7 @@ static void sl_cont_count_report(void);
 static u32 sl_frame_limit = 1000;
 static int sl_frame_limit_set;          /* SL_FRAMES named explicitly */
 
-/* THE QUIT REQUEST (owner-observed 2026-09-20: the dossier's main menu had
+/* THE QUIT REQUEST (observed in play 2026-09-20: the dossier's main menu had
  * no QUIT GAME, so at a large resolution or fullscreen there was no normal
  * way to close). The flag itself lives with the window's other lifecycle
  * state (src/platform/sl_window.c, where the self-test can reach it); the
@@ -561,6 +561,16 @@ static int sl_vi_catchup_on(void)
     return m;
 }
 
+/* With render_fps set (any value but 0) the pacing sleep below is the
+ * precise wait (sl_precise_wait.c) instead of nanosleep, which on this
+ * toolchain releases a frame up to a system tick late: the VIs then fall
+ * where their schedule says, and extra frames have a VI to be placed
+ * against. The schedule itself - when a VI is due, the catch-up, the resync
+ * - is the same code either way. render_fps 0 keeps nanosleep: the accepted
+ * pacing, unchanged. */
+static int sl_pres_cap(void);
+extern void sl_precise_wait_until(double t);
+
 static int sl_pace_frame(void)
 {
     double now, period;
@@ -594,10 +604,14 @@ static int sl_pace_frame(void)
 #ifdef SL_ALHEAP_TRACE
         sl_pace_slept++; sl_pace_slept_s += d;
 #endif
-        req.tv_sec = (long) d;
-        req.tv_nsec = (long) ((d - (double) req.tv_sec) * 1e9);
-        while (nanosleep(&req, &req) != 0 && errno == EINTR)
-            ;                            /* the pager's SIGSEGV handler fires often */
+        if (sl_pres_cap() != 0) {
+            sl_precise_wait_until(sl_next_due);
+        } else {
+            req.tv_sec = (long) d;
+            req.tv_nsec = (long) ((d - (double) req.tv_sec) * 1e9);
+            while (nanosleep(&req, &req) != 0 && errno == EINTR)
+                ;                        /* the pager's SIGSEGV handler fires often */
+        }
         sl_next_due += period;
         return 0;
     }
@@ -614,6 +628,344 @@ static int sl_pace_frame(void)
         sl_pace_catchup += (unsigned long) missed;
 #endif
         return missed;
+    }
+}
+
+/* ---- High-refresh presentation: frames between simulation frames --------
+ *
+ * THE SIMULATION IS UNTOUCHED. The VI cadence above - one retrace per paced
+ * period, the catch-up when a frame ran late, the 0.25 s resync - is what
+ * every game frame, timer, animation, AI delay and the audio manager run on,
+ * and nothing here changes when a retrace happens, how many there are, or
+ * what the game sees. This only uses the wall time the pump would otherwise
+ * spend asleep in sl_pace_frame.
+ *
+ * WHAT IT DOES. With render_fps set (sl_window.c sl_render_fps: the config
+ * row or SL_RENDER_FPS), the pump, after a frame's retrace and before its
+ * pacing sleep, presents EXTRA frames: the same, already-built display list
+ * re-interpreted with the camera blended between the previous frame's and
+ * this frame's (src/gfx/sl_gfx_present.c). The game thread is blocked in this
+ * pump the whole time, so the list and everything it references are intact,
+ * and nothing of the game runs. Then the frame itself is put back in the back
+ * buffer at its own camera (sl_gfx_restore_regular) and the regular present
+ * happens at the VI exactly as before.
+ *
+ * TIMING. An extra frame is presented at alpha = (its present time - the
+ * previous regular present) / (the next regular present (sl_next_due) - the
+ * previous one), so the view moves continuously from one regular present to
+ * the next and never runs ahead of the simulation frame the regular present
+ * shows. Extra frames are spaced by the cap (1/N s; none for uncapped), and
+ * one is started only when it AND the restore fit before the VI is
+ * due with a margin to spare, using the measured cost of each (rising at
+ * once, decaying slowly), so the VI is not delayed by them. If a present
+ * still overruns (a driver stall), the existing catch-up accounts for it as
+ * for any late frame; SL_PRES_STATS reports how often.
+ *
+ * WHEN IT DOES NOTHING. render_fps 0 (the default) or a cap at or below the
+ * VI rate; no window, a minimised or hidden one; a frame of more or fewer
+ * than one display list; no usable camera pair (the front end, the watch's
+ * own projection aside, a cut, a teleport, a respawn, a camera-mode change -
+ * sl_gfx_present.c); a frame already past its VI. In each case the frame is
+ * presented once, at the VI, exactly as without this block.
+ *
+ * DIAGNOSTICS, inert unless named: SL_PRES_STATS=1 prints one line per ~5 s
+ * (pumped frames, VIs, game clock ticks, regular and extra presents per
+ * second, present-interval percentiles, overruns, frames with no room, the
+ * pump's arrival after the last regular present, the regular swap and the
+ * next frame's begin); SL_PRES_LOG=<file> writes one line
+ * per present (time, R regular / E extra, pumped frame, alpha, game clock,
+ * hash) and one B line per frame the pump considered (its arrival, extras
+ * presented, the time left to the VI, the budget one extra needed), and
+ * SL_PRES_LOG_HASH=1 adds a hash of every presented image (a full read-back:
+ * for evidence runs, never for timing). SL_RENDER_INTERP=0 presents the extra
+ * frames at the frame's own camera (an identity control). */
+#include "sl_window.h"
+
+#define SL_PRES_MARGIN 0.0015           /* s kept clear before the VI is due */
+
+/* The present line, in INTENDED times: a regular present is placed where it
+ * was issued (just before its swap), an extra one where it started. How long
+ * the swap call itself takes is the driver's to decide - 0.05 ms p50 measured
+ * here with vsync off, a refresh with it on - and timing the blend or the cap
+ * from after it would charge that wait to the next frame. */
+static double sl_pres_t_reg;            /* the last regular present, issued */
+static double sl_pres_t_anchor;         /* the last present of either kind, issued / started */
+static double sl_ps_tprev;              /* the last swap's return, for the interval statistics */
+static double sl_pres_est;              /* one extra, as last budgeted: re-walk + present, s */
+static double sl_pres_est_rw;           /* the restore re-walk, as last budgeted, s */
+static double sl_pres_ovh = 0.0005;     /* an extra's cost beyond its re-walk (clear, swap), s */
+
+/* The value in force, read every call: the FRAME RATE row (both menus)
+ * writes the store, and the next frame paces and presents by it. Every
+ * state is safe to enter from every other at a frame boundary: the regular
+ * present's line (sl_pres_t_reg) and the camera pair are kept whatever the
+ * value, the precise wait holds no state between calls, and the extra
+ * frames of one frame are finished (the regular frame put back) inside one
+ * sl_pres_between call. One line per change. The window's swap interval is
+ * read back from the applied state (sl_window_state), not the launch value:
+ * the VSYNC row can change it too. */
+static int sl_pres_cap(void)
+{
+    static int last = 0;
+    int c = sl_render_fps();
+    if (c != last) {
+        int vs = 0;
+        if (!sl_window_state(NULL, NULL, NULL, &vs)) vs = sl_vsync();
+        last = c;
+        fprintf(stderr, "sightline pres: render_fps %d (%s), VI %.2f Hz, vsync %s%s\n",
+                c, c == 0 ? "original pacing" : c < 0 ? "uncapped"
+                   : (double) c < sl_fps ? "cap below the VI: regular presents held"
+                   : (double) c == sl_fps ? "precise pacing, no extra frame" : "cap",
+                sl_fps, vs ? "on" : "off",
+                (getenv("SL_RENDER_INTERP") && !strcmp(getenv("SL_RENDER_INTERP"), "0"))
+                    ? ", camera interpolation OFF (SL_RENDER_INTERP=0)" : "");
+    }
+    return c;
+}
+
+/* A CAP BELOW THE VI RATE (30 on the FRAME RATE row): the regular presents
+ * are held so that at most N a second reach the screen. Everything else of
+ * the frame is untouched - the retrace, the pacing sleep, the trace
+ * capture, the bug mark and the shot (they read the back buffer before the
+ * swap), the window's events - only the swap (and the B-124 colour blit to
+ * the window) is skipped, so the frame drawn is simply not shown and the
+ * screen keeps the last one. Counted in retraces, not wall time: each VI
+ * earns N / VI-rate of a present, a frame presents once a whole one is
+ * earned, and the surplus past one present is dropped (a frame that spanned
+ * several VIs presents once, as it always did). At 30 on the 60 Hz VI that
+ * is exactly every second frame. Nothing here is read by the game. */
+static unsigned long sl_vi_count;       /* retraces run (sl_vi_retrace_once) */
+static double        sl_hold_credit;
+static unsigned long sl_hold_vi;
+
+static int sl_pres_hold(void)
+{
+    int cap = sl_pres_cap();
+    unsigned long vis = sl_vi_count - sl_hold_vi;
+    sl_hold_vi = sl_vi_count;
+    if (vis == 0) vis = 1;              /* a VI-target stream runs its retraces elsewhere: one per frame */
+    if (cap <= 0 || sl_fps <= 0.0 || (double) cap >= sl_fps) {
+        sl_hold_credit = 0.0;
+        return 0;
+    }
+    sl_hold_credit += (double) vis * (double) cap / sl_fps;
+    if (sl_hold_credit >= 1.0 - 1e-9) {
+        sl_hold_credit -= 1.0;
+        if (sl_hold_credit >= 1.0 - 1e-9) sl_hold_credit = 0.0;
+        return 0;
+    }
+    return 1;
+}
+
+static int sl_pres_interp(void)
+{
+    static int m = -1;
+    if (m < 0) { const char *e = getenv("SL_RENDER_INTERP"); m = !(e && !strcmp(e, "0")); }
+    return m;
+}
+
+/* The budget. A re-walk repeats the frame's original walk of the same list
+ * (sl_gfx_walk_cost, measured every frame), so that is what it is charged,
+ * with 15% and 0.3 ms to spare; an extra frame adds its clear and swap,
+ * tracked separately. The restore is a blit where the kept-frame copy works
+ * or is still untried (sl_gfx_restore_is_copy), else a re-walk - charged
+ * what restores have actually been taking if that is more: the GPU can fall
+ * behind the CPU-side walk, and the driver then makes a later call wait.
+ * Both trackers rise at once and decay slowly. */
+static double sl_pres_rw_meas;          /* measured restores, s */
+
+static void sl_pres_budget(void)
+{
+    double w = 1.15 * sl_gfx_walk_cost() + 0.0003;
+    double r = sl_gfx_restore_is_copy() ? 0.0004 : w;   /* the kept-frame copy is a blit */
+    sl_pres_est_rw = r > sl_pres_rw_meas ? r : sl_pres_rw_meas;
+    sl_pres_est = w + sl_pres_ovh;
+}
+
+static void sl_pres_track(double *v, double sample)
+{
+    if (sample < 0.0) sample = 0.0;
+    if (sample > *v) *v = sample;
+    else *v = 0.9 * *v + 0.1 * sample;
+}
+
+static void sl_pres_ovh_update(double sample)
+{
+    sl_pres_track(&sl_pres_ovh, sample);
+}
+
+/* A high-resolution timed wait, then a short yielding spin
+ * (src/platform/sl_precise_wait.c): nanosleep here is only good to the
+ * system tick, far coarser than one extra frame's slot. */
+extern void sl_precise_wait_until(double t);
+static void sl_pres_sleep_until(double t)
+{
+    sl_precise_wait_until(t);
+}
+
+/* ---- diagnostics (SL_PRES_STATS / SL_PRES_LOG) ---- */
+static int sl_pres_stats_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("SL_PRES_STATS"); on = (e != NULL && *e != '0'); }
+    return on;
+}
+
+static FILE *sl_pres_log_f(int *hash)
+{
+    static int state = -1, h;
+    static FILE *f;
+    if (state < 0) {
+        const char *p = getenv("SL_PRES_LOG");
+        const char *e = getenv("SL_PRES_LOG_HASH");
+        state = 0;
+        h = (e != NULL && *e == '1');
+        if (p != NULL && *p != '\0') {
+            f = fopen(p, "w");
+            if (f != NULL) {
+                static char buf[1 << 16];
+                setvbuf(f, buf, _IOFBF, sizeof buf);
+                fprintf(f, "# t_ms R|E pumped-frame alpha clock hash  /  t_ms B pumped-frame extras us-to-VI us-budget\n");
+                state = 1;
+            }
+        }
+    }
+    if (hash) *hash = h;
+    return state > 0 ? f : NULL;
+}
+
+#define SL_PRES_WIN_MAX 8192
+static double   sl_ps_t0;
+static unsigned sl_ps_reg, sl_ps_extra, sl_ps_over, sl_ps_notready, sl_ps_n;
+static unsigned sl_ps_noroom, sl_ps_ne, sl_ps_ns, sl_ps_nb;
+static float    sl_ps_begin[SL_PRES_WIN_MAX];   /* the next frame's begin (its clear), ms */
+static float    sl_ps_swap[SL_PRES_WIN_MAX];    /* regular present: issue -> swap return, ms */
+static float    sl_ps_entry[SL_PRES_WIN_MAX];   /* regular issue -> this pump, ms */
+static unsigned long sl_ps_vi0;
+static u32      sl_ps_frame0;
+static s32      sl_ps_clock0;
+static float    sl_ps_iv[SL_PRES_WIN_MAX];
+
+static int sl_ps_cmp(const void *a, const void *b)
+{
+    float x = *(const float *) a, y = *(const float *) b;
+    return (x > y) - (x < y);
+}
+
+/* One present of either kind, at wall time t (after its swap). */
+static void sl_pres_note(double t, int extra, double alpha, unsigned hash)
+{
+    extern s32 currentFrameCounter;
+    FILE *f;
+    int want_hash;
+    if (sl_pres_stats_on()) {
+        if (sl_ps_t0 == 0.0) {
+            sl_ps_t0 = t; sl_ps_vi0 = sl_vi_count; sl_ps_frame0 = sl_frame;
+            sl_ps_clock0 = currentFrameCounter;
+        } else if (sl_ps_tprev > 0.0 && sl_ps_n < SL_PRES_WIN_MAX) {
+            sl_ps_iv[sl_ps_n++] = (float) ((t - sl_ps_tprev) * 1000.0);
+        }
+        if (extra) sl_ps_extra++; else sl_ps_reg++;
+        if (t - sl_ps_t0 >= 5.0) {
+            double w = t - sl_ps_t0;
+            float p50 = 0, p95 = 0, p99 = 0, mx = 0, e50 = 0, e90 = 0, s50 = 0, s90 = 0, b50 = 0, b90 = 0;
+            if (sl_ps_nb > 0) {
+                qsort(sl_ps_begin, sl_ps_nb, sizeof sl_ps_begin[0], sl_ps_cmp);
+                b50 = sl_ps_begin[sl_ps_nb / 2];
+                b90 = sl_ps_begin[(sl_ps_nb * 9) / 10];
+            }
+            if (sl_ps_ns > 0) {
+                qsort(sl_ps_swap, sl_ps_ns, sizeof sl_ps_swap[0], sl_ps_cmp);
+                s50 = sl_ps_swap[sl_ps_ns / 2];
+                s90 = sl_ps_swap[(sl_ps_ns * 9) / 10];
+            }
+            if (sl_ps_ne > 0) {
+                qsort(sl_ps_entry, sl_ps_ne, sizeof sl_ps_entry[0], sl_ps_cmp);
+                e50 = sl_ps_entry[sl_ps_ne / 2];
+                e90 = sl_ps_entry[(sl_ps_ne * 9) / 10];
+            }
+            if (sl_ps_n > 0) {
+                qsort(sl_ps_iv, sl_ps_n, sizeof sl_ps_iv[0], sl_ps_cmp);
+                p50 = sl_ps_iv[sl_ps_n / 2];
+                p95 = sl_ps_iv[(sl_ps_n * 95) / 100];
+                p99 = sl_ps_iv[(sl_ps_n * 99) / 100];
+                mx  = sl_ps_iv[sl_ps_n - 1];
+            }
+            fprintf(stderr, "sl_pres: %.2fs pumped %.1f/s vi %.1f/s clock %.1f/s | presents %.1f/s"
+                            " (regular %.1f extra %.1f) interval ms p50 %.2f p95 %.2f p99 %.2f max %.2f"
+                            " | overrun %u not-ready %u no-room %u entry ms p50 %.2f p90 %.2f regular swap ms p50 %.2f p90 %.2f begin ms p50 %.2f p90 %.2f | budget extra %.2f restore %.2f ms, re-walk %.2f ms\n",
+                    w, (sl_frame - sl_ps_frame0) / w, (sl_vi_count - sl_ps_vi0) / w,
+                    (currentFrameCounter - sl_ps_clock0) / w,
+                    (sl_ps_reg + sl_ps_extra) / w, sl_ps_reg / w, sl_ps_extra / w,
+                    p50, p95, p99, mx, sl_ps_over, sl_ps_notready, sl_ps_noroom, e50, e90, s50, s90, b50, b90,
+                    sl_pres_est * 1000.0, sl_pres_est_rw * 1000.0, sl_gfx_rewalk_cost() * 1000.0);
+            sl_ps_t0 = t; sl_ps_vi0 = sl_vi_count; sl_ps_frame0 = sl_frame;
+            sl_ps_clock0 = currentFrameCounter;
+            sl_ps_reg = sl_ps_extra = sl_ps_over = sl_ps_notready = sl_ps_n = 0;
+            sl_ps_noroom = sl_ps_ne = sl_ps_ns = sl_ps_nb = 0;
+        }
+    }
+    f = sl_pres_log_f(&want_hash);
+    if (f != NULL)
+        fprintf(f, "%.3f %c %u %.4f %d %08x\n", t * 1000.0, extra ? 'E' : 'R',
+                (unsigned) sl_frame, alpha, (int) currentFrameCounter, hash);
+    sl_ps_tprev = t;
+}
+
+static double sl_pres_dbg_entry;        /* this pump's arrival, for the log's B line */
+
+static void sl_pres_between(void)
+{
+    int cap = sl_pres_cap(), n = 0, want_hash = 0;
+    double due, span, period, now, slot, alpha, t0;
+    FILE *logf;
+
+    if (cap == 0 || (cap > 0 && (double) cap <= sl_fps)) return;
+    sl_pres_dbg_entry = sl_now();
+    /* The measured trackers relax every frame, extras or not, so one stall
+     * cannot hold the budget high (and the extras off) indefinitely. */
+    sl_pres_rw_meas *= 0.98;
+    sl_pres_ovh = 0.0005 + (sl_pres_ovh - 0.0005) * 0.98;
+    if (sl_fps <= 0.0 || sl_next_due == 0.0 || sl_pres_t_reg == 0.0) return;
+    if (!sl_gfx_pres_ready()) { sl_ps_notready++; return; }
+    due = sl_next_due;
+    span = due - sl_pres_t_reg;
+    if (span <= 0.0 || span > 0.25) return;
+    period = cap > 0 ? 1.0 / (double) cap : 0.0;
+    logf = sl_pres_log_f(&want_hash);
+    sl_pres_budget();
+    if (sl_pres_stats_on() && sl_ps_ne < SL_PRES_WIN_MAX)
+        sl_ps_entry[sl_ps_ne++] = (float) ((sl_now() - sl_pres_t_reg) * 1000.0);
+
+    for (;;) {
+        unsigned h = 0;
+        now = sl_now();
+        slot = sl_pres_t_anchor + period;
+        if (slot < now) slot = now;
+        if (slot + sl_pres_est + sl_pres_est_rw + SL_PRES_MARGIN > due) break;
+        sl_pres_sleep_until(slot);
+        t0 = sl_now();
+        sl_pres_t_anchor = t0;
+        alpha = (t0 + sl_pres_est - sl_pres_t_reg) / span;
+        if (alpha < 0.0) alpha = 0.0;
+        if (alpha > 1.0) alpha = 1.0;
+        sl_gfx_present_extra(alpha, sl_pres_interp(), (logf != NULL && want_hash) ? &h : NULL);
+        now = sl_now();
+        sl_pres_ovh_update((now - t0) - sl_gfx_rewalk_cost());
+        sl_pres_budget();
+        sl_pres_note(now, 1, alpha, h);
+        n++;
+    }
+    if (n == 0) sl_ps_noroom++;
+    if (logf != NULL)          /* the pump's view of this frame: B <entry> <frame> <extras> <us entry->due> <us budget> */
+        fprintf(logf, "%.3f B %u %d %d %d\n", sl_pres_dbg_entry * 1000.0, (unsigned) sl_frame, n,
+                (int) ((due - sl_pres_dbg_entry) * 1e6), (int) ((sl_pres_est + sl_pres_est_rw + SL_PRES_MARGIN) * 1e6));
+    if (n > 0) {
+        t0 = sl_now();
+        sl_gfx_restore_regular();
+        now = sl_now();
+        sl_pres_track(&sl_pres_rw_meas, now - t0);
+        if (now > due) sl_ps_over++;
     }
 }
 
@@ -709,6 +1061,7 @@ static void sl_vi_retrace_once(void)
 #endif
     { extern void sl_audio_step(void); sl_audio_step(); }
     sl_vi_elapsed++;
+    sl_vi_count++;                       /* SL_PRES_STATS and sl_pres_hold; the game never reads it */
 }
 
 /*
@@ -1009,6 +1362,10 @@ static void sl_pump(sl_OSMesgQueue *q)
          * per-retrace joyPoll here */
         if (!sl_vis_active()) {
             sl_vi_retrace_once();
+            /* High-refresh presentation: extra frames in the time the pacing
+             * sleep below would otherwise take. Nothing when render_fps is 0
+             * (the default); see sl_pres_between. */
+            sl_pres_between();
             /* ONE SLEEP PER VI RETRACE, and the retrace is the right boundary
              * because it is the clock the HARDWARE runs. sl_fps is documented
              * at its declaration as "VI rate for NTSC", and everything in the
@@ -1065,7 +1422,23 @@ static void sl_pump(sl_OSMesgQueue *q)
          * present it and take window events. All no-ops under the null
          * backend, which is the default - trace replay must not sprout a
          * window. */
-        sl_gfx_end_frame();
+        {
+            int want_hash = 0;
+            unsigned h = (sl_pres_log_f(&want_hash) != NULL && want_hash) ? sl_gfx_backbuffer_hash() : 0u;
+            double issued = sl_now();
+            /* a cap below the VI rate: this frame's swap held (sl_pres_hold) */
+            int held = sl_gfx_active() && sl_pres_hold();
+            if (held) sl_gfx_hold_present();
+            sl_gfx_end_frame();
+            /* the regular present: the line extra frames are timed against */
+            if (sl_gfx_active() && !held) {
+                double back = sl_now();
+                sl_pres_t_reg = sl_pres_t_anchor = issued;
+                if (sl_pres_stats_on() && sl_ps_ns < SL_PRES_WIN_MAX)
+                    sl_ps_swap[sl_ps_ns++] = (float) ((back - issued) * 1000.0);
+                sl_pres_note(back, 0, 1.0, h);
+            }
+        }
         /* The window closing (SDL_QUIT: the X, Alt+F4) and the front end's
          * QUIT GAME row (sl_quit_request, below) leave by the SAME path: the
          * backend torn down - the pointer grab dropped, the GL context and
@@ -1079,7 +1452,12 @@ static void sl_pump(sl_OSMesgQueue *q)
             sl_gfx_shutdown();
             exit(0);
         }
-        sl_gfx_begin_frame();
+        {
+            double b0 = sl_now();
+            sl_gfx_begin_frame();
+            if (sl_pres_stats_on() && sl_gfx_active() && sl_ps_nb < SL_PRES_WIN_MAX)
+                sl_ps_begin[sl_ps_nb++] = (float) ((sl_now() - b0) * 1000.0);
+        }
         /* Only when the retrace block above was skipped. A VI-target stream
          * drives its own cadence through sl_ticks_next and never enters that
          * block, so without this it would not be paced at all - but it is
@@ -1402,7 +1780,7 @@ static unsigned sl_input_reads;
 static unsigned sl_vi_advances;
 
 /* The coordinate a mark is stamped in: replay is indexed by controller reads,
- * so this is what lets "I saw it here" survive into a replay. Defined here,
+ * so this is what lets "seen here" survive into a replay. Defined here,
  * under the counter - the first attempt sat beside the vi_advance PROTOTYPE,
  * 267 lines above the declaration, and did not compile. */
 /* The index a mark is stamped in MUST be the one the recorder writes, which
@@ -1524,8 +1902,8 @@ void osContGetReadData(void *pads_)
  * Recording per read therefore emitted a stream whose records did not
  * correspond one-to-one with the retraces replay would feed them to, and the
  * two slid apart as the run went on - faithful early, wrong later.  Measured
- * on the owner's marks run: replayed, Bond died at read ~12161 of 16547 at a
- * spot the owner walked through unharmed.
+ * on the playtest marks run: replayed, Bond died at read ~12161 of 16547 at a
+ * spot the live run walked through unharmed.
  *
  * Nothing about the FORMAT changed, so the 119 streams in tools/trace/inputs
  * remain valid as-is and need no conversion: they came from the libretro
@@ -1609,15 +1987,15 @@ static void sl_input_record_vi(void)
 /*
  * ---- THE MOVEMENT SIDECAR (SL_MOVE / SL_MOVE_RECORD) ---------------------
  *
- * MEASURED 2026-09-08, and it is why this exists. The owner recorded two Dam
- * witnesses natively - `dam-seam-00.input`, 14180 bytes, and
+ * MEASURED 2026-09-08, and it is why this exists. Two Dam playtest
+ * witnesses were recorded natively - `dam-seam-00.input`, 14180 bytes, and
  * `dam-truck-00.input`, 2248 bytes - and both replay with Bond STANDING STILL.
  * Decoded, `dam-seam-00.input` holds 3545 records with the stick at (0,0) in
  * EVERY ONE of them and no d-pad in any of them; the only buttons present are
  * Z, B and START. Replayed, the camera probe (SL_CAM_DBG) shows the player
  * frozen from frame 2401 to the end of the run. The files are not empty and
- * not corrupt - they are FAITHFUL RECORDINGS OF THE PAD, and the owner does
- * not play with the pad.
+ * not corrupt - they are FAITHFUL RECORDINGS OF THE PAD, and those sessions were
+ * not played with the pad.
  *
  * THE DEFECT. Native keyboard and mouse do not drive the N64 stick. They
  * supply four movement channels and a linear look pair through
@@ -1996,7 +2374,7 @@ static int  sl_eeprom_writable;
  * then the native default on top). Rule 5 holds as before: nothing about the
  * game's behaviour changes, the player's own choice is simply still there.
  *
- * NATIVE DEFAULT: 1.2 SOLITAIRE, not 1.1 Honey. Owner decision, 2026-09-01,
+ * NATIVE DEFAULT: 1.2 SOLITAIRE, not 1.1 Honey. Design decision, 2026-09-01,
  * carried into the store's table. This does not change Rare's default -
  * player.c:502 still forces Honey in initBONDdataforPlayer and is untouched;
  * it is the value the save-less native boot fills in. Why Solitaire is the
@@ -2096,8 +2474,8 @@ void sl_eeprom_init(const char *path)
 #ifdef SL_DEMO_BUILD
 /* ---- THE DEMO SAVE ------------------------------------------------------
  *
- * The demo keeps its own cartridge save, and it is NOT the one the owner
- * plays. Two independent requirements meet here:
+ * The demo keeps its own cartridge save, and it is NOT the one normal play
+ * uses. Two independent requirements meet here:
  *
  *   IT MUST NOT DEPEND ON THE ENVIRONMENT. A shipped demo has to behave the
  *   same however it is started, so the path is resolved in the binary rather
@@ -2106,7 +2484,7 @@ void sl_eeprom_init(const char *path)
  *   IT MUST NOT TOUCH THE NORMAL SAVE. tools/windows/play.ps1 sets
  *   SL_EEPROM_RW to %LOCALAPPDATA%\sightline\eeprom.bin on EVERY launch, so a
  *   demo build that merely "defaulted" when the variable was absent would
- *   still write the owner's real save the moment it was launched the ordinary
+ *   still write the player's real save the moment it was launched the ordinary
  *   way. The demo therefore IGNORES SL_EEPROM and SL_EEPROM_RW outright and
  *   forces its own file. Overriding beats defaulting because the guarantee is
  *   then a property of the build, not of how it happened to be launched.
@@ -2384,7 +2762,7 @@ u32 sl_ticks_next(void)
      * ABSOLUTE VI index at each frame boundary, so target[i] - target[i-1] is
      * the VI count that frame spanned, by construction - the same number
      * sl_vi_elapsed would have held on the recording side. Measured on a
-     * windowed re-record of the owner's Dam stream the deltas run 1..4
+     * windowed re-record of the playtest Dam stream the deltas run 1..4
      * ({1:855, 2:641, 3:347, 4:155} over 2000 frames), so this is not a
      * constant being recovered.
      *
@@ -2587,7 +2965,7 @@ void sl_shim_configure(void)
 #ifdef SL_DEMO_BUILD
     /* DEMO POLICY: the save is the build's, not the environment's. See
      * sl_demo_save_path above for why this OVERRIDES rather than defaults -
-     * play.ps1 always sets SL_EEPROM_RW to the owner's real save, so
+     * play.ps1 always sets SL_EEPROM_RW to the player's real save, so
      * defaulting would still have written it. */
     (void) v;
     sl_eeprom_init_rw(sl_demo_save_path());
@@ -2616,7 +2994,7 @@ void sl_shim_configure(void)
      * fogflicker.sh, frozenframe.sh) point at a run directory. So a stream
      * copied out of a run and handed on arrived with its .move but not its
      * .vis, and replayed at whatever VI-per-frame cadence the replay happened
-     * to run at instead of the one it was recorded at. Measured on the owner's
+     * to run at instead of the one it was recorded at. Measured on the playtest
      * Dam sessions: recorded 1.22 VI/frame, headless replay 1.00, windowed
      * replay 1.90. Nothing in the recording survives that.
      *
@@ -2738,6 +3116,24 @@ void *sl_native_heap(u32 *size)
             if (heap == NULL)
                 heap = VirtualAlloc(NULL, SL_HEAP_BYTES,
                                     MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        }
+        /* SL_HEAP_NEIGHBOUR=1, evidence tooling: commit the 16 MB directly
+         * after the heap and fill it with float words, as a later allocation
+         * placed there would. A static object above 0x01000000 reads as
+         * segment 1 into this range (sl_gfx_dl.c seg_reading_wins), so with
+         * the range mapped the native rooms' matrices are read from it unless
+         * the renderer refuses that reading. Off unless named. */
+        {
+            const char *e = getenv("SL_HEAP_NEIGHBOUR");
+            if (e != NULL && *e == '1' && heap != NULL) {
+                float *q = (float *) VirtualAlloc((char *) heap + SL_HEAP_BYTES, SL_HEAP_BYTES,
+                                                  MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                unsigned k;
+                if (q != NULL)
+                    for (k = 0; k < SL_HEAP_BYTES / 4u; k++) q[k] = (float) (k % 13u) * 0.37f + 0.5f;
+                fprintf(stderr, "sightline native: SL_HEAP_NEIGHBOUR - %s at %p\n",
+                        q != NULL ? "committed 16 MB" : "could not commit", (void *) q);
+            }
         }
         if (heap == NULL) {
             fprintf(stderr, "sl_native_heap: VirtualAlloc(%u) failed, err %lu\n",
@@ -3124,7 +3520,7 @@ void sl_fatalf(const char *fmt, unsigned v)
  * was geometry the cartridge never draws: on hardware those rooms are
  * confined by the scissor to their portal window, a few dozen pixels. With
  * the scissor applied (sl_gfx_dl.c, B-143) the pop is invisible by
- * construction, and the full-view window's own cost is what the owner
+ * construction, and the full-view window's own cost is what the playtest
  * reported at Dam mark 20260916-232914/mark-001: room 1's authored sliver
  * quad across the sky and a fully-fogged wedge cut into the ridge, both
  * absent on the cartridge. Paired at three Dam poses (that mark, and two

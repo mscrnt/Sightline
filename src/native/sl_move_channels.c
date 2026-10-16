@@ -134,7 +134,7 @@ int sl_move_channels_get(int *walk, int *strafe, int *turn, int *pitch)
  * which reports a DISPLACEMENT that has already happened.
  *
  * MEASURED consequence of pushing a mouse through the stick curve, and the
- * owner's reported symptom: equal-and-opposite motion does NOT return to the
+ * playtest-reported symptom: equal-and-opposite motion does NOT return to the
  * starting angle when the two halves are delivered at different SPEEDS,
  * because squaring makes the total depend on how the displacement was
  * DISTRIBUTED ACROSS FRAMES rather than on its sum. 300 counts left over 5

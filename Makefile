@@ -16,7 +16,7 @@ COMPARE := 1
 ### Sightline additions — see docs/toolchain.md ###
 
 # Every Python invocation goes through the repo venv. Do NOT rely on
-# `source .venv/bin/activate`: agent sessions get fresh non-interactive shells,
+# `source .venv/bin/activate`: automated sessions get fresh non-interactive shells,
 # so activation never persists and the resulting ImportErrors read as toolchain
 # bugs rather than as a missing venv.
 PYTHON ?= .venv/bin/python3

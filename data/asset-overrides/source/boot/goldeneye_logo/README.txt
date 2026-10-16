@@ -13,12 +13,13 @@ WHAT THIS IS
     verified rendering - see front.c:2127.
 
 PROVENANCE - AUTHORED, NOT EXTRACTED
-    Letterforms   authored by the project owner, from the owner's OWN
-                  custom font. The outlines are extracted from that font
+    Letterforms   authored for Sightline, from Sightline's OWN custom
+                  font. The outlines are extracted from that font
                   with fontTools and flattened at a tolerance of ~0.45
-                  model units (sub-pixel at 1440p). The font is the
-                  owner's own work: it is not Nintendo's, not Rare's, not
-                  a third party's, and nothing in it is ROM-derived.
+                  model units (sub-pixel at 1440p). The font is
+                  first-party Sightline work: it is not Nintendo's, not
+                  Rare's, not a third party's, and nothing in it is
+                  ROM-derived.
     Crosshair     generated procedurally: ring, four ticks, centre dot.
     Colour ramp   authored from seven colour stops. NOT resampled from any
                   ROM texture. An earlier revision DID resample the original

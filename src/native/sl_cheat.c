@@ -4,7 +4,7 @@
  * WHAT THIS IS FOR. A renderer bug in a weapon the level does not hand Bond
  * at spawn - Surface's sniper rifle scope (Gitea #17) lives in a hut minutes
  * into the level - cannot be witnessed at a direct boot without a way to be
- * holding that weapon at frame one. Replaying the owner's session is not that
+ * holding that weapon at frame one. Replaying a play session is not that
  * way (the replay drifts; sl_teleport.c records why). So, like the teleport:
  * boot the level, stand at the mark, and HOLD THE WEAPON, all from the
  * environment play.ps1 fills in.
@@ -23,7 +23,7 @@
  *                               prints that operand as 0x400000 - one byte
  *                               left of the value the command's QBYTE
  *                               operand carries (0x400000 raised nothing;
- *                               0x4000 ran the outro at the owner's mark
+ *                               0x4000 ran the outro at the playtest mark
  *                               pose, eye -3555.1 405.2 1813.7 room 66)
  *
  * WHY NATIVE, NOT src/game. Same argument as sl_teleport.c: src/game stays

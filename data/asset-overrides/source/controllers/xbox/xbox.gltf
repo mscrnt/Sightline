@@ -13,7 +13,7 @@
     "attribution": "This work is based on \"Xbox Controller\" (https://sketchfab.com/3d-models/xbox-controller-32d17951703b4e05abed11a1c65f5909) by umkhero (https://sketchfab.com/umkhero) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)",
     "changes": "geometry: mesh split into one node per physical control with pivots; re-based into the GoldenEye joypad model frame (GjoypadZ) and scaled to its 788-unit width; normal / metallic-roughness / emissive maps dropped; base-colour textures resized to 1024 px and re-encoded as PNG; manufacturer logos removed (button symbols and letters kept); compiled to Sightline's native .slmodel format with a part table"
    },
-   "sl_note": "THIRD-PARTY CC-BY-4.0 work, not Sightline-authored and not under the CC0 grant. Nodes flagged extras.sl_authored_part are the owner's own replacement geometry (the de-branded Guide / PS buttons). No GoldenEye data."
+   "sl_note": "THIRD-PARTY CC-BY-4.0 work, not Sightline-authored and not under the CC0 grant. Nodes flagged extras.sl_authored_part are Sightline-authored replacement geometry (the de-branded Guide / PS buttons). No GoldenEye data."
   }
  },
  "scene": 0,

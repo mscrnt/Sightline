@@ -121,12 +121,16 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
 #define SL_WATCH_SCREEN_SELECT_SPACER_WIDTH      (s32)(SL_WATCH_SCREEN_SELECT_RECTANGLE_WIDTH / (SL_WATCH_NUMBER_SCREENS - 1))
 #define SL_WATCH_SCREEN_SELECT_RECTANGLE_HSTEP   (SL_WATCH_SCREEN_SELECT_RECTANGLE_WIDTH + SL_WATCH_SCREEN_SELECT_SPACER_WIDTH)
 
-/* The SIGHTLINE page (owner structure, #45 2026-09-19) is a menu of
+/* The SIGHTLINE page (specified structure, #45 2026-09-19) is a menu of
  * SUB-MENUS, each a nested child view exactly like the BINDINGS child of #46
  * (a flag on the page, not a ring page; the six-segment bar keeps
  * representing the ring; BACK or Escape returns one level):
  *
- *     sightline            graphics  -> world detail      original (#43; #47 / #48 later)
+ *     sightline            graphics  -> world detail      original (#43)
+ *                                       / presentation      original (#68: the one
+ *                                         visual selection - ORIGINAL / COMMUNITY HD /
+ *                                         XBLA - which resolves every visual provider;
+ *                                         lighting, #48, would resolve there too)
  *                                       / back
  *                          gameplay  -> sprint  off on
  *                                       / sprint mode  hold toggle  (#56)
@@ -134,6 +138,9 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
  *                          display   -> window mode      WINDOWED (#52)
  *                                       / resolution       1280x720 (#52; informational in BORDERLESS)
  *                                       / vsync  off on (#52)
+ *                                       / frame rate  original (#87: original / 30 / 60 /
+ *                                         120 / 144 / 165 / 240 / unlimited)
+ *                                       / show fps  off on (#87)
  *                                       / aspect ratio  -  16:9  + / [bar] field of view  91 / back
  *                          controls  -> button layout        DEFAULT (#63)
  *                                       / stick layout       DEFAULT (#63)
@@ -202,10 +209,24 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                                   * glyphs, too wide for the toggles' columns); the latched
                                   * LEFT / RIGHT and a click on the name step to the other
                                   * profile, through sl_world_detail_step (sl_settings_apply.c) */
-#define SL_WROW_VALUE_TEXTURES 23 /* TEXTURES (#47, 2026-09-21): the same NAMED idiom - original /
-                                   * community hd / xbla; the latched LEFT / RIGHT and a click on
-                                   * the name step through the three sets, wrapping, through
-                                   * sl_textures_step (sl_settings_apply.c) */
+#define SL_WROW_VALUE_PRESENTATION 23 /* PRESENTATION (#47's TEXTURES row, retargeted by #68 on
+                                   * 2026-09-23): the same NAMED idiom - original / community hd /
+                                   * xbla; the latched LEFT / RIGHT and a click on the name step
+                                   * through the three PRESENTATIONS, wrapping, through
+                                   * sl_presentation_step (src/platform/sl_presentation.c). The id
+                                   * is unchanged because the row is the same row in the same
+                                   * place; what it names is the whole visual selection now, not
+                                   * one provider's set. */
+#define SL_WROW_VALUE_FPS   24  /* FRAME RATE (high-refresh presentation, #87): the NAMED idiom -
+                                 * original / 30 / 60 / 120 / 144 / 165 / 240 / unlimited
+                                 * right-aligned at SL_SIGHTLINE_X_BARVALUE; the latched LEFT /
+                                 * RIGHT step down / up and a click on the name steps up, all
+                                 * wrapping, through sl_render_fps_step (src/platform/sl_window.c);
+                                 * the frame pump reads the value in force every frame */
+#define SL_WROW_TOGGLE_SHOWFPS 25 /* SHOW FPS (#87): off / on at the toggles' columns - the
+                                   * presented-frame counter in the game image's upper-right
+                                   * corner, through sl_show_fps / _set (src/platform/sl_window.c);
+                                   * the SDL backend reads it at every present */
 /* The #56 mode rows: toggle rows with hold / toggle for their two cells. */
 #define SL_WROW_IS_MODE(k) ((k) == SL_WROW_TOGGLE_SMODE || (k) == SL_WROW_TOGGLE_CMODE)
 /* A value row of any kind: the same LEFT / RIGHT latch (a step down / up). */
@@ -213,18 +234,19 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                              || (k) == SL_WROW_VALUE_MSENS || (k) == SL_WROW_VALUE_SSENS \
                              || (k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
                              || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
-                             || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_TEXTURES \
-                             || SL_WROW_IS_PAD_TUNE(k))
+                             || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_PRESENTATION \
+                             || (k) == SL_WROW_VALUE_FPS || SL_WROW_IS_PAD_TUNE(k))
 /* The #51 controller tuning rows, and each one's id for sl_pad_tune_*. */
 #define SL_WROW_IS_PAD_TUNE(k) ((k) == SL_WROW_VALUE_PSENS || (k) == SL_WROW_VALUE_PDZ || (k) == SL_WROW_VALUE_MDZ)
 #define SL_WROW_PAD_TUNE_ID(k) ((k) == SL_WROW_VALUE_PSENS ? 0 : (k) == SL_WROW_VALUE_PDZ ? 1 : 2)
 /* A NAMED value row: label + name, no cells (the pointer hits the name). */
 #define SL_WROW_IS_NAMED(k) ((k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
                              || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
-                             || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_TEXTURES)
+                             || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_PRESENTATION \
+                             || (k) == SL_WROW_VALUE_FPS)
 /* A row the cursor never rests on. */
 #define SL_WROW_IS_INERT(k) ((k) == SL_WROW_DIMMED || (k) == SL_WROW_INFO_PAD || (k) == SL_WROW_INFO_RES)
-/* The SLIDER rows (#50 owner request, 2026-09-19: "make them sliders like
+/* The SLIDER rows (#50 requirement, 2026-09-19: "make them sliders like
  * music and fx in the watch"): FIELD OF VIEW, MOUSE SENSITIVITY and SCOPED
  * SENSITIVITY draw as the Game Options page's MUSIC / FX bars - the 600x20
  * face rectangle of draw_music_volume_slider, filled to the value by

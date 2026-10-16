@@ -1,0 +1,6 @@
+# The Dam's prop set as accepted (#71, #77). The stage derivation
+# (tools/worldasset/stageprops.py) has since grown to take these models;
+# they are held back here so that `prepare-xbla-assets.ps1 -Level dam
+# -Props` reproduces the accepted set. Remove a line to take the item.
+damtundoor   rigid door, taken by the rigid-door intake after the Dam's set was accepted
+hatpeaked    worn hat, taken by the hat seam after the Dam's set was accepted

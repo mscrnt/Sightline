@@ -4137,6 +4137,15 @@ void modelRenderNodeGundl(ModelRenderData* renderdata, ModelNode* arg1)
 {
     ModelRoData_DisplayListRecord* rodata = &arg1->Data->DisplayList;
 
+#ifndef __sgi
+    /* #70: a character part the presentation replaces emits no list of its
+     * own (src/sl_chr_asset.h); every other node is unaffected. */
+    {
+        extern int sl_chr_asset_skip(const void *node);
+        if (sl_chr_asset_skip(arg1)) return;
+    }
+#endif
+
     if (renderdata->unk18 == 0)
     {
         if ((renderdata->flags & 1) && rodata->Primary)
@@ -4316,6 +4325,14 @@ GeometryMode is not in setup and is persistent accross parts.
 void modelRenderNodeDl(ModelRenderData *renderdata, Model *model, ModelNode *node)
 {
     union ModelRoData *rodata = node->Data;
+
+#ifndef __sgi
+    /* #70: as modelRenderNodeGundl. */
+    {
+        extern int sl_chr_asset_skip(const void *node);
+        if (sl_chr_asset_skip(node)) return;
+    }
+#endif
 
     if (!renderdata->unk18)
     {

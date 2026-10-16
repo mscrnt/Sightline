@@ -1,9 +1,9 @@
 # Phase 1 tracks — the plan of record
 
-Status: ACTIVE. Owner opened Phase 1 on 2026-08-21 with the directive to
-improve on prior art, not copy it. Supersedes the earlier proposal in this
-file; the Perfect Dark port research that informed both is summarised at the
-bottom.
+Status: ACTIVE. Phase 1 opened on 2026-08-21 with the stated goal of
+improving on prior art, not copying it. Supersedes the earlier
+proposal in this file; the Perfect Dark port research that informed both is
+summarised at the bottom.
 
 ## Strategy in one paragraph
 
@@ -24,8 +24,8 @@ They eyeballed parity; we measure it.
 |---|---|---|
 | gfx macro emission sites | 1,049 sites in 28 files | per-file conversion waves |
 | ...of which 3D core | model.c 173 + bg.c 144 | supervised |
-| ...2D/menu/HUD | textrelated 84, front 64, title 57, options 57 | subagent waves |
-| ...effects | blood 40, explosion 37, gunfire 36 | subagent waves |
+| ...2D/menu/HUD | textrelated 84, front 64, title 57, options 57 | parallel waves |
+| ...effects | blood 40, explosion 37, gunfire 36 | parallel waves |
 | ...state plumbing | othermodemicrocode 69, tex 47 | informs IR design |
 | libultra layering violations | 282 (baseline file) | per-subsystem waves, must reach 0 |
 | Gfx* pointer plumbing | 813 refs | retired with the IR |
@@ -37,7 +37,7 @@ Commands carry provenance tags (room id, prop handle, chr handle) stamped at
 emission. Two consumers: the parity backend (T2 oracle initially; our own
 GL3 backend as it matures) and, in Phase 3, the lighting renderer - which
 gets scene semantics for free instead of via a second migration. IR design
-is SUPERVISED (judgment, not mechanics). Per-file conversion is subagent
+is SUPERVISED (judgment, not mechanics). Per-file conversion is parallel
 work: 2D wave -> effects wave -> plumbing -> 3D core last. Verification per
 file: build both paths, `make trace-verify` (sim untouched - any divergence
 is a bug), `make render-verify` once T2 lands.
@@ -77,12 +77,12 @@ of `src/game` -> `sl_` platform interfaces (sched/thread/message, timing,
 PI/DMA->fs, vi, joy, audio-out), each wave shrinking
 `docs/layering-baseline.txt` monotonically. The 282 reaches 0 as the gate
 says - no reframing needed, because mechanical per-call-site conversion
-under a trace gate is exactly what we have that PD did not. Subagent waves;
+under a trace gate is exactly what we have that PD did not. Parallel waves;
 verification: `make check-layering` count strictly down + trace gate.
 
 **T4 - byte-swap at extraction.** Build-time conversion in the extractor;
 runtime big-endian assumptions retired file-by-file behind it. Strategy-
-independent; starts immediately. Subagent. Verification: matching build
+independent; starts immediately. Parallel workstream. Verification: matching build
 still MATCHes (extractor output unchanged for the N64 path), trace gate.
 
 **T5 - pointer -> handle.** Per subsystem, starting with chr/prop cross-
@@ -91,7 +91,7 @@ trace schema hashes raw pointer values (weapon_r/weapon_l, prop unions);
 each conversion lands with a documented divergence in docs/divergences.md
 and its own re-baseline commit, per project rules. This track is what
 Nightwatch's replication stands on - PD's port-net desync list is the
-counterexample we cite. Subagent per subsystem.
+counterexample we cite. One parallel workstream per subsystem.
 
 **T6 - audio.** RSP audio via the sm64 mixer lineage, as PD did - proven,
 not worth innovating on. Later in the phase; the sim never depends on it.
@@ -99,8 +99,8 @@ not worth innovating on. Later in the phase; the sim never depends on it.
 **T7 - platform shell.** SDL window/input/timing for the native build,
 grown from the harness's recorder (which already speaks SDL video, audio at
 measured rates, and DualSense input). Mouselook and modern bindings come
-here - informed by the PD port's control scheme, which the owner already
-plays comfortably.
+here - informed by the PD port's control scheme, which is already known to
+play comfortably.
 
 ## Wave 0 status (2026-08-21)
 

@@ -109,11 +109,12 @@ def community(archive, out, mapping='community.json'):
 
 # ------------------------------------------------------------------ xbla ----
 
-def xbla(tree, out):
+def xbla(tree, out, rom=None):
     """The user-supplied XBLA set: read each accepted mapping's resource out
     of the extracted source tree, decode it and orient it to the N64 image."""
     np = need('numpy', 'texture decoding')
     import caff                                                    # noqa: E402
+    import nativeuv                                                # noqa: E402
     import xdecode                                                 # noqa: E402
 
     entries = load_mapping('xbla-accepted.json')
@@ -184,11 +185,25 @@ def xbla(tree, out):
                                % (e['id'], t['fmt']))
                 continue
             try:
-                img = xdecode.decode(caff.base_level(b, t), t['fmt'], t['w'], t['h'])
+                img = xdecode.decode(caff.base_level(b, t), t['fmt'], t['w'],
+                                     t['h'], mip_levels=t['mips'])
             except Exception as exc:                               # noqa: BLE001
                 skipped.append('%s: %s' % (e['id'], exc))
                 continue
+            try:
+                nativeuv.check_entry(e)
+                if 'sample' in e:
+                    # A re-UV'd remaster item: its window, resampled into the
+                    # native texture's own domain (nativeuv.py).
+                    img = nativeuv.sample(img, e['sample'], e['n64'])
+            except ValueError as exc:
+                skipped.append('%s: %s' % (e['id'], exc))
+                continue
             img = flip(flip(img, e['flips'][0]), e['flips'][1])
+            if 'level' in e:
+                img = nativeuv.level(img, e['level'])
+            if e.get('bleed'):
+                img = nativeuv.bleed(img)
             h, w = img.shape[0], img.shape[1]
             if not (0 < w <= sltx.MAX_PHYS and 0 < h <= sltx.MAX_PHYS):
                 skipped.append('%s %dx%d exceeds the runtime bound' % (e['id'], w, h))
@@ -197,7 +212,40 @@ def xbla(tree, out):
                        tid, e['n64'][0], e['n64'][1], w, h,
                        np.ascontiguousarray(img).tobytes())
             written += 1
+    carry(by_bundle, index, rom, out, skipped)
     return written, absent, len(entries), skipped
+
+
+def carry(by_bundle, index, rom, out, skipped):
+    """#77: the carried coordinates (uvcarry.py) for every stage whose
+    remastered background the mapping takes direct entries from. Needs the
+    user's ROM for the stage's own rooms; without it the pack is still
+    written and the tables are not."""
+    import uvcarry                                                 # noqa: E402
+    stages = sorted(b for b in by_bundle if b.startswith('new/background/'))
+    if not stages:
+        return
+    if not rom or not os.path.isfile(rom):
+        print('  carried coordinates: no ROM at %s - not derived (the pack is complete'
+              ' without them)' % (rom or '(none)'))
+        return
+    for bundle in stages:
+        stage = bundle.rsplit('/', 1)[-1]
+        d = index.get(bundle)
+        level = os.path.join(d, 'default.bin') if d else None
+        if level is None or not os.path.isfile(level):
+            continue
+        try:
+            path, rows, report, scale = uvcarry.prepare_stage(
+                stage, level, by_bundle[bundle], rom, uvcarry.ROOT,
+                os.path.join(out, 'xbla', 'uv'))
+        except Exception as exc:                                   # noqa: BLE001
+            skipped.append('carried coordinates for %s: %s' % (stage, exc))
+            continue
+        taken = ['%04x (%d)' % (i, r['carried']) for i, r in sorted(report.items()) if r['taken']]
+        print('  carried coordinates: %s - scale %.4f, %d triangles of %s%s'
+              % (stage, scale, len(rows), ', '.join(taken) or 'no id',
+                 (' -> ' + path) if path else ''))
 
 
 def prune(out, name, mapping):
@@ -234,7 +282,11 @@ def main():
     ap.add_argument('--archive', help='the user\'s own copy of the official pack archive')
     ap.add_argument('--tree', help='an extracted source tree')
     ap.add_argument('--out', required=True, help='the pack root to write under')
+    ap.add_argument('--rom', help='the ROM whose rooms the carried coordinates are derived '
+                    'for (default: SL_ROM, else baserom.u.z64 at the repository root)')
     a = ap.parse_args()
+    rom = a.rom or os.environ.get('SL_ROM') or os.path.join(
+        os.path.dirname(os.path.dirname(HERE)), 'baserom.u.z64')
 
     if a.set == 'community':
         if not a.archive:
@@ -244,7 +296,7 @@ def main():
     else:
         if not a.tree:
             ap.error('xbla needs --tree')
-        written, absent, total, skipped = xbla(a.tree, a.out)
+        written, absent, total, skipped = xbla(a.tree, a.out, rom)
         table = load_mapping('xbla-accepted.json')
 
     prune(a.out, a.set, table)

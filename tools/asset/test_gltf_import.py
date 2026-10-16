@@ -1388,7 +1388,7 @@ def t_controller_packages():
                   for im in doc["images"]))
         authored = {n["extras"][gi.PART_KEY]: n["extras"]["sl_authored_part"] for n in doc["nodes"]
                     if isinstance(n.get("extras"), dict) and "sl_authored_part" in n["extras"]}
-        check("%s: the owner's replacement parts are flagged and listed in metadata" % name,
+        check("%s: the authored replacement parts are flagged and listed in metadata" % name,
               authored == meta.get("authored_parts") and parts.get(list(authored)[0]) == "GUIDE"
               if authored else False, str(authored))
         check("%s: no historical sl_n64 metadata remains" % name,

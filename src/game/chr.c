@@ -3009,7 +3009,22 @@ Gfx *chrRenderProp(PropRecord *prop, Gfx *gdl, s32 withalpha)
             }
 
             g_playerPerm->time_other_players_on_screen += 1;
+#ifndef __sgi
+            /* #70: a presentation's replacement body / head for this
+             * character, drawn in place of the game's own lists for that part
+             * (src/sl_chr_asset.h). Render-only; the walk below is unchanged. */
+            {
+                extern void sl_chr_asset_begin(ChrRecord *chr, ModelRenderData *mr);
+                sl_chr_asset_begin(chr, &mrData);
+            }
+#endif
             drawjointlist(&mrData, chr->field_20);
+#ifndef __sgi
+            {
+                extern void sl_chr_asset_end(void);
+                sl_chr_asset_end();
+            }
+#endif
 
             gdl = mrData.gdl;
 

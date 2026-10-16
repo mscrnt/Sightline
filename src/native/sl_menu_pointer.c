@@ -191,7 +191,7 @@ static int          s_placed;
  *                        frontDrawCursor. It has no latch and no step
  *                        threshold of its own - the cursor IS the selection.
  *
- *                        Owner-reported 2026-09-16 on the full-campaign demo:
+ *                        Playtest report 2026-09-16, full-campaign demo:
  *                        "mouse doesn't work in the cheat menu". MEASURED on
  *                        the normal build (scratch save with every cheat
  *                        earned) and the demo build alike, same driver as the
@@ -350,7 +350,7 @@ s32 sl_game_click_advance_active(void)
  * stationary mouse the per-frame rule above then correctly declines to
  * override it, so the cursor sat where Rare put it - near the middle of the
  * screen - while the physical pointer was somewhere else entirely, until the
- * next twitch snapped it across. That is the owner's "it shouldn't auto center
+ * next twitch snapped it across. That is the reported "it shouldn't auto center
  * in the menus, but keep the last mouse position", reported 2026-09-07.
  *
  * So on the first frame of a NEW pointer menu the position is re-asserted once
@@ -426,7 +426,7 @@ int sl_menu_pointer_uv(f32 *u, f32 *v, unsigned int *motion)
  * and the probe's click) so that a click in the band beside the image, where
  * the cursor is DRAWN but nothing can be hit, confirms nothing.
  *
- * The owner's finding (2026-09-20, the widescreen screenshots): at 16:9 the
+ * The playtest finding (2026-09-20, the widescreen screenshots): at 16:9 the
  * pointer in a band left the game's cursor where it last was - at the safe
  * edge, on whatever item it had crossed - and a click there activated that
  * item (measured before this change: probe (40,360) + click on a 1280x720
@@ -450,7 +450,7 @@ s32 sl_game_pointer_over_menu(void)
 }
 
 /**
- * THE DRAWN CURSOR'S PLACEMENT (the widescreen cursor repair, owner-observed
+ * THE DRAWN CURSOR'S PLACEMENT (the widescreen cursor repair, observed in play
  * 2026-09-20: "at >4:3 aspects the red front-end cursor cannot reach the
  * visible left/right edges").
  *

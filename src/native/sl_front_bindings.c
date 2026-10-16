@@ -26,7 +26,7 @@
  * strip at y 0x1E to the footer at 0x122, and the last row's box ends at
  * 0x11C - inside the page (the PREVIOUS tab sits right of x 390, clear of
  * every column). It was fourteen rows at a 16-unit pitch until #47 added
- * TEXTURE SET; the pitch absorbed the row without moving where the list
+ * PRESENTATION; the pitch absorbed the row without moving where the list
  * ends. The cheat menu's 0x14 pitch would not fit this many rows plus the
  * header and footer.
  *
@@ -103,7 +103,7 @@ extern char *getenv(const char *);
 #define BND_X_BACK    0x10E
 #define BND_TAB_Y     0x1E
 #define BND_HDR_Y     0x2E
-/* #47: FIFTEEN rows now (TEXTURE SET joined the list), so the pitch drops
+/* #47: FIFTEEN rows now (the PRESENTATION row joined the list), so the pitch drops
  * from 0x10 to 0x0F and the first row starts two units higher. That is
  * arithmetic, not taste: 0x3C + 14 * 0x0F is 0x10E, the SAME y the last of
  * the fourteen rows had, so the paper still ends where it did and the footer

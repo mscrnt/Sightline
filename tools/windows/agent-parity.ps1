@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    Raw parity runner. Reproduces the EXACT launch an agent uses when it
-    measures boot and frontend behaviour.
+    Raw parity runner. Reproduces the EXACT launch an automated measurement
+    uses for boot and frontend behaviour.
 
 .DESCRIPTION
     This is not play.ps1 and must never grow into it.
 
-    It exists for one reason: the owner and every agent must run the SAME
-    FILE, so that "what I see" and "what you see" are the same execution.
-    Agents are FORBIDDEN from launching build\win32\sightline.exe through an
+    It exists for one reason: manual play and every automated launch must run
+    the SAME FILE, so that what is seen in play and what is measured are the same execution.
+    Automated launches are FORBIDDEN from starting build\win32\sightline.exe through an
     ad-hoc Start-Process for boot or frontend measurements. Run this instead.
 
     Deliberately absent, and to stay absent:
@@ -22,11 +22,11 @@
       * no blanket clearing of the SL_* environment
 
     NO AUTO-REBUILD is the whole point. The purpose is to run exactly the
-    bytes the agent measured. A missing exe is an error and a stale exe is a
+    bytes that were measured. A missing exe is an error and a stale exe is a
     warning - never a rebuild, because rebuilding would run different bytes
     than the ones under discussion.
 
-    NO -NoNewWindow is also deliberate. The clean agent runs this file
+    NO -NoNewWindow is also deliberate. The clean automated runs this file
     reproduces did not pass it. An extra console window IS the parity
     configuration; do not "fix" it.
 
@@ -53,7 +53,7 @@ if (-not (Test-Path $exe)) {
     Write-Host "agent-parity: no executable at '$exe'."
     Write-Host '  Build first:  .\tools\windows\build.ps1'
     Write-Host '  This runner never builds. It exists to run exactly the bytes'
-    Write-Host '  the agent measured, and a build would replace them.'
+    Write-Host '  that were measured, and a build would replace them.'
     exit 1
 }
 $exeItem = Get-Item $exe
@@ -90,7 +90,7 @@ if (-not (Test-Path $rom)) {
 $rom = (Resolve-Path $rom).Path
 
 # ------------------------------------------------- scratch dir, save, outputs
-# Never the owner's real save at <LOCALAPPDATA>\sightline\eeprom.bin. This is a
+# Never the player's real save at <LOCALAPPDATA>\sightline\eeprom.bin. This is a
 # throwaway cartridge in a sibling directory, outside git.
 $base = $env:LOCALAPPDATA
 if (-not $base -and $env:USERPROFILE) { $base = Join-Path $env:USERPROFILE 'AppData\Local' }
@@ -168,7 +168,7 @@ $m.Add('  method               Start-Process')
 $m.Add('  redirects            yes (stdout and stderr)')
 $m.Add('  -Wait                yes')
 $m.Add('  -PassThru            yes')
-$m.Add('  -NoNewWindow         NO  (deliberate: the clean agent run did not use it)')
+$m.Add('  -NoNewWindow         NO  (deliberate: the clean automated run did not use it)')
 $m.Add('==================================================================')
 
 $text = ($m -join [Environment]::NewLine)

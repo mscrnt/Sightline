@@ -73,7 +73,7 @@
 /* B-115. Room display lists are NATIVE word order after the decompress swap
  * (bg.c's SL_OP records the same fact for the room-DL walker), so the
  * big-endian struct-bitfield and byte-offset reads below land on the wrong
- * bytes natively. The owner's Dam crash 20260911-000454 is this file doing
+ * bytes natively. The playtest Dam crash 20260911-000454 is this file doing
  * exactly that: lightFindVertexBaseForTri's backward walk compared the LOW
  * byte of each word against G_VTX, stopped at an arbitrary word whose low
  * byte happened to be 0x04, and returned its second word - 0x1ffc94c8, just

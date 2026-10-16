@@ -141,6 +141,13 @@
  * pulling the whole glext prototype set in. */
 #ifndef _WIN32
 extern void glFogCoordf(GLfloat coord);
+/* #68. The ARRAY form of the same attribute, and the same header hole: GL 1.4,
+ * absent from Mesa's <GL/gl.h>, and calling it without a prototype is the
+ * identical ABI violation B-045 paid for above. The world-asset background
+ * draws through glDrawElements rather than glBegin/glEnd, so it needs the
+ * pointer form to give every vertex the fog value the immediate path gives
+ * with glFogCoordf. */
+extern void glFogCoordPointer(GLenum type, GLsizei stride, const GLvoid *p);
 #endif
 
 /* ---- Win32: the post-1.1 entry points, resolved at RUNTIME ---------------
@@ -268,7 +275,7 @@ extern void glFogCoordf(GLfloat coord);
  *
  * B-075 lost whole render paths to a missing capability macro and B-076 lost
  * B-051's alpha equation to missing enum VALUES. This is the same failure a
- * third time, and it is what the owner sees as a grid/stitch pattern over
+ * third time, and it is what is visible in play as a grid/stitch pattern over
  * every metal sliding door and every interactable console.
  *
  * tex_wrap() maps the RDP's clamp bit to GL_CLAMP_TO_EDGE. Further down this
@@ -370,14 +377,23 @@ extern void glFogCoordf(GLfloat coord);
 #ifndef GL_PREVIOUS
 #define GL_PREVIOUS        0x8578
 #endif
+/* #68. The client-state token for the fog-coordinate ARRAY. GL/glext.h:510,
+ * read from the header rather than recalled, the same authority as the fog
+ * pair above. Defined here rather than in the _WIN32 block because the array
+ * path is wanted on both toolchains and neither <GL/gl.h> carries it. */
+#ifndef GL_FOG_COORD_ARRAY
+#define GL_FOG_COORD_ARRAY 0x8457
+#endif
 
 typedef void (APIENTRY *SL_PFN_ACTIVETEXTURE)(GLenum);
 typedef void (APIENTRY *SL_PFN_MULTITEXCOORD2F)(GLenum, GLfloat, GLfloat);
 typedef void (APIENTRY *SL_PFN_FOGCOORDF)(GLfloat);
+typedef void (APIENTRY *SL_PFN_FOGCOORDPOINTER)(GLenum, GLsizei, const GLvoid *);
 
 static SL_PFN_ACTIVETEXTURE   p_ActiveTexture;
 static SL_PFN_MULTITEXCOORD2F p_MultiTexCoord2f;
 static SL_PFN_FOGCOORDF       p_FogCoordf;
+static SL_PFN_FOGCOORDPOINTER p_FogCoordPointer;
 
 extern void *sl_gl_proc(const char *name);
 
@@ -416,18 +432,47 @@ static void sl_glMultiTexCoord2f(GLenum t, GLfloat s, GLfloat tt)
 { if (p_MultiTexCoord2f != NULL) p_MultiTexCoord2f(t, s, tt); }
 static void sl_glFogCoordf(GLfloat c)
 { if (p_FogCoordf != NULL) p_FogCoordf(c); }
+static void sl_glFogCoordPointer(GLenum t, GLsizei s, const GLvoid *p)
+{ if (p_FogCoordPointer != NULL) p_FogCoordPointer(t, s, p); }
 
-#define glActiveTexture    sl_glActiveTexture
-#define glMultiTexCoord2f  sl_glMultiTexCoord2f
-#define glFogCoordf        sl_glFogCoordf
+/* #68. glFogCoordPointer is resolved SEPARATELY from the three above, and
+ * deliberately so: it is wanted by exactly one caller (the world-asset
+ * background, which draws through glDrawElements and so cannot use the
+ * immediate-mode attribute), and folding it into post11_ok's mandatory set
+ * would let one missing entry point take TEXEL1 and the whole fog stage down
+ * with it. A driver without it keeps everything else and the background falls
+ * back to the neutral coordinate, which is the unfogged picture - the
+ * behaviour before this change rather than a new failure. */
+static int sl_fogarray_state;
+
+static int fogarray_ok(void)
+{
+    if (sl_fogarray_state != 0) return sl_fogarray_state > 0;
+    if (!post11_ok()) { sl_fogarray_state = -1; return 0; }
+    p_FogCoordPointer = (SL_PFN_FOGCOORDPOINTER) sl_gl_proc("glFogCoordPointer");
+    sl_fogarray_state = (p_FogCoordPointer != NULL) ? 1 : -1;
+    fprintf(stderr, "sl_gl: glFogCoordPointer %s - the world-asset background"
+                    " fog coordinate is %s (#68)\n",
+            (sl_fogarray_state > 0) ? "resolved" : "UNAVAILABLE",
+            (sl_fogarray_state > 0) ? "per vertex" : "neutral");
+    return sl_fogarray_state > 0;
+}
+
+#define glActiveTexture     sl_glActiveTexture
+#define glMultiTexCoord2f   sl_glMultiTexCoord2f
+#define glFogCoordf         sl_glFogCoordf
+#define glFogCoordPointer   sl_glFogCoordPointer
 #else
 /* Where the header declares them the direct calls stand exactly as they
  * were, so this change is invisible to the native build. */
 #define post11_ok() 1
+#define fogarray_ok() 1
 #endif
 #include "sl_gfx.h"
 #include "sl_gfx_tex.h"
 #include "sl_gfx_texprov.h"           /* #47: the texture provider seam */
+#include "sl_gfx_worldasset.h"        /* #68: the world-asset provider seam */
+#include "sl_gfx_charskin.h"          /* #70: the character-asset bridge */
 #include "../sl_asset_override.h"
 #include "../platform/sl_display.h"     /* #45: the aspect selection and the one viewport fit */
 
@@ -437,7 +482,7 @@ static void sl_glFogCoordf(GLfloat c)
  * platform, which silently compiled out tex1_apply's B-107 water arm (unit 1
  * fell to its #else, plain GL_MODULATE: the water multiplied by TEXEL1 a
  * second time instead of by SHADE, discarding the dark blue-green vertex
- * colours - measured at the owner's mark as a centre pixel of (61,69,107)
+ * colours - measured at the playtest mark as a centre pixel of (61,69,107)
  * against a Gouraud shade cap of (45,65,84), which no correct x SHADE can
  * exceed) and aeq_apply_env's AEQ_LERP constant push. The definition now
  * sits here, after <GL/gl.h> and the B-076 token block, so every user in the
@@ -474,6 +519,38 @@ struct vtx { short x, y, z; unsigned short flag; short s, t; unsigned char r,g,b
 static unsigned int  g_seg[16];
 int sl_dl_branch_dbg;          /* SL_DL_BRANCH_DBG=1, B-066 diagnosis */
 static struct vtx    g_vbuf[32];
+
+/* THE SCREEN'S PLACE (src/sl_chr_asset.h): the screen buffers the seam
+ * registered while the game built the frame's lists, and the place each is
+ * drawn at. Registrations made while a frame is built belong to that frame;
+ * a witness re-walk of the same frame keeps them. */
+#define SL_GFX_SCREEN_PLACES 32
+struct sl_gfx_splace { const void *vtx; short xyz[4][3]; };
+static struct sl_gfx_splace g_spl_pend[SL_GFX_SCREEN_PLACES], g_spl_cur[SL_GFX_SCREEN_PLACES];
+static unsigned g_spl_npend, g_spl_ncur;
+
+void sl_gfx_screen_place(const void *vtx, const short xyz[4][3])
+{
+    if (vtx == NULL || g_spl_npend >= SL_GFX_SCREEN_PLACES) return;
+    g_spl_pend[g_spl_npend].vtx = vtx;
+    memcpy(g_spl_pend[g_spl_npend].xyz, xyz, sizeof g_spl_pend[0].xyz);
+    g_spl_npend++;
+}
+
+static void screen_place_load(const void *src, unsigned n, struct vtx *dst)
+{
+    unsigned i, k;
+    if (n != 4u) return;
+    for (i = 0; i < g_spl_ncur; i++)
+        if (g_spl_cur[i].vtx == src) {
+            for (k = 0; k < 4u; k++) {
+                dst[k].x = g_spl_cur[i].xyz[k][0];
+                dst[k].y = g_spl_cur[i].xyz[k][1];
+                dst[k].z = g_spl_cur[i].xyz[k][2];
+            }
+            return;
+        }
+}
 /* ---- B-021: where each loaded vertex ended up, in eye space --------------
  *
  * The RSP transforms a vertex WHEN THE 04 COMMAND LOADS IT, using the
@@ -500,11 +577,11 @@ static float         g_veye[32][3];
  * command loads it; ours was deriving depth at TRIANGLE-DRAW time from
  * whatever projection the list had reached by then, so the same surface got
  * different fog depending on which batch it landed in. Adjacent floor tiles
- * at identical distance came out one green, one clear - the patchwork the
- * owner photographed - and it moved between frames, which is the flicker. */
+ * at identical distance came out one green, one clear - the patchwork in the
+ * playtest photograph - and it moved between frames, which is the flicker. */
 static float         g_vdepth[32];
 
-/* ---- LIVE OWNER BUG MARK: where each loaded vertex CAME FROM -------------
+/* ---- LIVE BUG MARK: where each loaded vertex CAME FROM -------------------
  *
  * The seam round got as far as "tri=50 dl=20026730" and then spent hours by
  * hand turning that into "which command in that list, which G_VTX load, which
@@ -536,7 +613,7 @@ static unsigned      g_vsrc_off[32];   /* byte offset of the G_VTX command   */
  * outside and in. Three rounds tried to make GL agree by changing what the
  * depth compare is fed: GL_LEQUAL (B-122, exact ties), then a 16-bit
  * attachment (B-123 inert, B-124 real) so the skins would quantize to ties.
- * They do not. Measured at owner mark 20260912-230216-001, from the record's
+ * They do not. Measured at playtest mark 20260912-230216-001, from the record's
  * own clip rows: the quads are not planar, so the two diagonals interpolate
  * depths that differ by +1.8, +3.0, -1.3 and +1.8 sixteen-bit buckets at the
  * four quad centres around the crosshair - a pyramid over each quad, zero on
@@ -546,7 +623,7 @@ static unsigned      g_vsrc_off[32];   /* byte offset of the G_VTX command   */
  * buckets - a lattice of dashes along the bucket contours, reproduced by
  * an offline rasterization of the record's vertices at 84% pixel agreement
  * against the .bmp (24-bit prediction: 45%). That lattice is the residual
- * hash the owner rejected.
+ * hash rejected in playtest.
  *
  * What resolves the skins on hardware is the RDP compare's TOLERANCE, not
  * its width. The corpus documents the triangle's z-coefficient block
@@ -579,7 +656,7 @@ static unsigned      g_vsrc_off[32];   /* byte offset of the G_VTX command   */
  *
  * THE TOLERANCE IS THE QUAD'S OWN, NOT THE HARDWARE'S. The first version
  * of this path gave every redraw the RDP's far-range magnitude, and the
- * owner's next replay was "a big fail": textures bleeding through geometry
+ * next playtest verdict was "a big fail": textures bleeding through geometry
  * in front of them, level-wide (run 20260913-002517). The marks' own
  * records named the mechanism: the flagged draws there were the ROAD pass -
  * a second material (1ffc93fc) over the SAME snow triangles, same
@@ -605,7 +682,7 @@ static unsigned      g_vsrc_off[32];   /* byte offset of the G_VTX command   */
  * t, u from the 2D intersection of p-r and q-s in NDC. NOT the midpoint
  * formula |(z_p + z_r)/2 - (z_q + z_s)/2|: that is the crossing only for a
  * screen-space parallelogram, and under perspective the crossing shifts -
- * measured at owner mark 20260913-054107-001 the quad under the crosshair
+ * measured at playtest mark 20260913-054107-001 the quad under the crosshair
  * had t = 0.47, u = 0.53 and a true difference of 6.5e-6 against the
  * midpoint's 1.05e-6, so the white pass failed in a band and the dark
  * skin showed through as a narrow rectangle, view-dependent (B-127). The
@@ -635,6 +712,7 @@ static int           g_rd_cur;                  /* the triangle being emitted is
 static float         g_rd_tol;                  /* ... and this is its tolerance, window depth */
 static int           g_rd_stencil_bits, g_rd_depth_bits;
 static unsigned      g_rd_loads, g_rd_loads_old, g_rd_tris, g_rd_tris_z, g_rd_tris_same;
+static unsigned      g_rd_tris_notquad;         /* edge test met, but no crossing diagonals */
 
 static int redraw_on(void)
 {
@@ -747,16 +825,29 @@ static int rd_classify(const int *s, const float (*n)[3], float *tol)
         int ea = rd_edge((unsigned) s[ix], (unsigned) s[iq], 0);
         int eb = rd_edge((unsigned) s[iq], (unsigned) s[iy], 0);
         int i, j, so = -1; const float *sn = NULL;
+        int common = 0;
         if (ea < 0 || eb < 0) return 0;
+        /* ...and the four must be ONE quad: its two diagonals cross. Three
+         * faces of a box share a corner q, so a redraw of one face can meet
+         * both drawn-edge conditions with s on a perpendicular face - the
+         * "tent difference" is then the depth gap between two faces, and a
+         * tolerance that size lets the redraw win over nearer geometry.
+         * Measured on the Dam truck's door jamb (PmiltruckZ, the x = -1118
+         * quad): the inner face drew through the cab front as a grey wedge. */
         for (i = 0; i < g_rd_edge[ea].n && so < 0; i++)
             for (j = 0; j < g_rd_edge[eb].n; j++)
                 if (g_rd_edge[ea].opp[i] == g_rd_edge[eb].opp[j]
                     && g_rd_edge[ea].opp[i] != s[ix]
                     && g_rd_edge[ea].opp[i] != s[iy]
                     && g_rd_edge[ea].opp[i] != s[iq]) {
-                    so = g_rd_edge[ea].opp[i]; sn = g_rd_edge[ea].oppn[i]; break;
+                    int c = g_rd_edge[ea].opp[i];
+                    common++;
+                    if (!sl_wa_redraw_quad_ok(g_rd_set[s[ix]].p, g_rd_set[s[iq]].p,
+                                              g_rd_set[s[iy]].p, g_rd_set[c].p))
+                        continue;
+                    so = c; sn = g_rd_edge[ea].oppn[i]; break;
                 }
-        if (so < 0) return 0;
+        if (so < 0) { if (common) g_rd_tris_notquad++; return 0; }
         {
             const float *p = n[ix], *r = n[iy], *q = n[iq];
             float dmid, dx, den, t, u, za, zb;
@@ -932,7 +1023,7 @@ static int ptr_ok(unsigned long p)
  * paths stay A/B-able against each other.
  */
 #define VQ_CACHE_N 16
-static struct { unsigned long base, end; int ok; } g_vq[VQ_CACHE_N];
+static struct { unsigned long base, end, alloc; int ok; } g_vq[VQ_CACHE_N];
 static unsigned g_vq_n, g_vq_next;
 
 /* src/platform/sl_ultra_shim.c - the kseg2 window the pager fills on touch. */
@@ -1000,8 +1091,10 @@ static int vq_cache_on(void)
 
 /* Is `a` inside a region that is not MEM_FREE? Sets *rend to the end of the
  * region the answer came from, so the caller's span walk can skip the whole
- * of it in one step - the same contract VirtualQuery itself offers. */
-static int vq_region(unsigned long a, unsigned long *rend)
+ * of it in one step - the same contract VirtualQuery itself offers - and
+ * *alloc to the base of the ALLOCATION that region belongs to (0 when the
+ * address is free or cannot be queried), which seg_reading_wins compares. */
+static int vq_query(unsigned long a, unsigned long *rend, unsigned long *alloc)
 {
     MEMORY_BASIC_INFORMATION mbi;
     unsigned i;
@@ -1010,10 +1103,12 @@ static int vq_region(unsigned long a, unsigned long *rend)
         for (i = 0; i < g_vq_n; i++) {
             if (a >= g_vq[i].base && a < g_vq[i].end) {
                 *rend = g_vq[i].end;
+                *alloc = g_vq[i].alloc;
                 return g_vq[i].ok;
             }
         }
     }
+    *alloc = 0;
     if (VirtualQuery((void *) a, &mbi, sizeof mbi) != sizeof mbi) {
         /* No region to remember, and no ground to advance over. */
         *rend = a + 1;
@@ -1022,6 +1117,8 @@ static int vq_region(unsigned long a, unsigned long *rend)
     {
         unsigned long base = (unsigned long) mbi.BaseAddress;
         unsigned long end  = base + (unsigned long) mbi.RegionSize;
+        unsigned long ab   = (mbi.State == MEM_FREE) ? 0ul
+                                                     : (unsigned long) mbi.AllocationBase;
         /* B-139. "Not MEM_FREE" was the rule here, and it is wrong by
          * exactly one case: a region that is RESERVED but not committed is
          * not free, and reading it is an access violation the VEH does not
@@ -1030,7 +1127,7 @@ static int vq_region(unsigned long a, unsigned long *rend)
          * reservations), and a display-list operand that names one passes
          * the probe and faults on the read that follows it.
          *
-         * OWNER CRASH, Aztec, run 20260916-074840-lvl28, frame 13397:
+         * PLAYTEST CRASH, Aztec, run 20260916-074840-lvl28, frame 13397:
          * ACCESS VIOLATION READ at 0x04000000 with pc inside walk()'s G_VTX
          * memcpy (0x54470f, walk.part.0+0x4c3f; ra 0x542493 walk,
          * 0x546cfb sl_gfx_frame_dl, then rspGfxTaskStart rsp.c:246).
@@ -1051,15 +1148,22 @@ static int vq_region(unsigned long a, unsigned long *rend)
         /* Defensive: a region that does not contain the address it was
          * queried with, or one that does not advance, would loop the caller
          * forever. Answer without remembering it. */
+        *alloc = ab;
         if (a < base || a >= end) { *rend = a + 1; return ok; }
         *rend = end;
         if (vq_cache_on()) {
             if (g_vq_n < VQ_CACHE_N) i = g_vq_n++;
             else { i = g_vq_next; g_vq_next = (g_vq_next + 1) % VQ_CACHE_N; }
-            g_vq[i].base = base; g_vq[i].end = end; g_vq[i].ok = ok;
+            g_vq[i].base = base; g_vq[i].end = end; g_vq[i].alloc = ab; g_vq[i].ok = ok;
         }
         return ok;
     }
+}
+
+static int vq_region(unsigned long a, unsigned long *rend)
+{
+    unsigned long alloc;
+    return vq_query(a, rend, &alloc);
 }
 #else
 static void vq_describe(unsigned long a, char *buf, unsigned n)
@@ -1165,6 +1269,59 @@ static const void *seg_resolve(unsigned int a)
     return ptr_ok(p) ? (const void *) p : NULL;
 }
 
+/* WHEN AN OPERAND READS BOTH WAYS, the segmented reading must stay inside the
+ * allocation its segment's base lies in.
+ *
+ * B-066 (sl_ultra_shim.c sl_native_heap) states the invariant the segment test
+ * below relies on: no host pointer has a zero top nibble. The game heap was
+ * moved above 0x10000000 for it, but the executable's own static storage still
+ * breaks it: .bss runs from 0x00681000 to 0x01d8c9f4 (objdump -h), so every
+ * static object above 0x01000000 - roomMatrices among them (nm: 01396ae0),
+ * which applyRoomMatrixToDisplayList hands gSPMatrix as a raw pointer - reads
+ * as segment 1 (SPSEGMENT_UNKNOWN, the font list lv.c sets, base 20fb9400 in
+ * the game heap). Its segmented reading lands at 0x2134fee0, past the 16 MB
+ * heap's end, where nothing is normally mapped, so the probe refused it and
+ * the raw pointer won. Once any later allocation is placed directly after the
+ * heap, that address becomes readable and the room matrix is read out of
+ * someone else's memory.
+ *
+ * MEASURED (Frigate, playtest run 20261006-173108 marks 3, 6 and 7): after a
+ * session under XBLA, ORIGINAL and COMMUNITY HD drew every native room
+ * triangle with eye coordinates near 1e6 - the room's modelview decoded from
+ * float words - so the rooms vanished and the consoles and characters stood
+ * over the open sea. XBLA hides the same misread because its background
+ * replaces the native room triangles. Reproduced from a fresh ORIGINAL boot
+ * by committing the 16 MB after the heap at start-up: the segmented reading
+ * of 01397ae0 returned 4045c290 405d70a4 ... where the raw words were
+ * 00020000 00000000 00000002 (the room's scale, 2.0) - the marks' picture
+ * exactly.
+ *
+ * The rule is the segment's own meaning: an offset indexes the buffer the
+ * segment names, and a buffer never spans two separate allocations. It is
+ * asked ONLY when the raw reading is readable too - the one case where the
+ * two can disagree - so an operand with a single readable reading resolves
+ * exactly as before. Off Windows there is no allocation query here and the
+ * segmented reading keeps winning, as it always has. */
+static unsigned g_seg_rival_raw;        /* ambiguous operands the raw reading won */
+static int seg_reading_wins(unsigned int a, const void *p, unsigned len)
+{
+#ifdef _WIN32
+    unsigned long rend, base_alloc, p_alloc;
+    if (!mem_readable((unsigned long) a, len)) return 1;     /* no rival reading */
+    (void) vq_query((unsigned long) g_seg[(a >> 24) & 0x0f], &rend, &base_alloc);
+    (void) vq_query((unsigned long) p, &rend, &p_alloc);
+    if (base_alloc != 0 && base_alloc == p_alloc) return 1;
+    if (g_seg_rival_raw++ == 0)
+        fprintf(stderr, "sl_dl: operand %08x reads as segment %u (base %08x) into a different "
+                        "allocation (%08lx, the segment's is %08lx); the host pointer is used\n",
+                a, (a >> 24) & 0x0f, g_seg[(a >> 24) & 0x0f], p_alloc, base_alloc);
+    return 0;
+#else
+    (void) a; (void) p; (void) len;
+    return 1;
+#endif
+}
+
 /* A G_DL branch target or a vertex-batch operand, resolved the same way a
  * matrix and a texture-image operand already are (mtx_resolve, tex_operand):
  * segment address first, but ONLY when the top nibble is clear and that
@@ -1186,7 +1343,7 @@ static const void *dl_operand(unsigned int a, unsigned int len)
     if (a == 0) return NULL;
     if ((a & 0xf0000000u) == 0 && g_seg[(a >> 24) & 0x0f] != 0) {
         const void *p = seg_resolve(a);
-        if (p && mem_readable((unsigned long) p, len)) return p;
+        if (p && mem_readable((unsigned long) p, len) && seg_reading_wins(a, p, len)) return p;
     }
     cand = (unsigned long) a;
     if (ptr_ok(cand) && mem_readable(cand, len)) return (const void *) cand;
@@ -1210,7 +1367,7 @@ static const unsigned int *mtx_resolve(unsigned int a)
 
     if ((a & 0xf0000000u) == 0 && g_seg[(a >> 24) & 0x0f] != 0) {
         const void *p = seg_resolve(a);
-        if (p && mem_readable((unsigned long) p, MTX_SIZE))
+        if (p && mem_readable((unsigned long) p, MTX_SIZE) && seg_reading_wins(a, p, MTX_SIZE))
             return (const unsigned int *) p;
     }
     cand = (unsigned long) a;                       /* osVirtualToPhysical */
@@ -1238,7 +1395,7 @@ static const unsigned char *tex_operand(unsigned int a)
     if (a == 0) return NULL;
     if ((a & 0xf0000000u) == 0 && g_seg[(a >> 24) & 0x0f] != 0) {
         const void *p = seg_resolve(a);
-        if (p && mem_readable((unsigned long) p, 8))
+        if (p && mem_readable((unsigned long) p, 8) && seg_reading_wins(a, p, 8))
             return (const unsigned char *) p;
     }
     cand = (unsigned long) a;
@@ -1267,6 +1424,20 @@ static int g_scr_h_adopted;
  * sciss_on and OP_SETSCISS), and on a witness frame pass A runs WITHOUT it so
  * the witness keeps measuring what the scissor removes. See sl_gfx_frame_dl. */
 static int g_wit_pass;
+/* High-refresh presentation (sl_gfx_present.c). Non-zero while a
+ * PRESENTATION re-walk of the frame's list is running (sl_gfx_dl_rewalk):
+ * the same list walked again, with at most the camera changed. Like the
+ * witness pass it is the SAME frame, so it advances no frame counter, reseeds
+ * no dither, arms no mark and prints no census; unlike it, it is presented. */
+static int g_pres_pass;
+/* The list the last ORIGINAL walk interpreted, and how many original walks
+ * ran since the frame pump's last regular present. A re-walk is offered only
+ * for a frame that was exactly one list (sl_gfx_dl_rewalk_ready). */
+static const void *g_last_first, *g_last_end;
+static unsigned g_walks_since_present;
+/* Wall time of the last original walk and of the last presentation re-walk,
+ * from the interpreter-ran point to the GL teardown (s). */
+static double g_walk_t0, g_walk_s, g_rewalk_s;
 /* B-143. Non-zero during pass A of a witness frame - the one walk of the run
  * that deliberately ignores the scissor, so pass B has something to differ
  * from. Zero on every ordinary frame. */
@@ -1287,14 +1458,14 @@ static unsigned g_sciss_applied, g_sciss_empty, g_sciss_frames_empty;
  * every portal window by the full view, which is exactly the case where the
  * scissor cannot bite.
  *
- * MEASURED 2026-09-17, owner mark 20260916-232914-lvl33/mark-001 (Dam, room
+ * MEASURED 2026-09-17, playtest mark 20260916-232914-lvl33/mark-001 (Dam, room
  * 121, looking up at the massif): the cartridge's visible-room table confines
  * rooms 23/35/26-29/1/2 to the window [1,182]-[30,214] of 320x240, and
  * redirecting room 1's list to an ENDDL on the cartridge changes ZERO
  * pixels - nothing of room 1 reaches the screen there. Natively room 1 drew
  * 25 triangles across the whole view, two of them Rare's authored junk: a
  * long sliver quad in the sky (Tri4 b1000032 00002010 at +0x138) and a
- * fully-fogged wedge over the ridge (the owner's "missing mountain
+ * fully-fogged wedge over the ridge (the playtest report's "missing mountain
  * texture"). Under the cartridge portal rule plus this scissor both vanish
  * and the ridge pairs with the cartridge (docs/backlog.md B-143).
  *
@@ -1509,13 +1680,13 @@ static int g_aeqrgb_amin = -1, g_aeqrgb_amax = -1;
  * RENDERED curve on the same line and makes "does the port reproduce the
  * gradient" a subtraction rather than an argument.
  *
- * The reference curve, measured game-side on the owner's recording as portal
+ * The reference curve, measured game-side on a playtest recording as portal
  * 70 crosses CullDist: 255 251 241 231 222 213 205 198 191 184 179 173 168
  * 163 159 155 151 147 144 141 138 135 133 130 128 126 124 123 121 over ~27
  * frames. A renderer that snaps rather than grades will show a step here. */
 static int g_aeqrgb_plo = 256, g_aeqrgb_phi = -1;
 /* A frame draws MANY panes at once, so a min/max over them is useless - it
- * reported prim[0,255] on every frame of the transition and told me nothing.
+ * reported prim[0,255] on every frame of the transition and showed nothing.
  * Keep the DISTINCT PRIM.a values instead: one pane's gradient is then
  * visible as a value walking down the set frame by frame, which a range can
  * never show. 32 is well above the ~20 panes facility draws at once. */
@@ -1859,8 +2030,8 @@ struct sl_tile {
  * frames the phase advanced 0.5-1.0 quarter-texels per rendered image, so
  * the truncated origin moved on nearly every frame the player saw. At the
  * native delta=1 cadence the same truncation freezes the origin for several
- * PRESENTED frames and then jumps - measured at the owner's Dam mark: S
- * holds 3-4 presents, T holds 7-10 - which is the owner's stepped water.
+ * PRESENTED frames and then jumps - measured at the Dam playtest mark: S
+ * holds 3-4 presents, T holds 7-10 - which is the reported stepped water.
  *
  * The fix is presentation metadata, not a changed command: the writer
  * registers here, keyed by the F2 command's own address, the full continuous
@@ -2697,7 +2868,7 @@ static int texgen_on(void)
      * pane (3456 -> 54.0), predicted egypt's 32x32 must carry scale 2048, and
      * egypt returns exactly 0x0800. Two surfaces, two sizes, two scales.
      *
-     * VALIDATED ON FACILITY ONLY. The owner confirmed this arm visually there.
+     * VALIDATED ON FACILITY ONLY. A playtest confirmed this arm visually there.
      * Eight other levels carry texgen surfaces and are smoke-tested, not
      * cartridge-fidelity certified; egypt's path is 32x32 CI8+TLUT rather than
      * facility's IA8 and remains the standing caveat. The Right/Up
@@ -3239,7 +3410,7 @@ static float g_tex1_uls, g_tex1_ult;
  * factor. Each used to keep a private "value I last wrote" cache, and each
  * cache was blind to the other three writers, so a push could be skipped
  * while the REAL register held another family's value. Measured on Dam,
- * owner run 20260909-231311-lvl33 mark-001: the sky's K push was skipped
+ * playtest run 20260909-231311-lvl33 mark-001: the sky's K push was skipped
  * because its cache still said 10,30,60 while the register held the water's
  * animated PRIM_LOD_FRAC grey - the whole sky rendered grey, and the grey
  * tracked the water's fraction frame by frame (39 at frame 923, 47 at 925).
@@ -3871,7 +4042,7 @@ static void noisy_note(const unsigned char *src, unsigned pal, int slfmt,
  * PERIOD. This helper materialises exactly t*line+s for the decoder. */
 /* ======================= B-116: world texture enhancement ================
  *
- * Owner ruling 2026-09-11 (Gitea #10 comment 113 accepted as correct AND
+ * Design ruling 2026-09-11 (Gitea #10 comment 113 accepted as correct AND
  * overruled as a stop condition): the cartridge's low-resolution world
  * textures, faithful as they are, read as harsh and blocky at the window's
  * 3x internal resolution, and Sightline intentionally adds a native
@@ -4963,7 +5134,7 @@ static unsigned g_tline_w;
  * uls/ult through 0..255 every frame as the scroll, so lrs < uls on all but
  * a handful of frames. Measured live, windowed Dam, 900 frames: 12289 draws
  * under the water combiner, 110 bound, 12179 rejected TR_TILESIZE - 99.1% of
- * the water untextured, which is the owner's missing water texture. The
+ * the water untextured, which is the reported missing water texture. The
  * inside-out check survives on clamped axes, where the window IS the extent.
  * SL_TILE_WRAPWIN=0 restores the whole-rectangle reject. Default on. */
 static int tile_wrapwin_on(void)
@@ -5275,7 +5446,7 @@ static int cc_tex1_on(void)
 
 /* B-107. SL_CC_TEX1LERP=0 restores the base-tile-only rendering of the
  * PRIM_LOD_FRAC lerp family (the water) from the same binary. Default on:
- * dropping the second layer is the defect the owner reported against the
+ * dropping the second layer is the defect reported in playtest against the
  * cartridge. */
 static int cc_tex1lerp_on(void)
 {
@@ -5298,9 +5469,9 @@ static int cc_lodlerp_on(void)
 }
 
 /* B-051. The tinted-glass pane's opacity, which lives in the CYCLE 1 alpha
- * addend. DEFAULT OFF, deliberately and unlike SL_CC_TEX1 above: the owner
- * builds this tree unannounced, and an unverified renderer change reaching
- * them by default is exactly how the fog regression happened. Flip it in its
+ * addend. DEFAULT OFF, deliberately and unlike SL_CC_TEX1 above: playtest
+ * builds take this tree unannounced, and an unverified renderer change reaching
+ * a playtest by default is exactly how the fog regression happened. Flip it in its
  * own commit once the evidence in docs/backlog.md is accepted. */
 static int cc_glass_on(void)
 {
@@ -5374,7 +5545,7 @@ static GLuint tile1_texture(unsigned tile, unsigned *ow, unsigned *oh)
      * with itself is the image" - was therefore lerping the image with its
      * own TOP HALF stretched over the full height.
      *
-     * MEASURED, the Dam security-gate panel (owner mark 20260917-071141,
+     * MEASURED, the Dam security-gate panel (playtest mark 20260917-071141,
      * Gitea #34): its bevel frame is 16 triangles under fc26a004 1f1093fb
      * over one 23x24 CI8-IA16 tile, tiles 0 and 1 both at tmem 0, loaded as
      * 288 16-bit texels. tile 1 resolved as 24x12 (the dumped pair p-000
@@ -5541,7 +5712,7 @@ static void tex1_apply(void)
              * above read an SL_TEXENV_COMBINE that was then defined five
              * thousand lines further down, so the #else shipped instead and
              * the water multiplied by TEXEL1 twice with SHADE discarded -
-             * the owner's "lighter / less blue-green". Proven from consumed
+             * the reported "lighter / less blue-green". Proven from consumed
              * driver state (unit 1 read back ENV_MODE=GL_MODULATE with every
              * combine source at its GL default) and from GL_PREVIOUS below
              * having had no definition to compile against. The definition
@@ -5655,7 +5826,7 @@ static unsigned g_prim_lod_min, g_prim_lod_level;
  * consulted. Mode 5 is a program (B-051, AEQ_FS), it stays bound across
  * batches by design (shade_linear_bind defers to it), and its fragment stage
  * samples u_tex unconditionally - so the untextured draw was painted with
- * whatever texture unit 0 still held. Measured at the Depot yard (owner mark
+ * whatever texture unit 0 still held. Measured at the Depot yard (playtest mark
  * 20260916-130256-lvl30/mark-001): the floor's draw failed to acquire its
  * tile, the previous draw was the hazard-stripe pane in mode 5, and 88
  * shade-only triangles a frame came out as red x shade (Gitea #27, cause B).
@@ -5735,7 +5906,7 @@ static void tex_apply(void)
      * tile with tile 1 == tile 0 - and the native lerp, driven by its own
      * per-triangle LOD estimate against a mip-pyramided unit 1, pulled those
      * faces toward a minified average: the panel's bevel frame drew as flat
-     * per-triangle tones (owner mark 20260917-071141, top bevel 73, inner
+     * per-triangle tones (playtest mark 20260917-071141, top bevel 73, inner
      * slope 43) where the cartridge shows the texture's rows across every
      * bevel (117, banded); SL_CC_LODLERP=0 matched the cartridge and named
      * this path. Such a draw takes the single-unit branch below - plain
@@ -5800,7 +5971,7 @@ static void tex_apply(void)
          * (gbi.h:3401 gsDPSetTile packs the fields; G_TX_NOLOD=0). Dropping
          * it sampled the tree texture at a quarter of its authored horizontal
          * frequency, which smeared the ROM's distinct snow-dusted conifers
-         * into the mottled noise the owner rejected - and it is why comment
+         * into the mottled noise rejected in playtest - and it is why comment
          * 113's "S/T interpretation correct" was a false link: the check
          * compared raw S/T against OUR consumption, never against the tile's
          * shift field. SL_TILE_SHIFT=0 restores the old behaviour. */
@@ -5911,7 +6082,7 @@ static void tex_apply(void)
          * 102/255, so every 0x2F pane drew at 40% whatever its opacity said,
          * and the rooms behind it - which the cartridge never traverses once
          * the portal is disabled at opacity 255 - showed through it.
-         * Measured 2026-09-15 on Control's owner marks (run 20260915-231706,
+         * Measured 2026-09-15 on Control's playtest marks (run 20260915-231706,
          * marks 1-3): the pane draws reached tex_apply with texenv=0 and the
          * alpha-equation uniforms never uploaded; the cartridge draws the
          * same panes as an unbroken dark sheet (mean 32-34 in 320x240).
@@ -5956,6 +6127,12 @@ static unsigned char g_prim[4], g_env[4], g_fog[4], g_blend[4], g_fill[4];
 /* B-045 probe. What the list asks for in the way of fog, per frame. */
 static unsigned g_fogp_cmds;              /* G_MW_FOG movewords seen        */
 static int      g_fogp_fm, g_fogp_fo;     /* the two signed 16-bit halves   */
+/* #68. The fog colour standing when that pair was last written, and when.
+ * See the MW_FOG case for why this is the LEVEL's fog rather than whatever
+ * register a prop left behind. */
+static unsigned char g_fogp_col[4];
+static unsigned g_fogp_frame;
+static int      g_fogp_seen;
 static unsigned g_fog_geom_tris;          /* triangles drawn with G_FOG on  */
 static unsigned g_fog_p_tris;             /* ... whose blender names CLR_FOG */
 static unsigned g_fog_a_shade, g_fog_a_fog;  /* which alpha it multiplies by */
@@ -6044,7 +6221,7 @@ static unsigned g_aeq_0a, g_aeq_0b, g_aeq_0c, g_aeq_0d;  /* cycle 0 */
 static unsigned g_aeq_1a, g_aeq_1b, g_aeq_1c, g_aeq_1d;  /* cycle 1 */
 static unsigned g_aeq_tris[AEQ_NMODE];
 /* Which combiner words actually reach a draw in genuine-ADD mode, and how
- * many triangles each contributes. The coordinator's check: an ADD triangle
+ * many triangles each contributes. The reconciliation check: an ADD triangle
  * count must be attributable to specific words, or it is the same
  * unreconciled inconsistency that the source-membership classifier produced. */
 #define AEQ_ADDW_MAX 48
@@ -6103,13 +6280,13 @@ static int aeq_watch_on(void)
     return on;
 }
 void sl_alpha_eq_report(void);
-/* DEFAULT ON. SL_ALPHA_EQ=0 opts OUT. Signed off by the owner after the
+/* DEFAULT ON. SL_ALPHA_EQ=0 opts OUT. Accepted in playtest after the
  * verification below stood up; see the accessor's own comment for the
  * evidence that earned it.
  *
  * Kept as history because the lesson outlived the state it described: this
  * was once flipped default-ON in a working tree BEFORE its verification
- * stood up, and the owner play-tested an unverified default-on renderer as a
+ * stood up, and an unverified default-on renderer reached a playtest as a
  * result. The rule that came out of it - a global renderer change ships OFF
  * until its evidence is in - is why the texgen and lighting work above was
  * held at default OFF through several rounds of measurement. */
@@ -6166,15 +6343,27 @@ static int aeq_stats_on(void)
  * the environment and the value it is fed disagree and the result describes
  * neither path. That is why it is one function and not two tests.
  *
- * With no mask set it is the identity, so a normal run pays one getenv. */
+ * With no mask set it is the identity, so a normal run pays one getenv.
+ *
+ * THE READ IS LATCHED BY ITS OWN FLAG, not by the mask's value: the default
+ * mask ~0 is -1, which is also what the sentinel was, so a run without
+ * SL_AEQ_MODES read the environment again on every call - once per triangle
+ * (tri_alpha) and once per texture application (tex_apply). Measured on
+ * Statue's start pose under ORIGINAL (unpaced, one VI per frame, a sampling
+ * profiler): 62.8% of the in-level frame was msvcrt's getenv under this
+ * function, and latching the read took the median frame from 12.8 ms to
+ * 1.7 ms with every frame byte-identical. The answer is unchanged; only how
+ * often it is computed. */
 static int aeq_mode_enabled(int mode)
 {
-    static int mask = -1;
+    static int mask_read;
+    static int mask;
     static unsigned onlyw;
     static int onlyw_on = -1;
-    if (mask < 0) {
+    if (!mask_read) {
         const char *v = getenv("SL_AEQ_MODES");
         mask = (v != NULL && *v != '\0') ? (int) strtoul(v, NULL, 16) : ~0;
+        mask_read = 1;
     }
     if (onlyw_on < 0) {
         /* SL_AEQ_ONLYW=<lower combiner word, hex> narrows the attribution
@@ -6305,7 +6494,7 @@ static int aeq_classify(const struct aeq_expr *e)
  *
  * The working is printed rather than a bare total because a gate that asserts
  * only "9 and 1" can pass for the wrong reason - which is the failure mode
- * that has caught this session repeatedly. The census stays the reference even
+ * that has recurred repeatedly in this work. The census stays the reference even
  * though the twenty-level sweep does not: it is the only thing that can catch
  * a classifier that disagrees with what the game actually emits, and it
  * already caught one. */
@@ -7015,12 +7204,27 @@ static unsigned g_geom_mode, g_geom_cmds;
  * provenance uses (sl_mark_room_of_dl, src/native/sl_game_query.c), cleared
  * when the submission returns. Room meshes are statically authored with
  * consistent winding - SL_CULL=1 renders them correctly (measured at the
- * owner's Dam mountain mark) - while the animated-model path still carries
+ * Dam mountain playtest mark) - while the animated-model path still carries
  * the dotube winding debt that made full sense-1 culling unshippable (the
  * truck tyre, re-measured 2026-09-10: still a crescent under SL_CULL=1).
  * The flag lets the default cull mode honour the game's cull bits exactly
  * where they are known to be safe. */
 static int g_room_dl;
+
+/* #68 REPLACEMENT. WHICH room's geometry this submission is, and which of its
+ * two lists - the same lookup g_room_dl above already performs, kept instead
+ * of thrown away. -1 means "no room": characters, props, the view model and
+ * the 2D passes all branch from lists g_BgRoomInfo does not carry, so they are
+ * outside every world-asset replacement by construction rather than by a test.
+ * kind is 1 for a room's PRIMARY (opaque) geometry and 2 for its SECONDARY
+ * (transparent) geometry.
+ *
+ * This is the renderer's ONLY handle on the original world population, and it
+ * is deliberately the one the game itself names: bgRenderRoomPrimary branches
+ * with OS_K0_TO_PHYSICAL(g_BgRoomInfo[room].ptr_expanded_mapping_info), so the
+ * operand IS the room's identity and nothing in src/game moves to supply it. */
+static int g_room_num = -1;
+static int g_room_kind;
 
 /* ---- Does anything actually ask to be culled, and would it matter? -------
  *
@@ -7195,7 +7399,7 @@ static void geomlog(void)
  * (model.c:3547) binds G_RM_AA_ZB_XLU_SURF2 - Z_CMP set, Z_UPD CLEAR. The
  * near polygons then write no depth, the far ones pass the compare against
  * whatever is behind the model, and Bond's face draws over the back of his
- * own head. Measured on the owner's own recorded session, Facility, the frame
+ * own head. Measured on a recorded play session, Facility, the frame
  * the report was filed against: 730 triangles, om c41049d8, zcmp=1 zupd=0
  * zmode=2, and 728 of the 730 emitted with G_CULL_BACK set. The game asks to
  * be culled there and this file was declining.
@@ -7297,7 +7501,7 @@ static int cull_would_drop(int a, int b, int c)
  * this path is drawn over the whole scene no matter what stands in front of
  * it. Nothing can occlude it, so nothing but the cull bits can remove it.
  *
- * MEASURED, Silo intro swirl, 2026-09-14 (owner run 20260914-073701-lvl20,
+ * MEASURED, Silo intro swirl, 2026-09-14 (playtest run 20260914-073701-lvl20,
  * mark-001, reproduced under SL_VI_CATCHUP=0 at pumped frames 1637-1647). The
  * frame-filling wall - a flat lit-wall pink over the whole viewport in 16 of
  * 55 shots of the swirl window - is ONE eye-crossing room triangle per frame
@@ -7310,7 +7514,7 @@ static int cull_would_drop(int a, int b, int c)
  * (tools/native/romintro.py ticks 1484-1494). The camera has passed to the
  * far side of that wall's plane; what fills the screen is its back.
  *
- * The triangles the owner's cartridge test proved must FILL (ad772496,
+ * The triangles the cartridge test proved must FILL (ad772496,
  * mark-003 v0 w 5.4 / v1 w -1.3 / v2 w 4.6; mark-004 19.6 / -7.7 / 4.2) are
  * walls the PLAYER FACES - front faces by definition - so this rule keeps
  * them by construction: their fan winds counter-clockwise and is emitted
@@ -7398,7 +7602,7 @@ static int nearcull_would_drop(int a, int b, int c)
  *             Both sides drop it.
  *   BEHIND    at least one vertex at or behind the eye. Both sides clip.
  * INSIDE was where the divergence was expected and it is empty on the whole
- * recorded Dam stream. But the owner's close-wall witnesses do not live
+ * recorded Dam stream. But the playtest's close-wall witnesses do not live
  * there: every one of them is BEHIND (a wall running past the camera has a
  * vertex behind the eye), and this function returns on nbehind != 0 before
  * it can see them. An all-zero INSIDE count says nothing about them.
@@ -7483,9 +7687,9 @@ static void cull_apply(int zwrite)
     /* Mode 4 is B-043's rule: honour the bits only where depth cannot
      * stand in for them (no z write). B-113 briefly extended the DEFAULT to
      * room geometry to cull the Dam mountain's interior wedge - and B-114
-     * retreated it after the owner's replay: the same rooms lose MOST of
+     * retreated it after the playtest: the same rooms lose MOST of
      * the massif under sense 1 from other viewpoints, and sense 2 loses
-     * the complementary subset (measured at owner marks 20260910-230901
+     * the complementary subset (measured at playtest marks 20260910-230901
      * and 20260910-234448: each sense culls faces the other keeps, on one
      * continuous mountain). B-114 read that as a MIXED authored winding
      * that no constant rule could honour. #25 (2026-09-15) measured the
@@ -7788,7 +7992,7 @@ static void rm_apply(void)
      * z-write, two overlapping rows resolve by submission order, and the
      * secondary pass draws by portal DEPTH which is not world distance for
      * these rooms - so a FAR row (room 9, ndc z 0.993) submitted after a
-     * NEAR row (room 10, ndc z 0.986) blends OVER it (owner: "the treeline
+     * NEAR row (room 10, ndc z 0.986) blends OVER it (playtest report: "the treeline
      * in the background has a wrong z-plane and overlaps the treeline in
      * front"). The geometry carries correct relative depth; only the WRITE
      * is off. Giving this family a z-write makes overlap resolve by that
@@ -7830,7 +8034,7 @@ static void rm_apply(void)
          * under the OPAQUE c8102078 - Z_CMP|Z_UPD, no alpha-compare bits -
          * and mode 9 emits the far image's own alpha, so every texel whose
          * far-image alpha fell under the 0.06 reference was discarded and
-         * the fog-coloured backdrop showed through the mountain (owner:
+         * the fog-coloured backdrop showed through the mountain (playtest:
          * "large holes expose the blue sky"; intro frame 1220 under
          * SL_VI_CATCHUP=0 and every room-121 pose, 2026-09-16; the cartridge
          * at the same frame draws the cliff whole - om_l 78 carries no
@@ -7849,7 +8053,7 @@ static void rm_apply(void)
                  * 5551 - alpha is 1-bit at source, softened to a fraction
                  * only by GL_LINEAR at the tree edges - so a low reference
                  * rejects the sky (alpha ~0) while keeping every graded edge
-                 * texel, leaving the owner-accepted soft treeline look intact
+                 * texel, leaving the playtest-accepted soft treeline look intact
                  * and removing only the z-stamping of the transparent gaps
                  * that would otherwise occlude the row behind them. */
                 glAlphaFunc(GL_GREATER, 0.06f);
@@ -7927,7 +8131,7 @@ static void rm_apply(void)
  * This renderer had no fog stage at all, so the fade was missing and the cut
  * was not: near geometry drew at full brightness, everything past the plane
  * was replaced by the flat green fill, and the boundary tracked the camera.
- * That is the owner's report, verbatim - "a single layer that moves forward
+ * That is the playtest report, verbatim - "a single layer that moves forward
  * and back as I move towards it" - and it is a hard edge, not a volume.
  *
  * ---- what the list asks for, measured on the gassed room ---------------
@@ -8005,7 +8209,7 @@ static int      g_fog_src_readback = -1;
  * triangles a frame on facility alone, on every level, in all geometry - a
  * wider blast radius than the A_FOG path below, which is gated for exactly
  * this reason. Shipping it default-on put flickering, black textures and
- * floating geometry in front of the owner. An unverified global renderer
+ * floating geometry into a playtest. An unverified global renderer
  * change defaults off and earns its default back with a controlled A/B.
  * SL_FOG=1 turns it on. */
 static int fog_option(void)
@@ -8021,7 +8225,7 @@ static int fog_option(void)
      * so default argument promotion widened the float to a double and the
      * entry point read the mantissa tail - every vertex an independent coin
      * flip. With the declaration in place the flicker gate goes from an 84%
-     * adjacent swing to 0.4% over 60 gassed frames, and the owner confirmed
+     * adjacent swing to 0.4% over 60 gassed frames, and a playtest confirmed
      * it by eye. */
     if (on < 0) { const char *v = getenv("SL_FOG");
                   on = (v == NULL || *v != '0'); }
@@ -8040,8 +8244,8 @@ static int fog_option(void)
  * essentially solid fog colour.
  *
  * B-045 left this half off because whether the hardware really did it had
- * not been measured. It has been now, on the owner's Runway marks
- * (20260911-065439-lvl35), and dropping it IS a defect - the owner's
+ * not been measured. It has been now, on the Runway playtest marks
+ * (20260911-065439-lvl35), and dropping it IS a defect - the reported
  * "objectives draw really far":
  *
  *   - the game-side chain is live and correct on this build: the Runway fog
@@ -8188,7 +8392,7 @@ static void fog_off(void)
 
 /* Make the paths that never fog NEUTRAL instead of DISABLING the stage.
  *
- * The two-tone plane-key-room door (Runway owner mark 20260911-165102) is
+ * The two-tone plane-key-room door (Runway playtest mark 20260911-165102) is
  * why. The door's quad is one G_TRI4 - one texture, one combiner, one
  * SetFogColor (0,0,0 alpha 102), identical per-vertex fog coordinates 0.4 -
  * and it rendered split along the triangle diagonal: the FIRST triangle
@@ -8227,7 +8431,7 @@ static void fog_neutral(void)
  *
  * The old form put the RSP's fm/fo through the perspective-divided z, which
  * meant it depended on whichever projection g_proj happened to hold. Measured
- * on the owner's runs, the NDC z the renderer logs runs z[-309.59, 1.00] with
+ * on the playtest runs, the NDC z the renderer logs runs z[-309.59, 1.00] with
  * the maximum pinned at exactly 1.00 every frame - the signature of geometry
  * projected past a far plane of 300 while the room extends far beyond it. So
  * everything past ~300 units clamped to full fog and everything nearer got
@@ -8252,11 +8456,50 @@ static float fog_coord(int mode, float depth)
 
     /* SL_FOG_DUMP=N: the arithmetic for the first N vertices of a frame,
      * BEFORE the clamp. A clamped zero and a computed zero look identical
-     * afterwards, and which one this is decides where the bug lives. */
+     * afterwards, and which one this is decides where the bug lives.
+     *
+     * THE CAP IS READ ONCE, NOT ONCE PER VERTEX, and that is a FRAME-TIME
+     * repair rather than tidying. `getenv` on this runtime walks the process
+     * environment block and compares each name, so it is not a few
+     * instructions - it is a scan whose cost is the environment's size. This
+     * probe was written when the only caller was the triangle path, a few
+     * thousand vertices a frame, and the scan was invisible there. #68's
+     * replacement-background pass then put this function on a loop over the
+     * Dam item's 140066 vertices EVERY FRAME, and the scan came with it.
+     *
+     * MEASURED 2026-09-25, the playtest launch contract at its mark-001
+     * (Dam, XBLA, 1365x768, vsync off, pacing left alone, teleport only, no
+     * input, SL_PHASE + SL_TICK_DBG), 299 presented frames per arm on one
+     * binary:
+     *
+     *   default                              265.7 ms/frame   3.8 fps
+     *   SL_SKY_WITH_BG=1                     264.9 ms/frame   3.8 fps
+     *   SL_BG_ONLY=9999 (no mesh DRAWN)      266.8 ms/frame   3.7 fps
+     *   PRESENTATION ORIGINAL                 68.8 ms/frame  14.5 fps
+     *   SL_WORLD_ASSETS=off                   69.0 ms/frame  14.5 fps
+     *   SL_BG_FOG=0 (this call skipped)       49.3 ms/frame  20.3 fps
+     *
+     * Hiding every mesh changed nothing, so the cost was never the draw; the
+     * one arm that skips this call is the one that recovers. 140066 scans a
+     * frame is the 197 ms between the second and the last row, and the whole
+     * of it is paid by a diagnostic that is OFF.
+     *
+     * This is the file's own established idiom - every other probe here reads
+     * its variable into a static once - and nothing about the fog arithmetic,
+     * the band, the coordinate or any picture moves. The one behavioural
+     * difference is that the variable is now sampled on the first call rather
+     * than on every one, which is what "nothing unset costs anything" has
+     * meant everywhere else in this file all along. */
     {
         static unsigned dumped, dump_frame;
-        const char *dv = getenv("SL_FOG_DUMP");
-        unsigned cap = dv ? (unsigned) atoi(dv) : 0;
+        static int cap_env = -1;
+        unsigned cap;
+        if (cap_env < 0) {
+            const char *dv = getenv("SL_FOG_DUMP");
+            int n = (dv != NULL) ? atoi(dv) : 0;
+            cap_env = (n > 0) ? n : 0;
+        }
+        cap = (unsigned) cap_env;
         if (cap && dump_frame != g_dl_frame) { dump_frame = g_dl_frame; dumped = 0; }
         if (cap && dumped < cap) {
             dumped++;
@@ -8371,9 +8614,9 @@ legacy:                              /* SL_AEQ_MODES sent this draw here */
      *
      * Rare: alpha = COMBINED.a * SHADE.a + PRIM.a, saturating. At full
      * opacity PRIM.a is 255 and the sum saturates, so the pane is opaque
-     * whatever the texel and shade carry - which is the case the owner sees
+     * whatever the texel and shade carry - which is the case reported in play
      * as a hole. At the clear end PRIM.a is 0 and the pane vanishes, which is
-     * also what the game intends and what they see working up close.
+     * also what the game intends and what is visible working up close.
      *
      * Returning PRIM.a alone is exact at BOTH ends and an approximation in
      * the graded band between TintDist and CullDist, where Rare would add the
@@ -8510,7 +8753,7 @@ static unsigned char g_2d_cur_col[4];
  *
  * WHAT IT MUST REPRODUCE. Binding a program replaces the WHOLE fragment
  * stage, so anything fixed function was doing has to be done here too:
- *   - RGB is GL_MODULATE, i.e. texel * primary. Unchanged, per the brief.
+ *   - RGB is GL_MODULATE, i.e. texel * primary. Unchanged, per the specification.
  *   - FOG. fog_apply sets GL_LINEAR with start 0, end 1 over GL_FOG_COORD, so
  *     the factor is the same clamp the fixed pipeline computes. Fog does not
  *     touch alpha on either path.
@@ -8581,6 +8824,7 @@ typedef void   (APIENTRY *SL_PFN_USEPROGRAM)(GLuint);
 typedef GLint  (APIENTRY *SL_PFN_GETUNIFORMLOCATION)(GLuint, const char *);
 typedef void   (APIENTRY *SL_PFN_UNIFORM1I)(GLint, GLint);
 typedef void   (APIENTRY *SL_PFN_UNIFORM1F)(GLint, GLfloat);
+typedef void   (APIENTRY *SL_PFN_UNIFORM4F)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 
 static SL_PFN_CREATESHADER        p_CreateShader;
 static SL_PFN_SHADERSOURCE        p_ShaderSource;
@@ -8596,9 +8840,11 @@ static SL_PFN_USEPROGRAM          p_UseProgram;
 static SL_PFN_GETUNIFORMLOCATION  p_GetUniformLocation;
 static SL_PFN_UNIFORM1I           p_Uniform1i;
 static SL_PFN_UNIFORM1F           p_Uniform1f;
+static SL_PFN_UNIFORM4F           p_Uniform4f;   /* #68 u_obj only; optional */
 
 static GLuint g_aeq_prog;
 static GLint  g_u_tex, g_u_a, g_u_b, g_u_c, g_u_d, g_u_prim, g_u_env, g_u_fog;
+static GLint  g_u_obj = -1;              /* #68: see STAGE FOG ON OBJECTS */
 static int    g_aeq_prog_state;          /* 0 untried, 1 ready, -1 unavailable */
 
 /* GLSL 1.10, compatibility profile - the same fixed-function state the rest
@@ -8633,6 +8879,7 @@ static const char *AEQ_FS =
 "uniform sampler2D u_tex;\n"
 "uniform int u_a, u_b, u_c, u_d, u_fog;\n"
 "uniform float u_prim, u_env;\n"
+"uniform vec4 u_obj;\n"
 "float src(int m, float t, float sh) {\n"
 "    if (m == 3) return u_prim;\n"
 "    if (m == 4) return sh;\n"
@@ -8647,6 +8894,7 @@ static const char *AEQ_FS =
 "    float a = clamp((src(u_a, t.a, sh) - src(u_b, t.a, sh))\n"
 "                    * src(u_c, t.a, sh) + src(u_d, t.a, sh), 0.0, 1.0);\n"
 "    vec3 rgb = t.rgb * v_col.rgb;\n"
+"    if (u_obj.a > 0.0) rgb = mix(rgb, u_obj.rgb, u_obj.a);\n"
 "    if (u_fog == 1) {\n"
 "        float f = clamp((gl_Fog.end - v_fog) * gl_Fog.scale,\n"
 "                        0.0, 1.0);\n"
@@ -8699,6 +8947,9 @@ static int aeq_shader_ok(void)
     p_GetUniformLocation = (SL_PFN_GETUNIFORMLOCATION) sl_gl_proc("glGetUniformLocation");
     p_Uniform1i          = (SL_PFN_UNIFORM1I)          sl_gl_proc("glUniform1i");
     p_Uniform1f          = (SL_PFN_UNIFORM1F)          sl_gl_proc("glUniform1f");
+    /* Not in the required set: only the stage fog on objects uses it, and it
+     * stays off where it is missing (stage_env_select). */
+    p_Uniform4f          = (SL_PFN_UNIFORM4F)          sl_gl_proc("glUniform4f");
     if (p_CreateShader == NULL || p_ShaderSource == NULL
         || p_CompileShader == NULL || p_GetShaderiv == NULL
         || p_GetShaderInfoLog == NULL || p_CreateProgram == NULL
@@ -8736,6 +8987,7 @@ static int aeq_shader_ok(void)
     g_u_prim = p_GetUniformLocation(g_aeq_prog, "u_prim");
     g_u_env  = p_GetUniformLocation(g_aeq_prog, "u_env");
     g_u_fog  = p_GetUniformLocation(g_aeq_prog, "u_fog");
+    g_u_obj  = p_GetUniformLocation(g_aeq_prog, "u_obj");
     p_UseProgram(g_aeq_prog);
     if (g_u_tex >= 0) p_Uniform1i(g_u_tex, 0);
     p_UseProgram(0);
@@ -8784,7 +9036,7 @@ static int aeq_shader_avail(void) { return aeq_shader_ok(); }
  * space. The RSP's fog is fm * z_ndc + fo, and z_ndc is not world-affine
  * (it is 1 - k/z_eye), so the two rules only agree at the vertices.
  *
- * MEASURED, Surface 2, the owner's marks 20260914-234420 ("the ground is
+ * MEASURED, Surface 2, the playtest marks 20260914-234420 ("the ground is
  * lighting up in patches as I walk", a hard brightness step across the
  * snow). The spawn valley floor is triangles spanning 6..246 eye units
  * (mark-001 candidates seq 29-31; shade a4..ff per vertex, fog fm 2976 /
@@ -8796,7 +9048,7 @@ static int aeq_shader_avail(void) { return aeq_shader_ok(); }
  * and the same pitch (tools/native/romintro.py with a C-up hold) reads
  * 47 -> 93 with the same mid-band plateau (rows 430..580: cartridge 89..93,
  * this 98..104, before 121..132). The residual offset is the cartridge's
- * darker 240-line output; the SHAPE is what the owner sees. Facility,
+ * darker 240-line output; the SHAPE is what is visible in play. Facility,
  * Runway and Silo controls move by a mean of 0.0 / 0.4 / 0.5 per channel -
  * the rule only matters where a triangle's depth range is large.
  *
@@ -8839,6 +9091,8 @@ static const char *SHADE_LINEAR_VS =
  * gl_TextureEnvColor). Texturing off means the primary colour alone, as
  * GL_COMBINE with the unit disabled does. Fog is the fixed pipeline's own
  * GL_LINEAR(0..1) on the coordinate, exactly as the B-051 program does it,
+ * and, under the remaster row alone, mode 2 (alpha the vertex's: #94,
+ * sl_wa_lin_takes),
  * because a fragment program replaces the fixed fog stage. Modes 6-9 (the
  * register lerp, the sky, the water lerp, the two-image LOD blend) and a
  * live second unit stay on the fixed pipeline and keep perspective-correct
@@ -8851,6 +9105,7 @@ static const char *SHADE_LINEAR_FS =
 "noperspective in float v_fog;\n"
 "uniform sampler2D u_tex;\n"
 "uniform int u_texon, u_mode, u_fog;\n"
+"uniform vec4 u_obj;\n"
 "void main() {\n"
 "    vec4 c = v_col;\n"
 "    if (u_texon == 1) {\n"
@@ -8859,8 +9114,10 @@ static const char *SHADE_LINEAR_FS =
 "        if (u_mode == 3) c.a = min(t.a + v_col.a, 1.0);\n"
 "        else if (u_mode == 4) c.a = t.a * v_col.a\n"
 "                              + gl_TextureEnvColor[0].a * (1.0 - v_col.a);\n"
+"        else if (u_mode == 2) c.a = v_col.a;\n"
 "        else c.a = t.a * v_col.a;\n"
 "    }\n"
+"    if (u_obj.a > 0.0) c.rgb = mix(c.rgb, u_obj.rgb, u_obj.a);\n"
 "    if (u_fog == 1) {\n"
 "        float f = clamp((gl_Fog.end - v_fog) * gl_Fog.scale,\n"
 "                        0.0, 1.0);\n"
@@ -8875,6 +9132,16 @@ static int      g_lin_state;             /* 0 untried, 1 ready, -1 unavailable *
 static int      g_lin_bound;
 static int      g_lin_cur_texon = -1, g_lin_cur_mode = -1, g_lin_cur_fog = -1;
 static unsigned g_lin_batches;
+
+/* #68 STAGE FOG ON OBJECTS - the per-object tint both programs apply before
+ * their fog stage (u_obj: rgb toward u_obj.rgb by u_obj.a). What the draw
+ * about to open wants, and what each program holds; all zero - no tint, the
+ * programs' output unchanged - unless stage_fog_draw arms it. */
+static GLint    g_lin_u_obj = -1;
+static float    g_obj_want[4], g_obj_aeq[4], g_obj_lin[4];
+
+static int lin_replace_on(void);           /* #94, with the stage row below */
+static const struct sl_wa_env *g_stage_env;   /* tentative; defined with the row below */
 
 static int shade_linear_on(void)
 {
@@ -8917,6 +9184,7 @@ static int shade_linear_ok(void)
     g_lin_u_texon = p_GetUniformLocation(g_lin_prog, "u_texon");
     g_lin_u_mode  = p_GetUniformLocation(g_lin_prog, "u_mode");
     g_lin_u_fog   = p_GetUniformLocation(g_lin_prog, "u_fog");
+    g_lin_u_obj   = p_GetUniformLocation(g_lin_prog, "u_obj");
     p_UseProgram(g_lin_prog);
     if (g_lin_u_tex >= 0) p_Uniform1i(g_lin_u_tex, 0);
     p_UseProgram(0);
@@ -8944,7 +9212,7 @@ static void shade_linear_bind(int on)
     if (on) {
         int texon, mode, fog;
         if (!shade_linear_on() || !shade_linear_ok()) return;
-        if (g_texenv != 0 && g_texenv != 3 && g_texenv != 4) return;
+        if (!sl_wa_lin_takes(g_texenv, g_stage_env != NULL, lin_replace_on())) return;
         if (g_tex1_gl_on) return;
         texon = g_tex_gl_on ? 1 : 0;
         mode  = g_texenv;
@@ -8953,12 +9221,452 @@ static void shade_linear_bind(int on)
         if (texon != g_lin_cur_texon) { p_Uniform1i(g_lin_u_texon, texon); g_lin_cur_texon = texon; }
         if (mode  != g_lin_cur_mode)  { p_Uniform1i(g_lin_u_mode,  mode);  g_lin_cur_mode  = mode; }
         if (fog   != g_lin_cur_fog)   { p_Uniform1i(g_lin_u_fog,   fog);   g_lin_cur_fog   = fog; }
+        if (memcmp(g_obj_lin, g_obj_want, sizeof g_obj_want) != 0
+            && p_Uniform4f != NULL && g_lin_u_obj >= 0) {
+            p_Uniform4f(g_lin_u_obj, g_obj_want[0], g_obj_want[1],
+                        g_obj_want[2], g_obj_want[3]);
+            memcpy(g_obj_lin, g_obj_want, sizeof g_obj_want);
+        }
         g_lin_bound = 1;
         g_lin_batches++;
     } else if (g_lin_bound) {
         p_UseProgram(0);
         g_lin_bound = 0;
     }
+}
+
+/* ==================== #69 THE MATERIAL PROGRAM ============================
+ *
+ * The replacement background's four-image materials (SL_WA_MATX_NORMAL_SPHERE,
+ * src/gfx/sl_gfx_worldasset.h, MATERIAL EXTENSION - the equation and every
+ * coordinate space are specified there and evaluated on the host by
+ * sl_wa_matx_shade, which this program mirrors term for term). Fixed
+ * function cannot express it: four samplers, a per-fragment normal built
+ * from a tangent frame, a coordinate-dependent second lookup and a warped
+ * base coordinate. So the mesh of such a material draws through this
+ * program and every other mesh of the pass keeps the fixed pipeline it had,
+ * which is what keeps every pixel outside those meshes bit-for-bit where
+ * it was.
+ *
+ * WHAT TRAVELS PER VERTEX: the clip position the pass computed (identity
+ * matrices, so ftransform is the array), the base coordinate on unit 0, the
+ * colour, the fog coordinate, and the tangent frame on texture-coordinate
+ * units 1..3 straight out of the bundle's auxiliary entries - 16-bit signed
+ * axes, read as GL_SHORT and normalised here, so nothing is converted or
+ * copied per frame. The frame is rotated into VIEW space by the rows of the
+ * game's own world-to-view matrix (sl_wa_view_matrix; the bundle's space is
+ * the world's up to a uniform scale, which no direction feels), exactly
+ * where the source's vertex program rotates it, and normalised per vertex
+ * as the source does; the fragment stage normalises the combined normal, as
+ * the source does. Perspective-correct throughout - the remaster's
+ * rasteriser is, and this pass has never drawn under the RDP's rule.
+ *
+ * THE SAMPLERS: unit 0 the base (bound by the pass), 1 the normal map, 2
+ * the sphere image, 3 the offset map. The sphere image clamps when its
+ * record says so; the others keep the wrap the upload gave them. The offset
+ * map is read unsigned, 0..1, as its fetch constant says.
+ *
+ * FOG is the fixed pipeline's own GL_LINEAR(0..1) on the coordinate, as the
+ * other two programs do it, so the stage-fog hand-over lands after the
+ * material exactly as the source's tail does.
+ *
+ * CONTROLS, both diagnostic: SL_BG_MATERIAL=0 leaves the program unbound
+ * (every such mesh draws the base alone, the frame before this existed);
+ * SL_BG_MAT_TERMS=<mask> keeps only the terms named (1 the warp, 2 the
+ * normal map, 4 the reflection; 7 is the contract) so each term's
+ * contribution can be measured on its own. Neither is a setting. */
+#ifndef GL_TEXTURE2
+#define GL_TEXTURE2 0x84C2
+#endif
+#ifndef GL_TEXTURE3
+#define GL_TEXTURE3 0x84C3
+#endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
+typedef void (APIENTRY *SL_PFN_CLIENTACTIVETEXTURE)(GLenum);
+static SL_PFN_CLIENTACTIVETEXTURE p_ClientActiveTexture;
+
+static const char *MATX_VS =
+"#version 130\n"
+"uniform vec4 u_view0, u_view1, u_view2;\n"   /* rows of world-to-view */
+"out vec4 v_col;\n"
+"out float v_fog;\n"
+"out vec2 v_uv;\n"
+"out vec3 v_x, v_y, v_n;\n"
+"void main() {\n"
+"    gl_Position = ftransform();\n"
+"    v_col = gl_Color;\n"
+"    v_fog = gl_FogCoord;\n"
+"    v_uv = gl_MultiTexCoord0.st;\n"
+"    vec3 n = normalize(gl_MultiTexCoord1.xyz);\n"
+"    vec3 x = normalize(gl_MultiTexCoord2.xyz);\n"
+"    vec3 y = normalize(gl_MultiTexCoord3.xyz);\n"
+"    v_n = vec3(dot(u_view0.xyz, n), dot(u_view1.xyz, n), dot(u_view2.xyz, n));\n"
+"    v_x = vec3(dot(u_view0.xyz, x), dot(u_view1.xyz, x), dot(u_view2.xyz, x));\n"
+"    v_y = vec3(dot(u_view0.xyz, y), dot(u_view1.xyz, y), dot(u_view2.xyz, y));\n"
+"}\n";
+
+static const char *MATX_FS =
+"#version 130\n"
+"in vec4 v_col;\n"
+"in float v_fog;\n"
+"in vec2 v_uv;\n"
+"in vec3 v_x, v_y, v_n;\n"
+"uniform sampler2D u_base, u_normal, u_sphere, u_offset;\n"
+"uniform vec4 u_basew, u_reflw;\n"    /* rgb weights                        */
+"uniform vec4 u_nmap;\n"              /* x: normal scale  y: normal bias    */
+"uniform vec4 u_sph;\n"               /* xy: sphere scale  zw: sphere bias  */
+"uniform vec4 u_misc;\n"              /* x: warp  y: mean weight  z: floor  */
+"uniform int u_terms, u_fog;\n"
+"void main() {\n"
+"    vec2 uv = v_uv;\n"
+"    vec2 buv = uv;\n"
+"    if ((u_terms & 1) != 0) buv += u_misc.x * texture2D(u_offset, uv).xy;\n"
+"    vec4 base = texture2D(u_base, buv);\n"
+"    vec3 N = v_n;\n"
+"    if ((u_terms & 2) != 0) {\n"
+"        vec3 n = texture2D(u_normal, uv).xyz * u_nmap.x + u_nmap.y;\n"
+"        N = n.x * v_x + n.y * v_y + n.z * v_n;\n"
+"    }\n"
+"    N = normalize(N);\n"
+"    vec3 rgb = u_basew.rgb * v_col.rgb * base.rgb;\n"
+"    if ((u_terms & 4) != 0) {\n"
+"        vec2 suv = vec2(N.x * u_sph.x + u_sph.z, N.y * u_sph.y + u_sph.w);\n"
+"        rgb += u_reflw.rgb * texture2D(u_sphere, suv).rgb;\n"
+"    }\n"
+"    float a = max(u_misc.y * (rgb.r + rgb.g + rgb.b), u_misc.z) * base.a * v_col.a;\n"
+"    if (u_fog == 1) {\n"
+"        float f = clamp((gl_Fog.end - v_fog) * gl_Fog.scale, 0.0, 1.0);\n"
+"        rgb = mix(gl_Fog.color.rgb, rgb, f);\n"
+"    }\n"
+"    gl_FragColor = vec4(rgb, a);\n"
+"}\n";
+
+static GLuint   g_matx_prog;
+static GLint    g_matx_u_view[3], g_matx_u_basew, g_matx_u_reflw, g_matx_u_nmap,
+                g_matx_u_sph, g_matx_u_misc, g_matx_u_terms, g_matx_u_fog;
+static int      g_matx_state;            /* 0 untried, 1 ready, -1 unavailable */
+static unsigned g_matx_draws;            /* meshes drawn through it, all frames */
+static unsigned g_matx_noview;           /* meshes that fell back: no view matrix */
+static int      g_matx_said;
+
+static int bg_material_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_MATERIAL");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+static unsigned bg_material_terms(void)
+{
+    static int terms = -1;
+    if (terms < 0) { const char *s = getenv("SL_BG_MAT_TERMS");
+                     terms = (s != NULL && *s != '\0') ? (atoi(s) & (int) SL_WA_MATX_T_ALL)
+                                                      : (int) SL_WA_MATX_T_ALL; }
+    return (unsigned) terms;
+}
+
+static int matx_program_ok(void)
+{
+    GLuint vs, fs;
+    GLint ok = 0;
+    if (g_matx_state != 0) return g_matx_state > 0;
+    g_matx_state = -1;
+    if (!aeq_shader_ok()) {              /* loads the entry points as well */
+        fprintf(stderr, "#69 worldasset: no GL 2.0 program support - four-image "
+                        "materials draw their base image alone\n");
+        return 0;
+    }
+    p_ClientActiveTexture = (SL_PFN_CLIENTACTIVETEXTURE) sl_gl_proc("glClientActiveTexture");
+    if (p_ClientActiveTexture == NULL || p_ActiveTexture == NULL || p_Uniform4f == NULL) {
+        fprintf(stderr, "#69 worldasset: no multitexture client state - four-image "
+                        "materials draw their base image alone\n");
+        return 0;
+    }
+    vs = aeq_compile(GL_VERTEX_SHADER, MATX_VS, "material vertex");
+    fs = aeq_compile(GL_FRAGMENT_SHADER, MATX_FS, "material fragment");
+    if (vs == 0 || fs == 0) return 0;
+    g_matx_prog = p_CreateProgram();
+    if (g_matx_prog == 0) return 0;
+    p_AttachShader(g_matx_prog, vs);
+    p_AttachShader(g_matx_prog, fs);
+    p_LinkProgram(g_matx_prog);
+    p_GetProgramiv(g_matx_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[1024];
+        GLsizei n = 0;
+        log[0] = '\0';
+        p_GetProgramInfoLog(g_matx_prog, (GLsizei) sizeof log, &n, log);
+        fprintf(stderr, "#69 worldasset: material program did not link: %s\n", log);
+        g_matx_prog = 0;
+        return 0;
+    }
+    g_matx_u_view[0] = p_GetUniformLocation(g_matx_prog, "u_view0");
+    g_matx_u_view[1] = p_GetUniformLocation(g_matx_prog, "u_view1");
+    g_matx_u_view[2] = p_GetUniformLocation(g_matx_prog, "u_view2");
+    g_matx_u_basew   = p_GetUniformLocation(g_matx_prog, "u_basew");
+    g_matx_u_reflw   = p_GetUniformLocation(g_matx_prog, "u_reflw");
+    g_matx_u_nmap    = p_GetUniformLocation(g_matx_prog, "u_nmap");
+    g_matx_u_sph     = p_GetUniformLocation(g_matx_prog, "u_sph");
+    g_matx_u_misc    = p_GetUniformLocation(g_matx_prog, "u_misc");
+    g_matx_u_terms   = p_GetUniformLocation(g_matx_prog, "u_terms");
+    g_matx_u_fog     = p_GetUniformLocation(g_matx_prog, "u_fog");
+    p_UseProgram(g_matx_prog);
+    p_Uniform1i(p_GetUniformLocation(g_matx_prog, "u_base"), 0);
+    p_Uniform1i(p_GetUniformLocation(g_matx_prog, "u_normal"), 1);
+    p_Uniform1i(p_GetUniformLocation(g_matx_prog, "u_sphere"), 2);
+    p_Uniform1i(p_GetUniformLocation(g_matx_prog, "u_offset"), 3);
+    p_UseProgram(0);
+    g_matx_state = 1;
+    return 1;
+}
+
+/* Bind the program, the three extra images and the frame arrays for one
+ * mesh of material `m`; `view` is the game's world-to-view matrix (the rows
+ * become the rotation), `fog` whether the pass has GL's fog stage on. The
+ * pass has unit 0's texture, the position, coordinate and colour arrays and
+ * the blend state already in place. */
+static void matx_bind(const struct sl_wa_asset *a, const struct sl_wa_matx *m,
+                      const float *view, int fog)
+{
+    static const GLenum unit[3] = { GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3 };
+    const unsigned tex[3] = { m->normal_tex, m->sphere_tex, m->offset_tex };
+    const unsigned char *base = (const unsigned char *) a->vaux;
+    int k;
+
+    for (k = 0; k < 3; k++) {
+        glActiveTexture(unit[k]);
+        glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[tex[k]]);
+        if (k == 1) {
+            const GLint wrap = (m->flags & SL_WA_MATX_F_SPHERE_CLAMP) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+        }
+    }
+    glActiveTexture(GL_TEXTURE0);
+    /* The frame: the normal at +4, the X axis at +12, the Y axis at +18 of
+     * each auxiliary entry, at the asset's own stride. */
+    p_ClientActiveTexture(GL_TEXTURE1);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glTexCoordPointer(3, GL_SHORT, (GLsizei) a->aux_stride, (const GLvoid *) (base + 4));
+    p_ClientActiveTexture(GL_TEXTURE2);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glTexCoordPointer(3, GL_SHORT, (GLsizei) a->aux_stride, (const GLvoid *) (base + SL_WA_AUX_SIZE));
+    p_ClientActiveTexture(GL_TEXTURE3);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glTexCoordPointer(3, GL_SHORT, (GLsizei) a->aux_stride, (const GLvoid *) (base + SL_WA_AUX_SIZE + 6));
+    p_ClientActiveTexture(GL_TEXTURE0);
+
+    p_UseProgram(g_matx_prog);
+    for (k = 0; k < 3; k++)
+        p_Uniform4f(g_matx_u_view[k], view[0 + k], view[4 + k], view[8 + k], 0.0f);
+    p_Uniform4f(g_matx_u_basew, m->base_weight[0], m->base_weight[1], m->base_weight[2], 1.0f);
+    p_Uniform4f(g_matx_u_reflw, m->reflect_weight[0], m->reflect_weight[1], m->reflect_weight[2], 0.0f);
+    p_Uniform4f(g_matx_u_nmap, m->normal_scale, m->normal_bias, 0.0f, 0.0f);
+    p_Uniform4f(g_matx_u_sph, m->sphere_scale[0], m->sphere_scale[1], m->sphere_bias[0], m->sphere_bias[1]);
+    p_Uniform4f(g_matx_u_misc, m->warp_scale, m->mean_weight, m->alpha_floor, 0.0f);
+    p_Uniform1i(g_matx_u_terms, (GLint) bg_material_terms());
+    p_Uniform1i(g_matx_u_fog, fog ? 1 : 0);
+}
+
+/* Put everything matx_bind touched back: no program, no frame arrays, and
+ * units 1..3 unbound - the DL path's own second-unit cache is told so. */
+static void matx_unbind(void)
+{
+    static const GLenum unit[3] = { GL_TEXTURE1, GL_TEXTURE2, GL_TEXTURE3 };
+    int k;
+    p_UseProgram(0);
+    for (k = 0; k < 3; k++) {
+        p_ClientActiveTexture(unit[k]);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glActiveTexture(unit[k]);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    p_ClientActiveTexture(GL_TEXTURE0);
+    glActiveTexture(GL_TEXTURE0);
+    g_tex1_gl_bound = 0;
+}
+
+/* #68 STAGE FOG ON OBJECTS.
+ *
+ * The game fogs props and characters one object at a time: fogGetPropDistColor
+ * (bgfog.c) gives the level's environment colour and a factor from the
+ * object's depth, the object's shade is lerped toward that colour by it
+ * (propobj.c), and the display list carries the result as a SetFogColor
+ * under G_RM_FOG_PRIM_A - this file's FOG_CONST, the colour's alpha the
+ * coordinate. The remaster fogs the same class with its own environment row
+ * instead (sl_wa_object_fog_env has the measurement): its pixel programs lerp
+ * toward the object's SHADE only (c7), then apply the stage fog of the
+ * replacement background per pixel, lerp(c1, colour, saturate((end - d) /
+ * (end - start))) with d the view distance in level-scaled world units.
+ *
+ * Here, under that row, the game leaves its distance term out
+ * (sl_gfx_native_stage_fog, below) so the register is the shade alone, and a
+ * FOG_CONST triangle drawn by either program takes both stages in the
+ * remaster's order: the register's lerp as the programs' u_obj, then GL's fog
+ * stage toward the row's colour with a per-vertex coordinate from the
+ * vertex's own distance. A triangle on the fixed pipeline (a live second
+ * texture unit, or an environment the programs do not reproduce) has one fog
+ * stage and keeps the register's lerp in it; the census counts those.
+ *
+ * The distance: the eye-space position the triangle path already holds is the
+ * game's modelview output, which carries the stage's visibility scale, so it
+ * is divided by that scale - the same conversion the background's own fog
+ * makes. MEASURED on the Dam: a reservoir crate 10557 units from the eye in
+ * world units (the game's own prop position) has its vertices at 2092..2130
+ * eye units under a visibility scale of 0.2. */
+static const struct sl_wa_env *g_stage_env;   /* this frame's row, or NULL */
+static float    g_stage_vis = 1.0f;           /* ... and the visibility scale */
+static unsigned g_stage_tris, g_stage_fixed_tris;
+
+/* #94 THE SHOT OBJECT'S TINT UNDER THE ROW. chrobjRenderProp darkens an
+ * object by the shots it has taken - its register's rgb scaled by
+ * 1 - 21/256 per shot toward 0, its alpha raised 15 per shot (propobj.c).
+ * The shot drone gun's lists draw under texture environment 2 (AEQ_REPLACE:
+ * rgb as mode 0, alpha the vertex's alone) - measured, they were the run's
+ * only fixed-pipeline object triangles, the register going 050500d7 at frame
+ * 132 to 000000ff at 142. Mode 2 was not one the programs took, so under the
+ * remaster row they drew on the fixed pipeline, where #77 gives the one fog
+ * stage to the row and the register's tint is left out: Jungle's destroyed
+ * drone gun, black in ORIGINAL, drew as the intact camouflage model
+ * (playtest mark 4, 2026-10-10; SL_OBJ_FIXED_STAGE_FOG=0 or
+ * SL_NATIVE_STAGE_FOG=0 brings the black back with the row's fog lost).
+ * The linear program reproduces mode 2 exactly (alpha the vertex's, rgb
+ * the texel times the shade), so while the row is in force it takes mode 2
+ * as it takes 0, 3 and 4 (sl_wa_lin_takes), and applies the register's tint
+ * and then the row's fog in the remaster's order. Measured on the fourteen
+ * accepted stages' starts, it moves Runway's alone, by at most 2 in 420
+ * pixels (a mode-2 prop at the frame's right edge now takes its register's
+ * small tint and the screen-space shade). Under no row nothing changes:
+ * mode 2 stays on the fixed pipeline, so ORIGINAL and COMMUNITY HD draw as
+ * before. SL_OBJ_REPLACE_PROG=0 leaves mode 2 on the fixed pipeline
+ * under the row too (the A/B). One cached getenv. */
+static int lin_replace_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_OBJ_REPLACE_PROG"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+/* Whether the draw about to open goes through a program that applies u_obj -
+ * the same test shade_linear_bind and texenv_set make. */
+static int stage_prog_path(void)
+{
+    if (g_texenv == 5) return g_aeq_prog_state > 0 && g_u_obj >= 0;
+    if (!sl_wa_lin_takes(g_texenv, g_stage_env != NULL, lin_replace_on())) return 0;
+    if (g_tex1_gl_on) return 0;
+    return shade_linear_on() && g_lin_state > 0 && g_lin_u_obj >= 0;
+}
+
+/* #77 A PER-OBJECT TRIANGLE THE PROGRAMS DO NOT TAKE. Under the row the game
+ * leaves its distance term out of every object's register (propobj.c,
+ * lerp_rgba_s32_with_rgba_f32), so a FOG_CONST triangle on the fixed pipeline
+ * had no fog at all: Facility's destroyed bottling tank (the game's blackened
+ * model, a fixed-pipeline draw) stood black and clear in a room the gas had
+ * filled. Such a triangle now takes the row's stage fog through GL's one fog
+ * stage, as the programs' second stage does; only the register's tint, which
+ * the fixed pipeline has no second stage for, is left out.
+ * SL_OBJ_FIXED_STAGE_FOG=0 leaves it unfogged as before. One cached getenv. */
+static int obj_fixed_stage_fog_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_OBJ_FIXED_STAGE_FOG"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+/* Called for every triangle in place of fog_apply's FOG_CONST case. Returns 1
+ * when this triangle takes the stage fog - GL's colour is then the row's and
+ * the caller emits stage_fog_coord per vertex. In every other case the tint
+ * wanted is zero, which leaves both programs' output exactly what it was; a
+ * change of tint closes the open batch, since a uniform cannot change inside
+ * one. */
+static int stage_fog_draw(int fogm)
+{
+    float want[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    int stg = 0;
+
+    if (fogm == FOG_CONST && g_stage_env != NULL) {
+        if (stage_prog_path()) {
+            stg = 1;
+            want[0] = (float) g_fog[0] / 255.0f;
+            want[1] = (float) g_fog[1] / 255.0f;
+            want[2] = (float) g_fog[2] / 255.0f;
+            want[3] = (float) g_fog[3] / 255.0f;
+        } else {
+            g_stage_fixed_tris++;
+            if (obj_fixed_stage_fog_on()) stg = 1;          /* #77, above */
+        }
+    }
+    if (memcmp(want, g_obj_want, sizeof want) != 0) {
+        batch_end();
+        memcpy(g_obj_want, want, sizeof want);
+    }
+    if (g_texenv == 5 && g_u_obj >= 0 && p_Uniform4f != NULL
+        && memcmp(g_obj_aeq, g_obj_want, sizeof g_obj_want) != 0) {
+        batch_end();                   /* texenv_set(5) left the program bound */
+        p_Uniform4f(g_u_obj, g_obj_want[0], g_obj_want[1],
+                    g_obj_want[2], g_obj_want[3]);
+        memcpy(g_obj_aeq, g_obj_want, sizeof g_obj_want);
+    }
+    if (stg) {
+        /* The row's colour through the call the rest of this file mirrors, the
+         * register handed over for its length and put back - the background
+         * pass's own idiom - so the mirror of GL and the mirror of the RDP
+         * both stay truthful. */
+        unsigned char save[4];
+        memcpy(save, g_fog, 4);
+        g_fog[0] = g_stage_env->rgb[0];
+        g_fog[1] = g_stage_env->rgb[1];
+        g_fog[2] = g_stage_env->rgb[2];
+        g_fog[3] = 255;
+        fog_apply(FOG_SHADE);
+        memcpy(g_fog, save, 4);
+        g_stage_tris++;
+    }
+    return stg;
+}
+
+/* WHERE THE EYE IS in the space a vertex position is in. Under the plain
+ * world projection (1) the modelview output is eye space and the eye is its
+ * origin. Under the VIEW-FOLDED one (2) the view lives in the projection, so
+ * the modelview output is the frame's world minus its render origin, times
+ * the visibility scale - the space the background pass puts its own points in
+ * on that branch - and the eye has to be put into it before a distance is
+ * taken. A pane or a prop drawn inside a room goes through (2); measuring |e|
+ * there fogs it by its distance from the player's ROOM origin, which moves at
+ * every room crossing. Read once per frame from the camera the game built. */
+static int g_proj_world_which;      /* tentative; the definition is below */
+int sl_wa_view_matrix(float *m);
+int sl_wa_render_origin(float *o);
+static float    g_stage_eye2[3];
+static unsigned g_stage_eye2_frame = ~0u;
+static int      g_stage_eye2_ok;
+
+static const float *stage_fold_eye(void)
+{
+    if (g_stage_eye2_frame != g_dl_frame) {
+        float vm[16], ro[3];
+        g_stage_eye2_frame = g_dl_frame;
+        g_stage_eye2_ok = sl_wa_view_matrix(vm) && sl_wa_render_origin(ro);
+        if (g_stage_eye2_ok) sl_wa_fold_eye(vm, ro, g_stage_vis, g_stage_eye2);
+    }
+    return g_stage_eye2_ok ? g_stage_eye2 : NULL;
+}
+
+/* The row's coordinate for one vertex: its distance from the eye, in world
+ * units after the level scale (the remaster's measure, see SLEN). */
+static float stage_fog_coord(const float *e)
+{
+    double x = e[0], y = e[1], z = e[2], d;
+    if (g_proj_world_which == 2) {
+        const float *o = stage_fold_eye();
+        if (o != NULL) { x -= o[0]; y -= o[1]; z -= o[2]; }
+    }
+    d = sqrt(x * x + y * y + z * z);
+    return sl_wa_env_fog_coord(g_stage_env, (float) (d / (double) g_stage_vis));
 }
 
 /* Per-draw state for the chosen representation, pushed AFTER texenv_set so the
@@ -9177,7 +9885,7 @@ static void texenv_set(int mode)
          * (FC 1f14ffff, muxes per ucode05_old.txt "FC rdp_setcombine") is
          * (1 - 0) * TEXEL1 + 0 - the STRIP's own alpha, never SHADE's - and
          * that is what ALPHA below emits: REPLACE from the crossbar's
-         * TEXTURE1. That one term is also the owner's "cardboard" fix: the
+         * TEXTURE1. That one term is also the reported "cardboard" fix: the
          * strip's zero-alpha sky shows between the tree tips again. */
         g_texenv = 9;
         glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
@@ -9346,6 +10054,13 @@ static double   g_aspect_k = 1.0;        /* content width / safe width */
 static int      g_aspect_id;             /* the selection in force this frame */
 static unsigned g_world_proj_addr;        /* #45 FOV: the world projection's address fr.c named, 0 = none */
 static unsigned g_world_proj_addr2;       /* ... and the view-folded one bondview2.c named */
+/* WHICH of the two the projection in force actually IS - 0 none, 1 fr.c's
+ * plain perspective, 2 bondview2.c's view-folded one. Set from the ADDRESS the
+ * game named, in the same statement as g_proj_is_world so the two cannot
+ * disagree. #68 needs this because the two projections consume DIFFERENT
+ * SPACES (absolute world vs world minus the frame's render origin), and
+ * telling them apart by the shape of the matrix is a guess that flips. */
+static int      g_proj_world_which;
 static int      g_proj_is_world;          /* the projection in force is the world's */
 static int      g_viewmodel;              /* inside the first-person weapon's bracket ('SVM1'..'SVM0') */
 static double   g_fov_s = 1.0;            /* the frame's FOV scale (sl_display_fov_scale) */
@@ -9593,8 +10308,13 @@ static void mode2d_end(void)
     glLoadIdentity();
 }
 
+static void bg_xlu_flush(int why);
+
 static void mode2d_begin(void)
 {
+    /* #90 a 2D draw is after the world: the background's translucent meshes
+     * go down first if the walk never reached a translucent room list */
+    bg_xlu_flush(2);
     fog_neutral();                   /* B-045 - the 2D ortho never fogs: its
                                       * vertices carry the CURRENT coordinate,
                                       * so pin it to zero rather than toggling
@@ -9742,7 +10462,7 @@ static void gl_load_modelview(void)
  * interior, and it is not reachable at all on the recorded gameplay stream.
  *
  * AND THE CLOSE-WALL WITNESS, 2026-09-09, IS THE SAME ANSWER FROM THE OTHER
- * DIRECTION. On the owner's run 20260909-100313-lvl33 the see-through wedges
+ * DIRECTION. On playtest run 20260909-100313-lvl33 the see-through wedges
  * ARE this near clip's output, fitted rather than argued: for five triangles
  * across three marks, the measured sky/geometry boundary in the .bmp lands on
  * the z = -w cut of the recorded clip-space vertices to under 1.5 px over
@@ -9839,8 +10559,16 @@ void sl_gfx_note_world_projection2(unsigned addr)
 
 static void proj_apply_aspect(void)
 {
+    extern int sl_pres_correct(int which, const float in[16], float out[16]);
     double sx = 1.0, sy = 1.0;
-    memcpy(g_proj, g_proj_game, sizeof g_proj);
+    /* High-refresh presentation: on a presentation re-walk the world
+     * projections carry the interpolated camera (sl_gfx_present.c), applied
+     * BEFORE the aspect and FOV post-scale below exactly as the game's own
+     * view is. Never inside the view-model bracket; never on an original
+     * walk, where sl_pres_correct has nothing in force. */
+    if (!(g_pres_pass && !g_viewmodel && g_proj_is_world
+          && sl_pres_correct(g_proj_world_which, g_proj_game, g_proj)))
+        memcpy(g_proj, g_proj_game, sizeof g_proj);
     if (g_aspect_k > 1.0)
         sx = 1.0 / g_aspect_k;
     if (g_proj_is_world && !g_viewmodel && g_fov_s != 1.0) {
@@ -10286,7 +11014,7 @@ static int rect_colour(unsigned char out[4])
  *
  * The provider's census counts UPLOADS - how many distinct images a run
  * replaced. That answers "did the provider work" and cannot answer the
- * owner's observation, "most of it looks the same", because an id replaced
+ * playtest observation, "most of it looks the same", because an id replaced
  * once and drawn on a doorframe counts exactly as much as an id drawn across
  * the whole sky. This accumulates, per texture number, the SCREEN AREA of
  * the primitives that sample it, clipped to the viewport, so a frame's ids
@@ -10829,6 +11557,177 @@ static unsigned rh_need(unsigned cmd)
               + ((cmd & 1u) ? 4u : 0u);
 }
 
+/* ---- D-039 SIGHTLINE'S OWN SEA ---------------------------------------------
+ *
+ * sky.c draws the sea as raw RDP triangles (draw_rdp_tri, below): the water
+ * image under a per-corner shade, opaque, with texture coordinates that are
+ * the sea plane's own world x and z (plus the cloud scroll in z) - so each
+ * pixel's perspective-divided coordinate IS the point of the plane it shows.
+ * Under the presentation that names the stage (sl_wa_own_sea, xbla Frigate)
+ * the triangle is drawn through this program instead of texture x shade:
+ *
+ *   the plane point P = (u * rep_x, sea height, v * rep_z - scroll), the eye
+ *   from the game (sl_wa_sea_frame), so the view ray per pixel is exact;
+ *   form 1  the game's image as its mean (16 taps) plus three layers of its
+ *           detail - 1, 0.29 and 2.13 times its scale, weights 1, 0.6 and
+ *           0.45, the last two drifting apart with the game's clock - under
+ *           the game's shade; each layer's detail fades out as its texels
+ *           grow smaller than a pixel (the image has no mip chain, and the
+ *           far sea shimmered); and within six degrees of the horizon the sea
+ *           goes to the sky's horizon colour, where the game's image had
+ *           darkened it a band below the sky;
+ *   form 2  (the default) form 1 and the sky's reflection: Schlick's Fresnel
+ *           term (0.02 + 0.98 (1 - cos)^5) between the water's mean and a
+ *           sky running from the horizon colour to the cloud layer at 30% as
+ *           the view steepens, the detail kept over it at 1 - 0.6 F;
+ *   form 9  a diagnostic: distance, depression and world x as colour.
+ *
+ * Measured at three sea poses (the boarding boat, its view out to sea, the
+ * helipad looking astern): form 2 meets the xbla sky at the horizon without
+ * the game's dark band, keeps the ripple at middle distance and moves with
+ * the game's clock. A glint toward
+ * a light high in the sky was tried and dropped: the night sky has no bright
+ * direction to reflect, and at those poses it changed 12k pixels by 0.4.
+ *
+ * Nothing here moves the sea: the triangles, their corners, the plane and the
+ * render mode are the game's, so whatever the game draws over the sea (the
+ * hull, D-035's waterline, the boat) is unchanged. A missing program or
+ * seam draws the game's sea. */
+int sl_wa_sea_frame(float *eye, float *sea_y, float *z_offset, float *seconds,
+                    float *sky_rgb, float *cloud_rgb);   /* sl_world_assets.c */
+const char *sl_wa_stage_item_path(void);                  /* sl_world_assets.c */
+
+static const char *SEA_VS =
+"#version 130\n"
+"noperspective out vec4 v_col;\n"
+"void main() {\n"
+"    gl_Position = ftransform();\n"
+"    v_col = gl_Color;\n"
+"    gl_TexCoord[0] = gl_MultiTexCoord0;\n"
+"}\n";
+
+static const char *SEA_FS =
+"#version 130\n"
+"noperspective in vec4 v_col;\n"
+"uniform sampler2D u_tex;\n"
+"uniform int u_form;\n"
+"uniform vec4 u_rep;\n"           /* world units per repeat, x and z */
+"uniform vec4 u_eye;\n"           /* the eye; w the sea's height */
+"uniform vec4 u_sea;\n"           /* x the scroll in z, y the clock (s) */
+"uniform vec4 u_hor;\n"           /* the sky's horizon colour */
+"uniform vec4 u_up;\n"            /* the sky above it */
+"vec3 layer(vec2 uv, vec3 m, float k) {\n"
+"    float fw = length(fwidth(uv)) * 32.0;\n"      /* texels per pixel */
+"    return (texture2D(u_tex, uv).rgb - m) * k * clamp(1.5 - fw, 0.0, 1.0);\n"
+"}\n"
+"void main() {\n"
+"    vec2 uv = gl_TexCoord[0].xy / gl_TexCoord[0].w;\n"
+"    vec3 p = vec3(uv.x * u_rep.x, u_eye.w, uv.y * u_rep.y - u_sea.x);\n"
+"    vec3 v = p - u_eye.xyz;\n"
+"    float d = length(v);\n"
+"    vec3 r = v / max(d, 0.001);\n"
+"    float dep = clamp(-r.y, 0.0, 1.0);\n"
+"    float tm = u_sea.y;\n"
+"    vec3 m = vec3(0.0);\n"                         /* the image's mean, 16 taps */
+"    for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++)\n"
+"        m += texture2D(u_tex, (vec2(i, j) + 0.5) / 4.0).rgb;\n"
+"    m /= 16.0;\n"
+"    vec3 dt = layer(uv, m, 1.0)\n"
+"            + layer(uv * 0.29 + vec2(0.011, 0.005) * tm, m, 0.6)\n"
+"            + layer(uv * 2.13 + vec2(-0.019, 0.013) * tm, m, 0.45);\n"
+"    vec3 col = clamp(m + dt, 0.0, 1.0) * v_col.rgb;\n"
+"    if (u_form >= 2) {\n"
+"        float f = 0.02 + 0.98 * pow(1.0 - dep, 5.0);\n"
+"        vec3 sky = mix(u_hor.rgb, u_up.rgb, smoothstep(0.0, 0.5, dep));\n"
+"        col = mix(m * v_col.rgb, sky, f) + dt * v_col.rgb * (1.0 - 0.6 * f);\n"
+"    }\n"
+"    col = mix(col, u_hor.rgb, 1.0 - smoothstep(0.0, 0.1, dep));\n"
+"    if (u_form == 9) col = vec3(fract(d / 1024.0), dep, fract(p.x / 1024.0));\n"
+"    gl_FragColor = vec4(col, 1.0);\n"
+"}\n";
+
+static int    g_sea_state;              /* 0 untried, 1 ready, -1 refused */
+static GLuint g_sea_prog;
+static GLint  g_su_tex, g_su_form, g_su_rep, g_su_eye, g_su_sea, g_su_hor, g_su_up;
+static unsigned g_sea_tris;
+
+static int aeq_shader_ok(void);
+static GLuint aeq_compile(GLenum type, const char *src, const char *what);
+
+static int sea_program_ok(void)
+{
+    GLuint vs, fs;
+    GLint ok = 0;
+    if (g_sea_state != 0) return g_sea_state > 0;
+    g_sea_state = -1;
+    if (!aeq_shader_ok() || p_Uniform4f == NULL) {      /* the entry points */
+        fprintf(stderr, "sl_sea: no shader entry points - the game's sea is drawn (D-039)\n");
+        return 0;
+    }
+    vs = aeq_compile(GL_VERTEX_SHADER, SEA_VS, "sea vertex");
+    fs = aeq_compile(GL_FRAGMENT_SHADER, SEA_FS, "sea fragment");
+    if (vs == 0 || fs == 0) return 0;
+    g_sea_prog = p_CreateProgram();
+    if (g_sea_prog == 0) return 0;
+    p_AttachShader(g_sea_prog, vs);
+    p_AttachShader(g_sea_prog, fs);
+    p_LinkProgram(g_sea_prog);
+    p_GetProgramiv(g_sea_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[1024];
+        GLsizei n = 0;
+        log[0] = '\0';
+        p_GetProgramInfoLog(g_sea_prog, (GLsizei) sizeof log, &n, log);
+        fprintf(stderr, "sl_sea: the sea program did not link: %s\n", log);
+        g_sea_prog = 0;
+        return 0;
+    }
+    g_su_tex  = p_GetUniformLocation(g_sea_prog, "u_tex");
+    g_su_form = p_GetUniformLocation(g_sea_prog, "u_form");
+    g_su_rep  = p_GetUniformLocation(g_sea_prog, "u_rep");
+    g_su_eye  = p_GetUniformLocation(g_sea_prog, "u_eye");
+    g_su_sea  = p_GetUniformLocation(g_sea_prog, "u_sea");
+    g_su_hor  = p_GetUniformLocation(g_sea_prog, "u_hor");
+    g_su_up   = p_GetUniformLocation(g_sea_prog, "u_up");
+    g_sea_state = 1;
+    fprintf(stderr, "sl_sea: Sightline's own sea program ready (D-039)\n");
+    return 1;
+}
+
+/* Bind the program for one sea triangle of a tw x th tile; 1 when bound
+ * (the caller draws the fan and calls sea_program_end), 0 to draw the
+ * game's sea. */
+static int sea_program_begin(unsigned tw, unsigned th)
+{
+    float eye[3], sea_y, zoff, secs, sky[3], cloud[3], up[3];
+    int form, k;
+    form = sl_wa_own_sea(sl_wa_stage_item_path());
+    if (form <= 0) return 0;
+    if (!sl_wa_sea_frame(eye, &sea_y, &zoff, &secs, sky, cloud)) return 0;
+    if (!sea_program_ok()) return 0;
+    /* the sky above the horizon: the cloud layer's shade (skyChooseCloudVtxColour)
+     * at 30% of its strength, the sky the xbla dome shows over the sea */
+    for (k = 0; k < 3; k++) up[k] = sky[k] + cloud[k] * (1.0f - sky[k] / 255.0f) * 0.3f;
+    batch_end();
+    p_UseProgram(g_sea_prog);
+    p_Uniform1i(g_su_tex, 0);
+    p_Uniform1i(g_su_form, form);
+    /* uv = (S/W) * 32767 / (32 tw) and S/W * 32767 = world x * 65535 / 65536 */
+    p_Uniform4f(g_su_rep, 32.0f * (float) tw * 65536.0f / 65535.0f,
+                32.0f * (float) th * 65536.0f / 65535.0f, 0.0f, 0.0f);
+    p_Uniform4f(g_su_eye, eye[0], eye[1], eye[2], sea_y);
+    p_Uniform4f(g_su_sea, zoff, secs, 0.0f, 0.0f);
+    p_Uniform4f(g_su_hor, sky[0] / 255.0f, sky[1] / 255.0f, sky[2] / 255.0f, 1.0f);
+    p_Uniform4f(g_su_up, up[0] / 255.0f, up[1] / 255.0f, up[2] / 255.0f, 1.0f);
+    g_sea_tris++;
+    return 1;
+}
+
+static void sea_program_end(void)
+{
+    p_UseProgram(0);
+}
+
 static void draw_rdp_tri(void)
 {
     /* THE PRIMITIVE IS NOT ALWAYS A TRIANGLE.
@@ -10863,7 +11762,7 @@ static void draw_rdp_tri(void)
     float yH, yM, yL, XL, DxLDy, XH, DxHDy, XM, DxMDy, xTop, xTopM, frac;
     unsigned tw = 1, th = 1;
     GLuint name = 0;
-    int why = TR_OK, i;
+    int why = TR_OK, i, sea = 0;
     const int NV = 6;
 
     g_rh_tris++;
@@ -10946,7 +11845,7 @@ static void draw_rdp_tri(void)
          * the ten rows above and below black itself (B-046), and that
          * letterbox is part of the accepted 4:3 image. Pushing a sky corner
          * to row 0 painted the sky over the top strip at every aspect but
-         * 4:3 (owner replay 2026-09-18: "a light strip across the top"). */
+         * 4:3 (playtest 2026-09-18: "a light strip across the top"). */
         for (i = 0; i < NV; i++) {
             if (edge[i] & 1)      { vx[i] = (float) ext2d_left();  moved = 1; }
             else if (edge[i] & 2) { vx[i] = (float) ext2d_right(); moved = 1; }
@@ -11053,6 +11952,8 @@ static void draw_rdp_tri(void)
             g_rh_skylerp++;
         } else {
             texenv_set(0);
+            /* D-039: the sea - shaded, textured, not the sky's lerp */
+            sea = shaded && sea_program_begin(tw, th);
         }
     } else if (g_tex_gl_on) {
         glDisable(GL_TEXTURE_2D);
@@ -11078,6 +11979,7 @@ static void draw_rdp_tri(void)
         glVertex2f(vx[i], vy[i]);
     }
     glEnd();
+    if (sea) sea_program_end();
     ccx_note(1);
     g_rh_drawn++;
 
@@ -11183,8 +12085,10 @@ static void do_matrix(unsigned p, unsigned len, unsigned int a)
         /* The RSP keeps no projection stack; PUSH is meaningless here. */
         if (p & MTX_LOAD) {
             memcpy(g_proj_game, m, sizeof m); g_mtx_load++;
-            g_proj_is_world = (g_world_proj_addr != 0 && a == g_world_proj_addr)
-                           || (g_world_proj_addr2 != 0 && a == g_world_proj_addr2);
+            g_proj_world_which = (g_world_proj_addr != 0 && a == g_world_proj_addr)  ? 1
+                               : (g_world_proj_addr2 != 0 && a == g_world_proj_addr2) ? 2
+                               : 0;
+            g_proj_is_world = (g_proj_world_which != 0);
         } else {
             mtx_mul(m, g_proj_game, g_proj_game);  g_mtx_mul++;
         }
@@ -11303,12 +12207,12 @@ static void dither_apply(unsigned alpha)
     }
 }
 
-/* ---- LIVE OWNER BUG MARK: centre-screen draw provenance ------------------
+/* ---- LIVE BUG MARK: centre-screen draw provenance ------------------------
  *
  * F8 while playing means "the defect is under the crosshair, right now".
  * Everything this block gathers is READ, never written: no GL call, no state
- * change, no toggle. The frame the owner marks has to be the frame the owner
- * was looking at, or the mark describes a picture nobody saw.
+ * change, no toggle. The marked frame has to be the frame that was on screen
+ * when F8 was pressed, or the mark describes a picture nobody saw.
  *
  * That is not a stylistic preference. SL_TRI_ID and SL_GLASS_MARK both answer
  * "which draw covers this pixel" by REPLACING the draw's colour or dropping
@@ -11407,7 +12311,7 @@ struct sl_mark_tri {
  *
  * It recorded G_DL only at depth 0 - "depth-1 branches" - so provenance ended
  * at the first submission that carried the rest of the frame inside it. In the
- * owner's Dam marks the frame list issues five or six submissions and the LAST
+ * Dam playtest marks the frame list issues five or six submissions and the LAST
  * one is a list high in the game heap (20059xxx) holding two to three thousand
  * triangles: the props, the characters and the first-person viewmodel all
  * execute inside it, at depth >= 1, and none of them could ever appear. The
@@ -11581,7 +12485,7 @@ static float mark_box(void)
         g_mark_cy = cy ? (float) atof(cy) : 0.0f;
         /* Half-extent in NDC, so 0.03 is 3% of half-width either side of
          * centre - about 29 px across at 960 wide. Overridable for a tighter
-         * or looser aim, but the owner needs no variable set: this default is
+         * or looser aim, but a playtest needs no variable set: this default is
          * what ships and what the acceptance run used. */
         const char *v = getenv("SL_MARK_BOX");
         double d = (v != NULL) ? atof(v) : 0.03;
@@ -11887,6 +12791,17 @@ static void mark_note_tri(const float ndc[3][5], int fogm, const int idx[3])
 static int   g_clipemit;               /* this draw supplies clip coords     */
 static float g_clipemit_pos[3][4];     /* ... and they are these             */
 static int   g_clipemit_proj;          /* GL projection currently identity   */
+/* THE DYNAMIC DOOR (src/sl_chr_asset.h). Set between a door's SL_DOOR_DL_W0
+ * brackets, which the seam places around the lists of a door the game
+ * reshapes when no item stands in for it (ORIGINAL, COMMUNITY HD). There a
+ * near-crossing triangle of the door takes the eye-crossing population's
+ * path in emit_tri - kept, and saturated at the near depth - instead of the
+ * cartridge's near cut, so the door the camera touches stays closed (D-027).
+ * Nothing outside the brackets is touched. The census counts what it did and
+ * what the item cut (chr_asset_draw) processed. */
+static int      g_door_nearkeep;
+static unsigned g_door_nk_tris, g_door_brackets, g_door_cut_draws, g_door_cut_verts,
+                g_door_cut_tris;
 
 static void clipemit_proj_set(int on)
 {
@@ -11899,14 +12814,858 @@ static void clipemit_proj_set(int on)
     g_clipemit_proj = on;
 }
 
+/* ---- #68 STATIC WORLD REPLACEMENT: the original draw's own identity ------
+ *
+ * THE SEAM THIS SLICE NEEDS. An additive asset asks nothing of the game's
+ * picture; a REPLACEMENT has to name the part of that picture it stands in
+ * for, and suppress exactly that part and nothing else. The only identity
+ * this renderer has for world geometry is the one the game itself branches
+ * with - the room, and which of its two lists (see g_room_num). So the unit
+ * of replacement is (room, kind), it is read rather than invented, and no
+ * game-side structure moves to supply it.
+ *
+ * WHAT IS SUPPRESSED IS THE FINAL NATIVE VISUAL EMISSION AND NOTHING ELSE.
+ * The display list still executes: every vertex loads, every matrix applies,
+ * every render-mode and texture command takes effect, the interpreter's own
+ * bookkeeping (B-125 redraw scope, the near-plane classification in emit_tri)
+ * runs unchanged. Only this function's GL output is skipped. Nothing in
+ * src/game is touched, no room membership, portal, prop list, collision or AI
+ * visibility is consulted or changed, and the simulation cannot observe it.
+ *
+ * THE DIAGNOSTIC CENSUS beside it exists because "which room is the cliff" is
+ * a measurement, not a reading: SL_WR_CENSUS=1 tallies triangles per room and
+ * per list, and the screen area those triangles cover, so the target
+ * population is chosen from what it paints rather than from what it is called.
+ */
+#define WR_MAX_ROOMS 512
+static unsigned  g_wr_tris[WR_MAX_ROOMS][3];
+static double    g_wr_area[WR_MAX_ROOMS][3];
+static unsigned  g_wr_frames;
+static unsigned  g_wr_suppressed;      /* native triangles not emitted */
+
+/* THE REPLACEMENT'S VALIDITY GATE, declared here because the triangle path
+ * below reads it. It is written in exactly two places - cleared at every
+ * frame's start, set by a background pass that has drawn a complete,
+ * validated, uploaded replacement - and both are in the #68 background section
+ * further down this file. Zero means the original draws. */
+static int       g_bg_suppress;
+
+/* SL_BG_WORLDBOX: the box the game's own room background geometry occupies, in
+ * the space the world projection consumes. Diagnostic only. */
+static int       g_bg_nosup = -1;    /* SL_BG_NOSUPPRESS: draw BOTH, for alignment */
+static int       g_bg_white = -1;    /* SL_BG_WHITE: the texture without the colour */
+static int       g_bg_nomip = -1;    /* SL_BG_NOMIP: level 0 only, to separate mip
+                                      * collapse from a coordinate that is wrong */
+static int       g_bgbox_on = -1;
+static unsigned  g_bgbox_n;
+static float     g_bgbox_lo[3] = { 1e30f, 1e30f, 1e30f };
+static float     g_bgbox_hi[3] = { -1e30f, -1e30f, -1e30f };
+
+/* #78 THE NATIVE FILL (sl_gfx_worldasset.h): a room triangle the replacement
+ * reproduces is not suppressed but drawn SL_WA_FILL_PUSH world units behind
+ * its plane, so it shows only where the replacement has no surface - the
+ * strip the remaster leaves above Runway's bunker door. The space is the
+ * background pass's own (nf_frame, from bg_draw's conversion: item -> room
+ * -> the space the matrices consume), run backwards for the three corners;
+ * the decision is cached by the triangle's room and its own coordinates,
+ * since the game's room geometry never moves; the grid is the provider's
+ * (sl_wa_fill_set, rebuilt when the item changes). SL_BG_FILL=0 suppresses
+ * every room triangle, as before. */
+static int   g_nf_on = -1;
+static int   g_nf_ready;                 /* this frame's scales are in hand */
+static int   g_nf_have_view, g_nf_have_ro;
+static float g_nf_sc, g_nf_vis, g_nf_org[3], g_nf_vinv[16], g_nf_eye[3];
+static unsigned g_nf_kept, g_nf_tested, g_nf_registered, g_nf_cache_full, g_nf_traced;
+#define NF_CACHE_BITS 16
+struct nf_entry { int room; short p[9]; signed char reg; float hq[3]; };
+static struct nf_entry g_nf_cache[1u << NF_CACHE_BITS];
+static unsigned g_nf_cache_n;
+
+static int nf_on(void)
+{
+    if (g_nf_on < 0) { const char *v = getenv("SL_BG_FILL"); g_nf_on = (v == NULL || *v != '0'); }
+    return g_nf_on;
+}
+
+/* #81 THE FILL SHOWS ONLY WHERE THE REPLACEMENT HAS NOTHING BEHIND THE HOLE
+ * (sl_wa_fill_open in the header for the rule and the measurement): along
+ * the line of sight from the eye through the triangle's hole point - the
+ * point of it farthest from every replacement surface, found when its
+ * registration was decided - the replacement must have no surface within
+ * SL_WA_FILL_OPEN world units, or the hole is the replacement's own opening
+ * and the game's triangle is suppressed like any other. Asked per frame (the
+ * eye moves), of the few registered, holed triangles only.
+ * SL_BG_FILL_VOID=0 fills every registered, holed triangle as before. */
+static unsigned g_nf_void_tris;
+static unsigned g_nf_open_hits;          /* answers the open-hole memo gave back (nf_open_traced) */
+static float g_nf_hq[3];                  /* the last decision's hole point, item space */
+static int nf_void_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_FILL_VOID"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+static void nf_cache_reset(void)
+{
+    memset(g_nf_cache, 0xff, sizeof g_nf_cache);     /* room -1: empty */
+    g_nf_cache_n = 0;
+}
+
+/* The grid for this item, in cells of sixteen registration radii, so the
+ * eight cells about a corner cover its search box. Rebuilt only when the
+ * item changes, and the decisions with it. */
+static void nf_open_memo_reset(void);
+static void nf_begin(const struct sl_wa_asset *a, float sc)
+{
+    float cell = (sc > 0.0f) ? 16.0f * SL_WA_FILL_REGISTER / sc : 0.0f;
+    if (sl_wa_fill_set(a, cell)) { nf_cache_reset(); nf_open_memo_reset(); }
+    g_nf_ready = 0;
+}
+
+/* The inverse of the PLAIN branch's view (row vectors: v' = v * M, an
+ * affine M with its scale in the upper 3x3). */
+static int nf_view(const float *m)
+{
+    float r[9], c[9], det, inv;
+    int i, j;
+    for (i = 0; i < 3; i++) for (j = 0; j < 3; j++) r[3 * i + j] = m[4 * i + j];
+    c[0] = r[4] * r[8] - r[5] * r[7]; c[1] = r[2] * r[7] - r[1] * r[8]; c[2] = r[1] * r[5] - r[2] * r[4];
+    c[3] = r[5] * r[6] - r[3] * r[8]; c[4] = r[0] * r[8] - r[2] * r[6]; c[5] = r[2] * r[3] - r[0] * r[5];
+    c[6] = r[3] * r[7] - r[4] * r[6]; c[7] = r[1] * r[6] - r[0] * r[7]; c[8] = r[0] * r[4] - r[1] * r[3];
+    det = r[0] * c[0] + r[1] * c[3] + r[2] * c[6];
+    if (!(det != 0.0f) || !(fabsf(det) > 1e-20f)) return 0;
+    inv = 1.0f / det;
+    memset(g_nf_vinv, 0, sizeof g_nf_vinv);
+    for (i = 0; i < 3; i++) for (j = 0; j < 3; j++) g_nf_vinv[4 * i + j] = c[3 * i + j] * inv;
+    for (j = 0; j < 3; j++)
+        g_nf_vinv[12 + j] = -(m[12] * g_nf_vinv[j] + m[13] * g_nf_vinv[4 + j] + m[14] * g_nf_vinv[8 + j]);
+    g_nf_vinv[15] = 1.0f;
+    return 1;
+}
+
+/* The hole radius in world units: the header's, or SL_BG_FILL_HOLE=<units>
+ * for a measurement. */
+static float nf_hole_units(void)
+{
+    static float units = -1.0f;
+    if (units < 0.0f) {
+        const char *v = getenv("SL_BG_FILL_HOLE");
+        units = (v != NULL && atof(v) > 0.0) ? (float) atof(v) : SL_WA_FILL_HOLE;
+    }
+    return units;
+}
+
+/* A near-clipped fan's sub-triangles take the PARENT triangle's decision,
+ * made once on the parent's own corners (and cached by them) before the
+ * fan overwrites the slots: the sub-triangles lie within the parent, and a
+ * decision made on their moving cut positions every frame was the cost
+ * that stalled a tunnel of fans (0.25 s a frame at the Dam's tunnel). */
+static int g_nf_fan;
+static int g_nf_fan_fade;                 /* #83 the parent's fade decision */
+
+/* SL_BG_FILL_TRACE=1 traces every room's first decisions; a room number
+ * traces that room's alone. */
+static int nf_trace_on(void)
+{
+    static int on = -1, room = -1;
+    if (on < 0) {
+        const char *v = getenv("SL_BG_FILL_TRACE");
+        on = (v != NULL && *v != '0');
+        if (on && atoi(v) > 1) room = atoi(v);
+    }
+    return on && (room < 0 || room == g_room_num);
+}
+
+/* The frame's scales and spaces, taken as the background pass takes them:
+ * the item's scale into world units, the stage's visibility scale, the
+ * frame's render origin and the world-to-view matrix with the visibility
+ * scale on its output (bg_draw's PLAIN branch). A room triangle is read
+ * under whichever world projection is in force at ITS draw (nf_item_point),
+ * not the one the background pass ran under. */
+static void nf_frame(float sc, float vis)
+{
+    static int said = -1;
+    float vm[16], ro[3];
+    int k, r;
+    g_nf_sc = sc; g_nf_vis = vis;
+    g_nf_have_view = g_nf_have_ro = 0;
+    if (sl_wa_view_matrix(vm)) {
+        /* the folded eye from the view as the seam gives it (sl_wa_fold_eye
+         * applies the visibility scale itself); the inverse from the view
+         * with that scale on its output, as bg_draw's PLAIN branch has it */
+        if (sl_wa_render_origin(ro)) sl_wa_fold_eye(vm, ro, vis, g_nf_eye);
+        for (r = 0; r < 4; r++) { vm[r * 4 + 0] *= vis; vm[r * 4 + 1] *= vis; vm[r * 4 + 2] *= vis; }
+        g_nf_have_view = nf_view(vm);
+    }
+    if (sl_wa_render_origin(ro)) {
+        g_nf_have_ro = g_nf_have_view;        /* the folded eye needs the view too */
+        for (k = 0; k < 3; k++) g_nf_org[k] = ro[k];
+    }
+    g_nf_ready = (sc > 0.0f && vis > 0.0f && (g_nf_have_view || g_nf_have_ro));
+    /* THE WITNESS: the spaces the fill runs backwards, said once and again
+     * whenever readiness changes - a fill that never engages is a space
+     * that was not in hand, and this is the line that says so. */
+    if (said != g_nf_ready) {
+        unsigned large = 0, tris = sl_wa_fill_counts(&large);
+        said = g_nf_ready;
+        fprintf(stderr, "#78 nativefill: space %s - scale %.4f, visibility %.4f, view %s, origin %s "
+                        "%.1f %.1f %.1f, folded eye %.1f %.1f %.1f, grid %u triangles + %u wide; "
+                        "registers within %.1f world units, pushes %.1f (SL_BG_FILL=%s)\n",
+                g_nf_ready ? "in hand" : "NOT IN HAND", sc, vis, g_nf_have_view ? "yes" : "NO",
+                g_nf_have_ro ? "yes" : "NO", g_nf_org[0], g_nf_org[1], g_nf_org[2],
+                g_nf_eye[0], g_nf_eye[1], g_nf_eye[2], tris, large,
+                SL_WA_FILL_REGISTER, SL_WA_FILL_PUSH, nf_on() ? "1" : "0");
+    }
+}
+
+/* A loaded vertex's position in the item's own space, by the projection in
+ * force: under the PLAIN world projection (which 1) the modelview carries
+ * the view, so the loaded position is view space and the inverse view takes
+ * it to world times the visibility scale; under the FOLDED one (which 2) the
+ * view is in the projection and the loaded position is already world less
+ * the render origin, times the visibility scale - the space bg_draw hands
+ * the replacement in either case, run backwards. 0 when the projection is
+ * not a world projection or its space is not in hand. */
+static int nf_item_point(int slot, float *out)
+{
+    const float *e = g_veye[slot];
+    float ws[3];
+    int k;
+    if (g_proj_world_which == 1) {
+        if (!g_nf_have_view) return 0;
+        for (k = 0; k < 3; k++)
+            ws[k] = e[0] * g_nf_vinv[k] + e[1] * g_nf_vinv[4 + k] + e[2] * g_nf_vinv[8 + k]
+                  + g_nf_vinv[12 + k];
+        for (k = 0; k < 3; k++) out[k] = ws[k] / g_nf_sc;
+    } else if (g_proj_world_which == 2) {
+        if (!g_nf_have_ro) return 0;
+        for (k = 0; k < 3; k++) out[k] = (e[k] / g_nf_vis + g_nf_org[k]) / g_nf_sc;
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+/* An opaque, depth-tested, depth-writing, non-decal draw, by the same muxes
+ * rm_apply reads: the only kind that can stand in for the replacement
+ * without showing through its own holes. */
+static int nf_opaque(void)
+{
+    unsigned om = g_om_l;
+    int two = (g_cycle_type == 1);
+    unsigned p, a, m, b;
+    if (!(om & RM_Z_CMP) || !(om & RM_Z_UPD) || (om & RM_AC_MASK) != 0u
+        || (om & RM_ZMODE) != RM_ZMODE_OPA)
+        return 0;
+    if (om & RM_FORCE_BL) {
+        if (two) { p = (om >> 28) & 3u; a = (om >> 24) & 3u; m = (om >> 20) & 3u; b = (om >> 16) & 3u; }
+        else     { p = (om >> 30) & 3u; a = (om >> 26) & 3u; m = (om >> 22) & 3u; b = (om >> 18) & 3u; }
+        if (p == BL_CLR_IN && m == BL_CLR_MEM
+            && !(rm_a_factor(a) == GL_ONE && rm_b_factor(b) == GL_ZERO)) return 0;
+        if (p == BL_CLR_MEM && m == BL_CLR_IN
+            && !(rm_b_factor(b) == GL_ONE && rm_a_factor(a) == GL_ZERO)) return 0;
+    }
+    return 1;
+}
+
+/* #83 THE GAME'S FADE WHERE THE REPLACEMENT HAS NOTHING. A room triangle of
+ * a translucent list (FORCE_BL, no depth write, the XLU depth mode) whose
+ * shade runs from 32 or darker at one corner to 224 or brighter at another,
+ * in some channel - a FADE, tools/worldasset/gameshade.py is_fade - is drawn
+ * as the game draws it when no replacement surface lies within
+ * SL_WA_FILL_REGISTER of its centroid; any other translucent room triangle
+ * is suppressed as before. Frigate's hull fades into the sea below its
+ * waterline (room 35's skirt: an alpha ramp under a shade that is black at
+ * the waterline); D-035 ends the remaster's hull at that waterline, and
+ * without the fade the hull stopped at a hard edge over the bare sea
+ * (playtest run 20261006-185746, mark 1). Measured from the ROM's room
+ * lists: Frigate carries 31 fades (30 the skirt, one at the boarding boat's
+ * wheel, inside the remaster's boat model: a frame over the wheel is
+ * byte-identical with SL_BG_FADE=0); the Dam, Facility, Runway, Surface,
+ * Bunker 1 and Silo carry none. Not cached: asked of the
+ * fades alone, one distance query each. SL_BG_FADE=0 suppresses them.
+ * Drawn on the stages D-035 names alone (sl_wa_game_fade, Frigate): the
+ * shade test also passes Jungle's backdrop cards and Train's track strips,
+ * which the remaster replaces with its own (sl_presentation_game_fade). */
+static unsigned g_nf_fade_tris;
+static int nf_fade_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_FADE"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+static int nf_fade_kept(int a, int b, int c)
+{
+    int idx[3], j, ch, fade = 0;
+    float p[3], q[3] = { 0.0f, 0.0f, 0.0f }, limit;
+    unsigned om = g_om_l;
+    if (!nf_fade_on() || !nf_on() || !g_nf_ready || g_room_kind != 2) return 0;
+    if (!(om & RM_FORCE_BL) || (om & RM_Z_UPD) || (om & RM_ZMODE) != RM_ZMODE_XLU) return 0;
+    idx[0] = a; idx[1] = b; idx[2] = c;
+    for (ch = 0; ch < 4 && !fade; ch++) {
+        int lo = 255, hi = 0;
+        for (j = 0; j < 3; j++) {
+            const struct vtx *v = &g_vbuf[idx[j]];
+            int x = ch == 0 ? v->r : ch == 1 ? v->g : ch == 2 ? v->b : v->a;
+            if (x < lo) lo = x;
+            if (x > hi) hi = x;
+        }
+        fade = (lo <= 32 && hi >= 224);
+    }
+    if (!fade) return 0;
+    if (!sl_wa_game_fade(sl_wa_stage_item_path())) return 0;   /* D-035's stages */
+    for (j = 0; j < 3; j++) {
+        int k;
+        if (!nf_item_point(idx[j], p)) return 0;
+        for (k = 0; k < 3; k++) q[k] += p[k] / 3.0f;
+    }
+    limit = SL_WA_FILL_REGISTER / g_nf_sc;
+    if (sl_wa_fill_distance(q, limit) < limit) return 0;
+    g_nf_fade_tris++;
+    return 1;
+}
+
+/* #96 THE GAME'S TRANSLUCENT DETAIL THE REMASTER LEFT OUT, IN A NAMED ROOM.
+ * A translucent room triangle (the secondary list's FORCE_BL, no depth
+ * update, the XLU zmode - the #83 fade's class) of a room the presentation
+ * names (sl_wa_native_kept: Cradle's room 7, the shaft whose ladder the
+ * remaster has no surface for) draws where it stands when its three corners
+ * and its centroid each lie farther than the fill's hole radius
+ * (SL_WA_FILL_HOLE) from every replacement surface - the replacement
+ * reproduces nothing of it, so nothing is drawn twice; a triangle of the
+ * room the replacement does reproduce (the shaft's panel, texture 529) stays
+ * suppressed. MEASURED from the ROM's room lists: the ladder (texture 844, 2
+ * triangles at world z 76 beside the pole) lies wholly farther than that
+ * from the remaster's item, which carries the pole (draw 0xe44) and no
+ * ladder in either generation, and the remaster draws none (private
+ * emulator, round crd6). */
+static unsigned g_nf_kept_tris;
+static int g_nf_fan_kept;                 /* the parent's decision, for a clipped fan */
+static int nf_room_kept(int a, int b, int c)
+{
+    int idx[3], j, k;
+    float p[3][3], q[3] = { 0.0f, 0.0f, 0.0f }, limit;
+    unsigned om = g_om_l;
+    if (!nf_on() || !g_nf_ready || g_room_kind != 2) return 0;
+    if (!(om & RM_FORCE_BL) || (om & RM_Z_UPD) || (om & RM_ZMODE) != RM_ZMODE_XLU) return 0;
+    if (!sl_wa_native_kept(sl_wa_stage_item_path(), g_room_num)) return 0;
+    idx[0] = a; idx[1] = b; idx[2] = c;
+    for (j = 0; j < 3; j++) {
+        if (!nf_item_point(idx[j], p[j])) return 0;
+        for (k = 0; k < 3; k++) q[k] += p[j][k] / 3.0f;
+    }
+    limit = SL_WA_FILL_HOLE / g_nf_sc;
+    if (sl_wa_fill_distance(q, limit) < limit) return 0;
+    for (j = 0; j < 3; j++)
+        if (sl_wa_fill_distance(p[j], limit) < limit) return 0;
+    g_nf_kept_tris++;
+    return 1;
+}
+
+const char *sl_wa_stage_item_path(void);   /* sl_world_assets.c, declared again below */
+
+static int nf_registered(int a, int b, int c)
+{
+    struct nf_entry key, *e;
+    unsigned h, i, mask = (1u << NF_CACHE_BITS) - 1u;
+    int idx[3], j, reg;
+    float limit;
+    idx[0] = a; idx[1] = b; idx[2] = c;
+    key.room = g_room_num;
+    for (j = 0; j < 3; j++) {
+        key.p[3 * j] = g_vbuf[idx[j]].x; key.p[3 * j + 1] = g_vbuf[idx[j]].y;
+        key.p[3 * j + 2] = g_vbuf[idx[j]].z;
+    }
+    h = 2166136261u;
+    for (j = 0; j < 9; j++) { h ^= (unsigned) (unsigned short) key.p[j]; h *= 16777619u; }
+    h ^= (unsigned) key.room; h *= 16777619u;
+    for (i = 0; i < 64u; i++) {
+        e = &g_nf_cache[(h + i) & mask];
+        if (e->room == -1) break;
+        if (e->room == key.room && memcmp(e->p, key.p, sizeof key.p) == 0) {
+            memcpy(g_nf_hq, e->hq, sizeof g_nf_hq);
+            return e->reg;
+        }
+    }
+    g_nf_tested++;
+    limit = SL_WA_FILL_REGISTER / g_nf_sc;
+    /* #83 a room the replacement remodelled whole takes no fill
+     * (sl_wa_fill_withheld: Frigate's boarding boat) */
+    reg = !sl_wa_fill_withheld(sl_wa_stage_item_path(), key.room);
+    if (reg) {
+        float p[3][3], d[3], q[3], dm = 0.0f, hd = 0.0f, nrm[3], nl;
+        int k, holed = 0;
+        for (j = 0; j < 3; j++)
+            if (!nf_item_point(idx[j], p[j])) { p[j][0] = p[j][1] = p[j][2] = 0.0f; reg = 0; }
+        /* #83 registration is asked in the triangle's own plane
+         * (sl_wa_fill_distance_aligned): a degenerate triangle has none */
+        {
+            float u[3], w[3];
+            for (k = 0; k < 3; k++) { u[k] = p[1][k] - p[0][k]; w[k] = p[2][k] - p[0][k]; }
+            nrm[0] = u[1] * w[2] - u[2] * w[1];
+            nrm[1] = u[2] * w[0] - u[0] * w[2];
+            nrm[2] = u[0] * w[1] - u[1] * w[0];
+            nl = sqrtf(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]);
+            if (nl > 0.0f) { nrm[0] /= nl; nrm[1] /= nl; nrm[2] /= nl; } else reg = 0;
+        }
+        for (j = 0; j < 3; j++) {
+            d[j] = reg ? sl_wa_fill_distance_aligned(p[j], nrm, limit) : limit;
+            if (!(d[j] < limit)) reg = 0;
+        }
+        /* and the triangle's middle - its three edge midpoints and its
+         * centroid - so a triangle whose corners touch the replacement
+         * while its body leaves it (a lake bed under a translucent water,
+         * a ceiling the remaster remodelled) is not taken as reproduced */
+        for (j = 0; j < 4 && reg; j++) {
+            float dd;
+            for (k = 0; k < 3; k++)
+                q[k] = (j < 3) ? 0.5f * (p[j][k] + p[(j + 1) % 3][k])
+                               : (p[0][k] + p[1][k] + p[2][k]) / 3.0f;
+            dd = sl_wa_fill_distance_aligned(q, nrm, limit);
+            if (dd > dm) dm = dd;
+            if (!(dd < limit)) reg = 0;
+        }
+        /* THE HOLE: a registered triangle fills only when some point of it
+         * lies SL_WA_FILL_HOLE from every replacement surface - the strip
+         * above the door, not the sliver of a wall top the remaster lowered
+         * by a unit or two (sl_gfx_worldasset.h) */
+        if (reg) {
+            const float hole = nf_hole_units() / g_nf_sc;
+            unsigned ia, ib;
+            float far_ = 0.0f;
+            for (ia = 0; ia <= SL_WA_FILL_GRID && far_ < hole; ia++)
+                for (ib = 0; ia + ib <= SL_WA_FILL_GRID && far_ < hole; ib++) {
+                    float wa = (float) ia / (float) SL_WA_FILL_GRID;
+                    float wb = (float) ib / (float) SL_WA_FILL_GRID;
+                    float wc = 1.0f - wa - wb, dd;
+                    for (k = 0; k < 3; k++) q[k] = wa * p[0][k] + wb * p[1][k] + wc * p[2][k];
+                    dd = sl_wa_fill_distance(q, limit);
+                    if (dd > far_) { far_ = dd; g_nf_hq[0] = q[0]; g_nf_hq[1] = q[1]; g_nf_hq[2] = q[2]; }
+                }
+            holed = (far_ >= hole);
+            hd = far_;
+        }
+        if (nf_trace_on() && g_nf_traced++ < 64u)
+            fprintf(stderr, "#78 nativefill: room %d tri raw (%d %d %d) (%d %d %d) (%d %d %d) item "
+                            "(%.1f %.1f %.1f) (%.1f %.1f %.1f) (%.1f %.1f %.1f) distance %.2f %.2f %.2f "
+                            "of %.2f -> %s\n", key.room, key.p[0], key.p[1], key.p[2], key.p[3], key.p[4],
+                    key.p[5], key.p[6], key.p[7], key.p[8], p[0][0], p[0][1], p[0][2], p[1][0], p[1][1],
+                    p[1][2], p[2][0], p[2][1], p[2][2], d[0], d[1], d[2], limit,
+                    !reg ? (dm >= limit ? "suppressed (its middle)" : "suppressed")
+                         : holed ? "REGISTERED, HOLED" : "registered, no hole");
+        if (nf_trace_on() && reg && g_nf_traced <= 64u)
+            fprintf(stderr, "#78 nativefill:   farthest point %.2f of %.2f needed\n", hd,
+                    nf_hole_units() / g_nf_sc);
+        reg = reg && holed;
+    }
+    if (reg) g_nf_registered++;
+    if (i < 64u && g_nf_cache_n < (3u << (NF_CACHE_BITS - 2))) {
+        memcpy(e, &key, sizeof key);
+        e->reg = (signed char) reg;
+        memcpy(e->hq, g_nf_hq, sizeof g_nf_hq);
+        g_nf_cache_n++;
+    } else {
+        g_nf_cache_full++;
+    }
+    return reg;
+}
+
+/* Push the three corners SL_WA_FILL_PUSH world units along the triangle's
+ * normal, away from the eye, the originals saved for the restore. A
+ * near-clipped fan's sub-triangle draws from its clip positions (g_clipemit),
+ * so those move by the same vector put through the projection's linear
+ * part; the fan's eye positions are pushed too, for the paths that read
+ * them. `save` holds the three eye positions and then the three clip
+ * positions. */
+static void nf_push(const int *idx, float save[6][4])
+{
+    float u[3], v[3], n[3], len, d;
+    int i, k;
+    for (i = 0; i < 3; i++) for (k = 0; k < 3; k++) save[i][k] = g_veye[idx[i]][k];
+    if (g_clipemit)
+        for (i = 0; i < 3; i++) for (k = 0; k < 4; k++) save[3 + i][k] = g_clipemit_pos[i][k];
+    for (k = 0; k < 3; k++) { u[k] = save[1][k] - save[0][k]; v[k] = save[2][k] - save[0][k]; }
+    n[0] = u[1] * v[2] - u[2] * v[1]; n[1] = u[2] * v[0] - u[0] * v[2]; n[2] = u[0] * v[1] - u[1] * v[0];
+    len = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+    if (!(len > 1e-12f)) return;
+    d = 0.0f;
+    for (k = 0; k < 3; k++)
+        d += n[k] * (save[0][k] - (g_proj_world_which == 2 ? g_nf_eye[k] : 0.0f));
+    d = (d < 0.0f ? -1.0f : 1.0f) * SL_WA_FILL_PUSH * g_nf_vis / len;
+    for (k = 0; k < 3; k++) n[k] *= d;
+    for (i = 0; i < 3; i++) for (k = 0; k < 3; k++) g_veye[idx[i]][k] = save[i][k] + n[k];
+    if (g_clipemit)
+        for (i = 0; i < 3; i++)
+            for (k = 0; k < 4; k++)
+                g_clipemit_pos[i][k] = save[3 + i][k]
+                                     + n[0] * g_proj[k] + n[1] * g_proj[4 + k] + n[2] * g_proj[8 + k];
+}
+
+static void nf_restore(const int *idx, float save[6][4])
+{
+    int i, k;
+    for (i = 0; i < 3; i++) for (k = 0; k < 3; k++) g_veye[idx[i]][k] = save[i][k];
+    if (g_clipemit)
+        for (i = 0; i < 3; i++) for (k = 0; k < 4; k++) g_clipemit_pos[i][k] = save[3 + i][k];
+}
+
+/* A REGISTERED, HOLED TRIANGLE THE VIEW CANNOT SHOW skips the open-hole trace
+ * (nf_open, the fill's per-frame cost: about 930 traces a frame on Statue
+ * under XBLA, each a sphere trace through the fill grid). Drawn pushed
+ * (nf_push) it would lie wholly outside one side plane of the clip volume,
+ * or wholly behind the eye, so it rasterises nothing whether it is drawn or
+ * suppressed, and it is suppressed. Tested on the clip positions GL derives
+ * from the pushed eye positions (modelview identity, projection g_proj),
+ * with a margin past rounding; the near and far planes are not used, since
+ * a depth-clamped draw is not cut by them. Not for a near-clipped fan, whose
+ * sub-triangles draw from clip positions of their own. Measured at Statue's
+ * room-2 pose: 29% of the traces skipped. SL_BG_FILL_UNSEEN=0 traces every
+ * one. */
+#define SL_NF_UNSEEN_MARGIN 0.001f
+static unsigned g_nf_unseen_tris;
+static int nf_unseen_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_FILL_UNSEEN"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+static int nf_unseen(const int *idx)
+{
+    float save[6][4], c[3][4];
+    unsigned out[5] = { 0u, 0u, 0u, 0u, 0u };
+    int i, j;
+    if (g_clipemit || !nf_unseen_on()) return 0;
+    nf_push(idx, save);
+    for (i = 0; i < 3; i++) {
+        const float *e = g_veye[idx[i]];
+        float m;
+        for (j = 0; j < 4; j++)
+            c[i][j] = e[0] * g_proj[j] + e[1] * g_proj[4 + j] + e[2] * g_proj[8 + j] + g_proj[12 + j];
+        m = SL_NF_UNSEEN_MARGIN * (fabsf(c[i][3]) + 1.0f);
+        if (c[i][0] + c[i][3] < -m) out[0]++;      /* left of the left plane   */
+        if (c[i][3] - c[i][0] < -m) out[1]++;      /* right of the right plane */
+        if (c[i][1] + c[i][3] < -m) out[2]++;      /* below the bottom plane   */
+        if (c[i][3] - c[i][1] < -m) out[3]++;      /* above the top plane      */
+        if (c[i][3] < -m) out[4]++;                /* behind the eye           */
+    }
+    nf_restore(idx, save);
+    for (j = 0; j < 5; j++)
+        if (out[j] == 3u) { g_nf_unseen_tris++; return 1; }
+    return 0;
+}
+
+static void nf_report(FILE *f)
+{
+    unsigned large = 0, tris = sl_wa_fill_counts(&large);
+    if (f == NULL || (g_nf_tested == 0 && g_nf_kept == 0)) return;
+    fprintf(f, "#78 nativefill: %u room triangles drawn behind the replacement, %u decided "
+               "(%u registered, %u uncached), grid %u triangles + %u wide; %u holed ones not "
+               "drawn: openings the replacement backs (#81, SL_BG_FILL_VOID=0: off)\n",
+            g_nf_kept, g_nf_tested, g_nf_registered, g_nf_cache_full, tris, large, g_nf_void_tris);
+    if (g_nf_unseen_tris)
+        fprintf(f, "#78 nativefill: %u holed triangles outside the view suppressed without the "
+                   "open-hole trace (SL_BG_FILL_UNSEEN=0: traced)\n", g_nf_unseen_tris);
+    if (g_nf_open_hits)
+        fprintf(f, "#81 nativefill: %u open-hole answers given back for the same eye and hole "
+                   "point instead of traced again (SL_BG_FILL_MEMO=0: traced)\n", g_nf_open_hits);
+    if (g_nf_fade_tris)
+        fprintf(f, "#83 nativefill: %u fade triangles drawn where the replacement has no surface "
+                   "(SL_BG_FADE=0: off)\n", g_nf_fade_tris);
+    if (g_nf_kept_tris)
+        fprintf(f, "#96 nativefill: %u translucent triangles of named rooms drawn where the "
+                   "replacement has no surface (SL_BG_KEEP_ROOMS=0: off)\n", g_nf_kept_tris);
+}
+
+/* ARMED AT ALL, in one int. Every per-triangle test below is behind this, so
+ * a build with none of the three variables set pays one comparison against a
+ * static in the triangle path and nothing else - the same shape the other
+ * diagnostics in this file take. */
+static int g_wr_armed = -1;
+
+static void wr_arm(void)
+{
+    const char *a = getenv("SL_WR_CENSUS");
+    const char *b = getenv("SL_WR_HIDE");
+    const char *c = getenv("SL_WR_ONLY");
+    g_wr_armed = ((a != NULL && *a != '0') || (b != NULL && *b)
+                  || (c != NULL && *c)) ? 1 : 0;
+}
+
+static int wr_on(void)
+{
+    if (g_wr_armed < 0) wr_arm();
+    return g_wr_armed;
+}
+
+static int wr_census_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_WR_CENSUS"); on = (v != NULL && *v != '0'); }
+    return on;
+}
+
+/* SL_WR_HIDE / SL_WR_ONLY - the ISOLATION instrument. A comma-separated list
+ * of room numbers, each optionally suffixed :1 or :2 to name one of the two
+ * lists. HIDE suppresses the listed population; ONLY suppresses everything
+ * else that is a room. Hiding a room and differencing the frame is what
+ * measures which population paints what; the census's area column ranks. */
+static const char *wr_list(const char *name)
+{
+    const char *v = getenv(name);
+    return (v != NULL && *v) ? v : NULL;
+}
+
+static int wr_listed(const char *s, int room, int kind)
+{
+    while (*s) {
+        int n = 0, k = 0, any = 0;
+        while (*s == ',' || *s == ' ') s++;
+        while (*s >= '0' && *s <= '9') { n = n * 10 + (*s++ - '0'); any = 1; }
+        if (*s == ':') { s++; while (*s >= '0' && *s <= '9') k = k * 10 + (*s++ - '0'); }
+        while (*s && *s != ',') s++;
+        if (any && n == room && (k == 0 || k == kind)) return 1;
+    }
+    return 0;
+}
+
+/* THE ONE QUESTION emit_tri_slots asks: is this triangle's native draw
+ * suppressed? DIAGNOSTIC ONLY - the answer comes from the two environment
+ * variables above and from nothing else. No presentation, setting or key
+ * reaches it, and none may until there is a validated replacement to draw in
+ * the suppressed draw's place: a suppression with nothing behind it is a hole
+ * in the world, which is the one outcome the replacement contract forbids. */
+static int wr_suppress_dev(int room, int kind)
+{
+    static const char *hide = NULL, *only = NULL;
+    static int looked;
+    if (!looked) { hide = wr_list("SL_WR_HIDE"); only = wr_list("SL_WR_ONLY"); looked = 1; }
+    if (room < 0) return 0;                    /* not a room: never suppressed */
+    if (hide != NULL && wr_listed(hide, room, kind)) return 1;
+    if (only != NULL && !wr_listed(only, room, kind)) return 1;
+    return 0;
+}
+
+void sl_wr_report(FILE *f);
+void sl_wr_report(FILE *f)
+{
+    int r, k;
+    if (f == NULL || !wr_census_on()) return;
+    fprintf(f, "#68 worldreplace: %u frames, %u native triangles suppressed\n",
+            g_wr_frames, g_wr_suppressed);
+    for (r = 0; r < WR_MAX_ROOMS; r++) {
+        if (!g_wr_tris[r][1] && !g_wr_tris[r][2]) continue;
+        for (k = 1; k <= 2; k++) {
+            if (!g_wr_tris[r][k]) continue;
+            fprintf(f, "#68 wrroom: room %3d %s tris/frame %8.1f area/frame %8.4f\n",
+                    r, k == 1 ? "primary  " : "secondary",
+                    g_wr_frames ? (double) g_wr_tris[r][k] / g_wr_frames : 0.0,
+                    g_wr_frames ? g_wr_area[r][k] / g_wr_frames : 0.0);
+        }
+    }
+}
+
+/* THE OPEN-HOLE ANSWERS, REMEMBERED. sl_wa_fill_open is a pure function of
+ * the eye, the hole point and the scale over the fill grid in force, so an
+ * answer is kept under those seven floats, bit for bit, and given back when
+ * they recur; the table is emptied whenever the grid is rebuilt
+ * (nf_cache_reset) and when it fills. They recur whenever the same frame is
+ * walked again - a presentation re-walk (sl_gfx_dl_rewalk) reads the eye
+ * from the game's own view matrix (sl_wa_view_matrix, nf_frame), not from
+ * the interpolated projection, so its eye is its frame's - and within one
+ * walk. Measured on Statue under XBLA (room 2's pose, FRAME RATE UNLIMITED):
+ * about 760 traces a walk, 15 of a 22 ms walk; 46% of a regular walk's asks
+ * recur within it, every one of a re-walk's, and none from one frame to the
+ * next even with the player standing still (the item-space eye moves in its
+ * last bits). An answer given back is the answer the trace computes, so no
+ * frame changes: regular and extra frames hash identically with and without
+ * it (Statue, Frigate; ORIGINAL and COMMUNITY HD untouched).
+ * SL_BG_FILL_MEMO=0 traces every time (the A/B). */
+#define NF_OPEN_MEMO 8192u                 /* entries, a power of two */
+struct nf_open_ent { float k[7]; int used; int open; };
+static struct nf_open_ent g_nf_open_memo[NF_OPEN_MEMO];
+static unsigned g_nf_open_memo_n;
+static int nf_open_memo_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_FILL_MEMO"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+static void nf_open_memo_reset(void)
+{
+    memset(g_nf_open_memo, 0, sizeof g_nf_open_memo);
+    g_nf_open_memo_n = 0;
+}
+static int nf_open_traced(const float *eye)
+{
+    struct nf_open_ent key, *e = NULL;
+    unsigned h = 2166136261u, i, j;
+    const unsigned char *b;
+    int open;
+    if (!nf_open_memo_on()) return sl_wa_fill_open(eye, g_nf_hq, g_nf_sc);
+    memset(&key, 0, sizeof key);
+    for (i = 0; i < 3; i++) { key.k[i] = eye[i]; key.k[3 + i] = g_nf_hq[i]; }
+    key.k[6] = g_nf_sc;
+    b = (const unsigned char *) key.k;
+    for (j = 0; j < sizeof key.k; j++) { h ^= b[j]; h *= 16777619u; }
+    for (i = 0; i < 16u; i++) {
+        e = &g_nf_open_memo[(h + i) & (NF_OPEN_MEMO - 1u)];
+        if (!e->used) break;
+        if (memcmp(e->k, key.k, sizeof key.k) == 0) { g_nf_open_hits++; return e->open; }
+    }
+    open = sl_wa_fill_open(eye, g_nf_hq, g_nf_sc);
+    if (g_nf_open_memo_n >= (NF_OPEN_MEMO / 4u) * 3u) {
+        nf_open_memo_reset();               /* three quarters full: start over */
+        e = NULL;
+    }
+    if (e == NULL || e->used) {
+        e = &g_nf_open_memo[h & (NF_OPEN_MEMO - 1u)];   /* a full probe run: replace its first */
+        if (!e->used) g_nf_open_memo_n++;
+    } else {
+        g_nf_open_memo_n++;
+    }
+    memcpy(e->k, key.k, sizeof key.k);
+    e->used = 1;
+    e->open = open;
+    return open;
+}
+
+/* #81 the eye in item space, by the projection in force (nf_item_point's
+ * inverse of the eye), and whether the replacement leaves the last decided
+ * hole open behind it (sl_wa_fill_open). */
+static int nf_open(void)
+{
+    float eye[3];
+    int k;
+    if (g_proj_world_which == 1) {
+        if (!g_nf_have_view) return 1;
+        for (k = 0; k < 3; k++) eye[k] = g_nf_vinv[12 + k] / g_nf_sc;
+    } else if (g_proj_world_which == 2) {
+        if (!g_nf_have_ro) return 1;
+        for (k = 0; k < 3; k++) eye[k] = (g_nf_eye[k] / g_nf_vis + g_nf_org[k]) / g_nf_sc;
+    } else {
+        return 1;
+    }
+    if (nf_open_traced(eye)) return 1;
+    g_nf_void_tris++;
+    return 0;
+}
+
 static void emit_tri_slots(int a, int b, int c)
 {
-    int i, idx[3], fogm, rd;
+    int i, idx[3], fogm, rd, stg;
     float ndc[3][5];
+    float nf_save[6][4];
+    int nf_pushed = 0;
     idx[0] = a; idx[1] = b; idx[2] = c;
     for (i = 0; i < 3; i++)
         if (idx[i] < 0 || idx[i] >= 32) return;
     if (cull_option() == 3 && !cull_would_drop(a, b, c)) return;
+
+    /* #68 THE REPLACEMENT'S SUPPRESSION, and the only one that is reachable
+     * from a presentation. g_bg_suppress is set by nothing but a background
+     * pass that has already loaded, validated, uploaded and DRAWN a complete
+     * replacement this frame, and it is cleared at every frame's start - so a
+     * missing, invalid or unuploadable asset, a stage with no item, and any
+     * presentation but XBLA all leave the original drawing exactly as it does
+     * today. The population is room background geometry and nothing else:
+     * props, guards, doors, the view model, effects and 2D never carry a room
+     * number here. Only this function's GL output is skipped; the display list
+     * has already executed in full. */
+    /* SL_BG_WORLDBOX - the diagnostic that MEASURES where the game's own room
+     * background geometry is, in the space the world projection consumes. It
+     * is the only way to check a replacement's world transform without
+     * reasoning about coordinates: both boxes are then in one space and the
+     * comparison is arithmetic. Counted BEFORE the suppression below, so it
+     * always describes what the ORIGINAL draws. One cached int test otherwise. */
+    if (g_bgbox_on < 0) {
+        const char *v = getenv("SL_BG_WORLDBOX");
+        g_bgbox_on = (v != NULL && *v != '0');
+    }
+    if (g_bgbox_on && g_room_num >= 0 && (g_room_kind == 1 || g_room_kind == 2)) {
+        int q, r;
+        for (q = 0; q < 3; q++)
+            for (r = 0; r < 3; r++) {
+                float w2 = g_veye[idx[q]][r];
+                if (w2 < g_bgbox_lo[r]) g_bgbox_lo[r] = w2;
+                if (w2 > g_bgbox_hi[r]) g_bgbox_hi[r] = w2;
+            }
+        g_bgbox_n++;
+    }
+
+    if (g_bg_nosup < 0) {
+        const char *v = getenv("SL_BG_NOSUPPRESS");      /* diagnostic: draw BOTH */
+        g_bg_nosup = (v != NULL && *v != '0');
+    }
+    if (g_bg_suppress && !g_bg_nosup
+        && g_room_num >= 0 && (g_room_kind == 1 || g_room_kind == 2)) {
+        /* #78 THE NATIVE FILL: a registered opaque triangle draws, pushed
+         * behind the replacement; #83 a fade with no replacement surface at
+         * its centroid draws where it stands (nf_fade_kept); every other room
+         * triangle is suppressed. */
+        if (g_clipemit ? g_nf_fan_fade : nf_fade_kept(a, b, c))
+            goto bg_kept;
+        /* #96 the game's translucent detail the replacement left out, in a
+         * named room (nf_room_kept): drawn where it stands */
+        if (g_clipemit ? g_nf_fan_kept : nf_room_kept(a, b, c))
+            goto bg_kept;
+        if (!(nf_on() && g_nf_ready && nf_opaque()
+              && (g_clipemit ? g_nf_fan : nf_registered(a, b, c))
+              && (!nf_void_on() || (!nf_unseen(idx) && nf_open())))) {
+            static unsigned said;
+            if (nf_trace_on() && said < 64u && nf_on() && g_nf_ready && !nf_opaque()) {
+                said++;
+                fprintf(stderr, "#78 nativefill: room %d othermode %08x cycle %u - not an opaque "
+                                "depth-writing draw, suppressed\n", g_room_num, g_om_l, g_cycle_type);
+            }
+            g_wr_suppressed++;
+            return;
+        }
+        nf_push(idx, nf_save);
+        nf_pushed = 1;
+        g_nf_kept++;
+    }
+bg_kept:
+
+    /* One int test on the common path; everything below is diagnostic and
+     * nothing here is reachable in a normal run. The census first - it must
+     * describe what the ORIGINAL draws, so it counts before the developer
+     * suppression below can remove anything. */
+    if (!wr_on()) goto wr_done;
+    if (wr_census_on() && g_room_num >= 0 && g_room_num < WR_MAX_ROOMS
+        && (g_room_kind == 1 || g_room_kind == 2)) {
+        float p[3][5];
+        double area = 0.0;
+        int front = 0, j;
+        for (i = 0; i < 3; i++) {
+            ndc_account(g_veye[idx[i]][0], g_veye[idx[i]][1], g_veye[idx[i]][2], p[i]);
+            if (p[i][3] != 0.0f) front++;
+        }
+        /* ONLY a triangle wholly in front of the eye, and clamped to the
+         * screen before its area is taken. Without both, a vertex behind the
+         * eye or far outside the frustum contributes an area that is not
+         * pixels - which is exactly how a first reading of this census ranked
+         * three rooms that paint nothing at the top of the table. */
+        if (front == 3) {
+            for (i = 0; i < 3; i++)
+                for (j = 0; j < 2; j++) {
+                    if (p[i][j] < -1.0f) p[i][j] = -1.0f;
+                    if (p[i][j] >  1.0f) p[i][j] =  1.0f;
+                }
+            area = (double) ((p[1][0] - p[0][0]) * (p[2][1] - p[0][1])
+                           - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0])) * 0.5;
+            if (area < 0.0) area = -area;
+        }
+        g_wr_tris[g_room_num][g_room_kind]++;
+        g_wr_area[g_room_num][g_room_kind] += area;
+    }
+    if (wr_suppress_dev(g_room_num, g_room_kind)) {
+        g_wr_suppressed++;
+        if (nf_pushed) nf_restore(idx, nf_save);
+        return;
+    }
+wr_done:
     mode2d_end();                      /* geometry draws through the DL's own
                                         * matrices, never the 2D ortho */
     vp_use(1);                         /* ... and inside the game's viewport */
@@ -11920,7 +13679,7 @@ static void emit_tri_slots(int a, int b, int c)
     if (g_tex1_lodlive) {
         /* B-119, correcting B-118's per-triangle constant. The RDP computes
          * LOD_FRACTION per pixel; a per-triangle constant popped between
-         * triangles and miscalibrated across long walls (the owner: "clear
+         * triangles and miscalibrated across long walls (playtest: "clear
          * at one point, a mess at others"). The corrected realization:
          *
          *   K per triangle:  rho * z is constant across a planar surface
@@ -11995,7 +13754,8 @@ static void emit_tri_slots(int a, int b, int c)
     rm_apply();                        /* likewise - B-026 */
     dither_apply(g_vbuf[idx[0]].a);    /* likewise - alpha compare */
     fogm = fog_mode();                 /* likewise - B-045 */
-    fog_apply(fogm);
+    stg = stage_fog_draw(fogm);        /* #68 - STAGE FOG ON OBJECTS */
+    if (!stg) fog_apply(fogm);
     if (fogm == FOG_SHADE) g_fog_tris_shade++;
     else if (fogm == FOG_CONST) g_fog_tris_const++;
     clipemit_proj_set(g_clipemit);
@@ -12053,7 +13813,8 @@ static void emit_tri_slots(int a, int b, int c)
          * as z-fighting. The notes' model has no "off": the RSP computes a
          * fog value per vertex and the blender mixes toward the fog colour,
          * so no fog IS a value of zero. */
-        glFogCoordf(fogm != FOG_NONE
+        glFogCoordf(stg ? (GLfloat) stage_fog_coord(e)
+                    : fogm != FOG_NONE
                     ? (GLfloat) fog_coord(fogm, g_vdepth[idx[i]]) : 0.0f);
 #endif
         if (g_cc_a_prim1 && glassmark_on()) {
@@ -12084,8 +13845,8 @@ static void emit_tri_slots(int a, int b, int c)
              *   R = is this triangle classified as fogged at all?
              *   G = the depth Sightline believes this vertex has
              *   B = the fog factor that depth produces
-             * Greyscale conflated "not classified" with "factor zero", and I
-             * asserted the second without measuring the first. */
+             * Greyscale conflated "not classified" with "factor zero", and the
+             * second was asserted without measuring the first. */
             float d  = g_vdepth[idx[i]];
             float ff = (fogm != FOG_NONE) ? fog_coord(fogm, d) : 0.0f;
             if (d < 0.0f) d = 0.0f;
@@ -12299,7 +14060,7 @@ static void emit_tri_slots(int a, int b, int c)
         glDepthMask(g_rm_zwrite ? GL_TRUE : GL_FALSE);
     }
     cca_note_tri();
-    /* LIVE OWNER BUG MARK. Observational only - see the block above
+    /* LIVE BUG MARK. Observational only - see the block above
      * emit_tri. Nothing here can alter what was just rasterised: the
      * vertices are already submitted and this reads the same ndc rows
      * gp_note reads on the line below. */
@@ -12485,11 +14246,12 @@ static void emit_tri_slots(int a, int b, int c)
 
     ccx_note(0);
     g_tris++;
+    if (nf_pushed) nf_restore(idx, nf_save);
 }
 
 /* ---- B-100 FIX, second form. GL REJECTS at the near plane; the RDP does not.
  *
- * WHAT IS ESTABLISHED, AND WHAT IS NOT. The owner tested the cartridge on
+ * WHAT IS ESTABLISHED, AND WHAT IS NOT. The cartridge was tested on
  * 2026-09-09: walking into a wall on the ROM does NOT open these holes. That
  * fixes the required OUTPUT and nothing more. The RSP/RDP algorithm is NOT
  * reverse-engineered here and this file does not claim it is - the notes are
@@ -12562,7 +14324,7 @@ static void emit_tri_slots(int a, int b, int c)
  * generated cap edge: luminance-gradient 58.58 and 47.34 against a
  * random-chord control mean of 19.95 (p90 32.88, max 53.08), while the real
  * shared mesh edge scores 20.10 and the fan's interior diagonals 12.1-12.5.
- * The owner confirmed on the cartridge, 2026-09-09, that the ROM opens no
+ * The cartridge test, 2026-09-09, confirmed that the ROM opens no
  * such hole. No epsilon can fix it: the cap's distance from the projection
  * origin scales as 1/epsilon, so tuning only MOVES the chord (the shared
  * plane made wmin 0.115 where the old form had 0.027 under a measured
@@ -12615,7 +14377,7 @@ static void emit_tri_slots(int a, int b, int c)
  * that kept the z < -w region, whose screen-linear depth sweeps the whole
  * range and depth-fights mid-scene geometry along a line that jumps with
  * every frame's w - the flickering black bridge wedges of run
- * 20260909-220610. The two owner cartridge facts split exactly along this
+ * 20260909-220610. The two cartridge facts split exactly along this
  * population line: the wall that must FILL when the camera touches it
  * (ad772496) is an EYE-CROSSING triangle - its witness vertices carry
  * w = -1.3 / -7.7 - so only w <= 0 triangles keep their sub-near coverage,
@@ -12711,6 +14473,3913 @@ static int nearh_clip(struct nearv *dst, const struct nearv *src, int n,
     return m;
 }
 
+/* ==================== #68 WORLD ASSETS: the skydome draw ==================
+ *
+ * An OPTIONAL, ADDITIVE, RENDER-ONLY background, drawn from an external
+ * bundle the provider resolved by (asset class, item path). Everything about
+ * it is off by default: with no set selected g_sky_armed never leaves zero and
+ * the whole of this block is one int test on the frame's first triangle.
+ *
+ * WHERE IT GOES, and why there. The insertion point is the FIRST triangle of
+ * the frame drawn under the world projection - derived, not chosen: it is
+ * after every clear the frame performs (so nothing wipes it) and before any
+ * world geometry (so the world draws over it), which is the whole of a
+ * background's ordering requirement. Drawing at the projection load instead
+ * would put it before the z-clear and the screen fill; drawing later would put
+ * it over the level.
+ *
+ * WHAT TRANSFORM, and IN WHICH SPACE. NOT the display list's modelview - that
+ * is the ROOM's matrix (bgroomtrans.c loads one per room) and would move the
+ * sky with whichever room happened to draw first. The world-to-clip matrix is
+ * the projection standing at the seam, and GoldenEye loads TWO of them:
+ *
+ *   fr.c's         a PLAIN perspective, consuming ABSOLUTE world coordinates
+ *                  once the seam supplies world-to-view itself.
+ *   bondview2.c's  the same perspective with the VIEW ALREADY FOLDED IN, and
+ *                  consuming world MINUS the frame's RENDER ORIGIN.
+ *
+ * THE SPACES ARE NOT THE SAME and that is the whole of this seam's difficulty.
+ * The game does not submit world geometry in absolute coordinates: every room
+ * transform is the room's scaled origin minus the player's current_model_pos
+ * (bgroomtrans.c:216-218) and every view matrix has the same point subtracted
+ * from its translation row (bondview2.c:11415-11417). So the folded projection
+ * expects a floating origin that sits near the player and MOVES when the
+ * player's room changes - by 2045 units between the two positions marked in
+ * playtest on 2026-09-22, while the eye itself moved 447.
+ *
+ * WHICH ONE IS IN FORCE IS READ, NOT GUESSED. g_proj_world_which is set from
+ * the ADDRESS the game named, in the same statement as g_proj_is_world. An
+ * earlier revision inferred it from the shape of the matrix - "a plain
+ * perspective has only the two axis scales, the depth pair and the w term" -
+ * and that inference was correct on any single frame and still wrong overall,
+ * because the game alternates between the two projections and the seam
+ * therefore alternated between two transforms that disagreed by the render
+ * origin, roughly 25000 units at the Dam. Measured: 22 alternations over one
+ * replay of the playtest route. That is what "the sky keeps loading over
+ * again" was.
+ *
+ * Either way the asset's own world coordinates - which are the ORIGINAL game's
+ * coordinates, measured, with no scale and no axis change - are put into the
+ * space the matrix in force consumes, and go through the SAME transform the
+ * game's own world geometry goes through. The background therefore follows
+ * camera rotation and camera translation alike, exactly as a thing standing in
+ * the world does, and nothing about the camera had to be reconstructed.
+ *
+ * THE FAR PLANE, without substituting a projection. The game's frustum ends
+ * at its own far plane (5 .. 15000 at the Dam, measured) and this asset is
+ * tens of thousands of units across, so drawn under that projection unaltered
+ * it would be clipped almost entirely away. The clip coordinate is therefore
+ * computed here and its Z replaced by zero, x, y and w untouched, and the
+ * result handed to GL as a clip coordinate under identity matrices. Exact,
+ * not an approximation: screen position is x/w and y/w and neither moves,
+ * perspective-correct interpolation is a function of w and w does not move,
+ * the near plane still clips because a vertex behind the eye has w <= 0. Only
+ * depth changes, and depth is tested and written by nothing in this pass.
+ *
+ * DEPTH, CULL, FOG. Depth TEST off and depth WRITE off: the asset is drawn
+ * first and everything the game draws afterwards covers it, so it can never
+ * occlude near geometry and never contributes a depth value anything else
+ * tests against. Culling off: the dome is viewed from inside and closed, so
+ * culling buys nothing and a wrong winding guess would cost the sky - this is
+ * a deliberate choice rather than an assumption about the source's winding.
+ * Fog off: the game's fog is a distance fog against a 15000-unit far plane and
+ * would flatten a background that is meant to be beyond it.
+ *
+ * MATERIALS. What the asset needs and nothing more: one image, vertex colour,
+ * and a blend mode of opaque or straight alpha. No multi-map material
+ * architecture is introduced, because this asset does not demonstrate a need
+ * for one.
+ */
+/* The two questions this seam asks the game, answered in src/native (see
+ * sl_world_assets.c). Declared, never included: src/gfx pulls in no game
+ * header, and src/game is not touched by this feature at all. */
+const char *sl_wa_stage_item_path(void);
+const char *sl_wa_stage_sky_item_path(void);  /* the dome's item: Surface 2's own */
+int         sl_wa_view_matrix(float *m);
+int         sl_wa_render_origin(float *o);
+int         sl_wa_level_box(float *lo, float *hi, float *scale);
+int         sl_wa_level_scale(float *s);
+int         sl_wa_visibility_scale(float *s);
+int         sl_wa_source_scale(float *s);      /* item -> room coordinates */
+int         sl_wa_stage_flat_backdrop(void);   /* no sky: the env-colour fill */
+int         sl_wa_frame_clock(unsigned long *frames);   /* #69, read-only */
+
+static int      g_sky_armed;              /* an asset is resolved for this stage */
+static int      g_sky_done;               /* already drawn this frame */
+static int      g_sky_drew;               /* #74: and it actually drew */
+/* D-023 the cloud field: the game's cloud phase it last drew at, and the
+ * frames it could not be drawn for want of a cloud layer to follow. */
+static float    g_sky_cloud_phase;
+static unsigned g_sky_cloud_skipped;
+extern int sl_wa_sky_cloud(float *phase, float *height, float *eye,
+                           unsigned *img_w, unsigned *img_h);   /* sl_world_assets.c */
+/* D-031 a borrowed sky: the environment row whose sky this stage draws in
+ * place of its own fill (sl_wa_sky_borrow), or -1 for the game's own. Its
+ * colours and cloud layer come from the game's table, read-only. */
+static int      g_sky_row = -1;
+/* D-034 the stage's item path, for the dome's shade on a fogless stage
+ * (sl_wa_stage_game_atmosphere); set where the stage's sky is resolved. */
+static const char *g_sky_item;
+extern int sl_wa_game_atmosphere_row(unsigned env_id, float fog[3], float cloud[3]);
+extern int sl_wa_sky_cloud_row(unsigned env_id, float *phase, float *height, float *eye,
+                               unsigned *img_w, unsigned *img_h);   /* sl_world_assets.c */
+/* D-046 the dome this frame is a LENT one (D-044), and the game's cloud layer
+ * where it lies on the screen (sl_wa_sky_screen_frac in the header). */
+static int      g_sky_lent;
+static unsigned g_sky_edge_frames;        /* frames shaded by the game's screen rows */
+extern int sl_wa_sky_screen(float rows[10], int fill[4]);           /* sl_world_assets.c */
+/* D-048 the game's water: the controller's three phases (sl_world_assets.c),
+ * the meshes drawn through them, and the switch. SL_BG_WATER=0 draws an
+ * SL_WA_MAT_GAME_WATER material with its stored coordinates, as before. */
+extern int sl_wa_water_phase(float *ps, float *pt, float *pw);
+static unsigned g_bg_water_draws;
+static int bg_water_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_WATER");
+                  on = !(v != NULL && *v == '0' && v[1] == '\0'); }
+    return on;
+}
+/* The second unit's client coordinates, resolved here as pano_gl_ok resolves
+ * them: nothing else on a stage without a panorama shell looks the entry point
+ * up, so without this the water would quietly draw still. */
+static int water_gl_ok(void)
+{
+    static int st;
+    if (st != 0) return st > 0;
+    st = -1;
+    if (!post11_ok()) return 0;
+    if (p_ClientActiveTexture == NULL)
+        p_ClientActiveTexture = (SL_PFN_CLIENTACTIVETEXTURE) sl_gl_proc("glClientActiveTexture");
+    if (p_ClientActiveTexture == NULL) {
+        fprintf(stderr, "D-048 worldasset: no multitexture client state - the game's water "
+                        "draws still\n");
+        return 0;
+    }
+    st = 1;
+    return 1;
+}
+static unsigned g_sky_frames, g_sky_tris, g_sky_verts;
+static int      g_sky_refused;            /* projection not the shape assumed */
+static int      g_sky_notsaid;            /* the not-composed line, printed once */
+static const struct sl_wa_asset *g_sky_asset;
+static GLint    g_sky_sciss_box[4];       /* the aperture found at the seam,  */
+static int      g_sky_sciss_on;           /* restored exactly on the way out  */
+
+/* The REPLACEMENT's own state. Declared beside the skydome's because the one
+ * frame-begin below arms both, and defined here rather than at the background
+ * section further down for the same reason. */
+static int      g_bg_armed;               /* an asset is resolved for this stage */
+static int      g_bg_done;                /* already drawn this frame            */
+static int      g_bgx_pending;            /* #90 its translucent draws wait (sl_wa_blend_late) */
+static unsigned g_bgx_flush[5];           /* #90 ... drawn at: secondary, weapon, 2D, other, walk end */
+static unsigned g_bgx_meshes;             /* #90 ... meshes drawn late, over the run */
+static int      g_bg_refused;             /* frames whose projection was refused */
+static unsigned g_bg_frames, g_bg_tris, g_bg_verts, g_bg_draws, g_bg_decal_draws;
+static unsigned g_bg_xlu_draws;           /* blended with no alpha reject       */
+static unsigned g_bg_far_frames;          /* frames drawn in two depth ranges   */
+static unsigned g_bg_far_verts;           /* vertices past the far plane, last such frame */
+static float    g_bg_far_plane, g_bg_far_reach; /* the game's far w, and the item's, last such frame */
+/* #69 MATERIAL ANIMATION: vertices displaced per frame, and the clock they
+ * were displaced at on the last frame (VI frames), for the census. */
+static unsigned g_bg_anim_verts;
+static unsigned long g_bg_anim_clock;
+static unsigned g_bg_matx_meshes;         /* #69 meshes through the material program, last frame */
+static int      g_bg_anim_said;
+
+/* #69 the control: SL_BG_ANIM=0 draws the bundle at rest - every vertex at
+ * its prepared position - under the same bundle, so an A/B of the motion is
+ * one binary and one file. Default on, one cached getenv, the SL_SKY_ZENITH
+ * idiom. The bundle itself decides WHETHER anything animates (a version-1
+ * file, or one with no records, moves nothing either way). */
+static int bg_anim_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_ANIM");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+/* #68: the fog coordinates this pass last handed GL, summarised. Reported
+ * rather than asserted - "the background is fogged" is a claim about a
+ * distribution, and a single number for it would hide the one shape that
+ * matters, which is that the near vertices are near zero and the far ones
+ * saturate. */
+static double   g_bg_fog_sum;
+static float    g_bg_fog_min, g_bg_fog_max;
+static float    g_bg_ndc_min, g_bg_ndc_max;   /* the depth those came from */
+static float    g_bg_fog_start, g_bg_fog_end; /* the band, from sl_wa_fog_band */
+static int      g_bg_fog_level;               /* does that band APPLY to this
+                                               * pass - sl_wa_fog_level_applies */
+static unsigned g_bg_fog_n, g_bg_fog_full;
+static int      g_bg_fog_mode, g_bg_fog_which;
+static unsigned g_bg_min_filter, g_bg_mag_filter, g_bg_levels;
+static const struct sl_wa_asset *g_bg_asset;
+
+/* DRAW ISOLATION, diagnostic only, both off unless named. The question a
+ * misplaced or bleeding surface raises is "which mesh is that", and nothing
+ * else in this tree can answer it: the census counts ROOMS, and the asset's
+ * meshes are not rooms. Two environment variables, a comma-separated list of
+ * mesh indices or N-M ranges each:
+ *
+ *   SL_BG_ONLY=<list>   draw ONLY these meshes of the replacement
+ *   SL_BG_HIDE=<list>   draw every mesh EXCEPT these
+ *
+ * They change WHICH meshes this pass emits and nothing else. In particular the
+ * validity gate below is untouched, so the original stays suppressed and the
+ * comparison is between two replacement renderings rather than between a
+ * replacement and the original coming back. One cached getenv pair, no cost
+ * unset. */
+static int bg_mesh_listed(const char *s, unsigned mi)
+{
+    while (*s != '\0') {
+        unsigned a = 0, b;
+        int got = 0;
+        while (*s == ',' || *s == ' ') s++;
+        while (*s >= '0' && *s <= '9') { a = a * 10u + (unsigned) (*s++ - '0'); got = 1; }
+        if (!got) { if (*s != '\0') s++; continue; }
+        b = a;
+        if (*s == '-') {
+            s++;
+            b = 0;
+            while (*s >= '0' && *s <= '9') b = b * 10u + (unsigned) (*s++ - '0');
+        }
+        if (mi >= a && mi <= b) return 1;
+    }
+    return 0;
+}
+
+/* THE DECAL PASS KILL SWITCH, the same idiom as SL_Z_LEQUAL and
+ * SL_TREE_ZWRITE and for the same reason: a depth-state change is only
+ * believable if the two semantics can be captured back to back on ONE binary.
+ * SL_BG_DECAL=0 draws the source's decal pass with no priority, which is what
+ * this renderer did before the pass was carried at all. Default on, one cached
+ * getenv, nothing unset costs anything. */
+static int bg_decal_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_DECAL");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+/* THE ALPHA-REJECT KILL SWITCH, same idiom and same reason: a state change is
+ * only believable if both semantics can be captured back to back on ONE
+ * binary. Default on - a TRANSLUCENT material is blended with no alpha
+ * rejection, which is what the source's own classes say. SL_BG_XLU_BLEND=0
+ * restores the previous state, in which the 0.33 reject was applied to the
+ * translucent class as well as to the cutouts. See the draw loop for the
+ * derivation. */
+static int bg_xlu_blend_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_XLU_BLEND");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+/* ==========================================================================
+ * #68 THE FOG CONTRACT FOR THE TWO EXTERNAL PASSES
+ *
+ * THE DEFECT, and it is one line in each pass. Both external passes called
+ * `glDisable(GL_FOG)` unconditionally, so the replacement background rendered
+ * with no fog at all while the room background it stands in for renders
+ * through `fog_apply` with the level's own. At the Dam that is the whole
+ * visible difference at distance: the original's far cliffs are washed toward
+ * the environment colour and the replacement's are as sharp as the rock at
+ * the player's feet.
+ *
+ * THE REASON ON RECORD was written for the SKYDOME - "fog off, because the
+ * game's fog is a distance fog against its own far plane and would flatten a
+ * background meant to be beyond it" - and it is correct FOR THE DOME, which is
+ * eye-anchored, depth-less and deliberately outside the frustum. It was
+ * carried across to a world-anchored replacement that sits INSIDE the world
+ * and is depth-tested against it, where the premise does not hold. The two
+ * passes want different fog and were given the same state.
+ *
+ * AND THE DISABLE LEAKED, which is the half nobody had measured. `fog_apply`
+ * mirrors GL's fog enable in `g_fog_gl_on` and issues `glEnable(GL_FOG)` only
+ * when that mirror is clear; the frame reset deliberately does NOT clear it
+ * (see fog_neutral for the driver quirk that rule exists for). A raw
+ * `glDisable(GL_FOG)` therefore turned the stage off while leaving the mirror
+ * saying it was on, and nothing in the tree ever turned it back on - a
+ * tree-wide search for `glEnable(GL_FOG)` over `src/` finds it only inside
+ * `fog_apply`, behind exactly that mirror. So from the first frame an external
+ * pass drew, the GAME's own remaining fogged geometry - props, characters,
+ * every model the A_FOG distance shade applies to - lost its fog too, for the
+ * rest of the run.
+ *
+ * WHAT REPLACES IT. Nothing here configures fog. `fog_mode` reads the display
+ * list state in force at the seam - the blender's first cycle, the cycle type
+ * and the G_FOG geometry bit - which is the state the game established with
+ * `fogSetRenderFogColor` (bgfog.c:620) immediately before the room background
+ * list this pass interrupts. The colour is `g_fog`, the band is `g_fogp_fm` /
+ * `g_fogp_fo`, and the per-vertex value is `fog_coord`, all of them the same
+ * ones the triangle path uses. A level whose environment calls for no fog
+ * reaches `FOG_NONE` here for the same reason its own geometry does, because
+ * the data decides and not a switch.
+ *
+ * THE DOME keeps its unfogged picture and stops leaking to get it: at
+ * LINEAR(0..1) a coordinate of ZERO is factor 1, the incoming fragment
+ * untouched, so `fog_neutral` is the same picture as a disable without
+ * touching the enable the renderer is mirroring. That is the rule B-045
+ * already wrote for the 2D ortho and the model-array path; this is the third
+ * caller of it.
+ *
+ * SL_BG_FOG=0 restores the previous behaviour - both passes disabling the
+ * stage outright - from the same binary, so the A/B is one build. */
+static int bg_fog_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_FOG");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+/* #68 THE FOG-DESTINATION ESCAPE HATCH, the same idiom as SL_BG_FOG,
+ * SL_SKY_WITH_BG, SL_BG_DECAL and SL_BG_XLU_BLEND and for the same reason: a
+ * composition change is only believable if both compositions can be captured
+ * back to back on ONE binary. SL_BG_LEVEL_FOG=1 applies the LEVEL's own band
+ * to the replacement, which is what this renderer did before the rule in
+ * sl_wa_fog_level_applies was written - a fade into a backdrop the
+ * replacement had already stood in for. Default off, one cached getenv,
+ * nothing unset costs anything.
+ *
+ * Note what it is NOT: SL_BG_FOG=0 still turns the whole stage off for both
+ * external passes (the pre-fog-round state, mirror desync and all), and it
+ * remains the control for that. This one leaves the stage exactly as it is
+ * and only changes whether the band reaches the replacement's vertices. */
+static int bg_level_fog_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_LEVEL_FOG");
+                  on = (s != NULL && *s != '0'); }
+    return on;
+}
+
+/* #68 THE REMASTER'S STAGE FOG, and its control. The replacement background's
+ * own pixel programs end in a fog blend toward a per-environment colour at a
+ * per-environment range that the preparation derives from the user's own
+ * executable (SLEN, sl_gfx_worldasset.h). Applied only where the level's band
+ * is not (sl_wa_fog_level_applies), only to materials whose source program
+ * consumes the contract (SL_WA_MAT_FOG), and keyed by the environment row the
+ * GAME selected (sl_fog_environment_id, bgfog.c). SL_BG_REMASTER_FOG=0 draws
+ * the same metadata-loaded frame with it off, so the A/B is one binary.
+ * Default on, one cached getenv. */
+static int bg_remaster_fog_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_REMASTER_FOG");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+extern int sl_fog_environment_id(void);        /* bgfog.c, read-only */
+extern int sl_fog_environment_alt(float *frac); /* bgfog.c, read-only */
+static const struct sl_wa_env *g_bg_env;       /* this frame's row, or NULL */
+
+/* #77 THE ROW IN FORCE: the remaster's row for the environment the game
+ * selected, or - while the game blends that environment toward its ALT row
+ * (fogSwitchToSolosky2: Facility's gas) - the same blend of the two rows'
+ * remaster extensions (sl_wa_env_blend), so the replacement and the objects
+ * fogged by the same row fill with the gas as the game's own rooms do. NULL
+ * as sl_wa_env_lookup would answer. SL_WA_ENV_BLEND=0 keeps the main row while
+ * the game blends (the earlier behaviour). One cached getenv. */
+static int env_blend_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_WA_ENV_BLEND"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+static const struct sl_wa_env *env_in_force_row(void)
+{
+    static struct sl_wa_env blended;
+    static int said_alt = -2;
+    const struct sl_wa_env *m = sl_wa_env_lookup(sl_fog_environment_id());
+    const struct sl_wa_env *alt;
+    float t = 0.0f;
+    int alt_id;
+    if (m == NULL || !env_blend_on()) return m;
+    alt_id = sl_fog_environment_alt(&t);
+    if (alt_id < 0) return m;
+    alt = sl_wa_env_lookup(alt_id);
+    if (alt == NULL) {
+        if (said_alt != alt_id) {
+            said_alt = alt_id;
+            fprintf(stderr, "#77 worldasset: environment row %u blends toward row %d, "
+                            "which the remaster's table does not carry - the main row "
+                            "stands\n", m->id, alt_id);
+        }
+        return m;
+    }
+    blended = sl_wa_env_blend(m, alt, t);    /* both point into the provider's table */
+    if (said_alt != alt_id) {
+        said_alt = alt_id;
+        fprintf(stderr, "#77 worldasset: environment row %u blends toward row %d "
+                        "(the game's fogSwitchToSolosky2) - the remaster's two rows "
+                        "are blended alike\n", m->id, alt_id);
+    }
+    return &blended;
+}
+
+/* D-030 THE ROW IN FORCE, as drawn: env_in_force_row's, with the GAME's fog
+ * colour where the presentation draws that environment's atmosphere from the
+ * game (sl_wa_env_game_atmosphere) - read from the game's environment every
+ * frame, so the replacement, the props and characters it fogs, and the sky
+ * shaded beneath it (sky_draw) fade to the one colour the game holds. Every
+ * other row is returned exactly as before. */
+extern int sl_wa_game_atmosphere(float fog[3], float cloud[3]);   /* sl_world_assets.c */
+static const struct sl_wa_env *env_in_force(void)
+{
+    static struct sl_wa_env atm;
+    const struct sl_wa_env *r = env_in_force_row();
+    float fog[3], cloud[3];
+    if (r == NULL || !sl_wa_env_game_atmosphere((int) r->id)
+        || !sl_wa_game_atmosphere(fog, cloud)) return r;
+    atm = sl_wa_env_coloured(r, fog);
+    return &atm;
+}
+
+/* The state readback, off unless SL_BG_FOGTRACE names it. It answers the one
+ * question this round exists for in one line per pass - what fog the game has
+ * standing at the seam, and what GL actually has before, during and after the
+ * external draw - and it reads GL back rather than echoing the request, the
+ * same discipline the aperture and the sampler census keep. Bounded. */
+static int bg_fogtrace_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_BG_FOGTRACE");
+                  on = (s != NULL && *s != '0'); }
+    return on;
+}
+
+static void bg_fogtrace(const char *pass, const char *when, int fogm)
+{
+    static unsigned lines;
+    if (!bg_fogtrace_on() || lines >= 64u) return;
+    lines++;
+    fprintf(stderr,
+        "#68 fogstate: %-10s %-7s GL_FOG=%d mirror=%d mirrorcol %u %u %u "
+        "| register: colour %u %u %u alpha %u cycle %d omlP %u omlA %u "
+        "G_FOG %d (mux says %d) | level: seen %d colour %u %u %u fm %d fo %d "
+        "age %u -> mode %d\n",
+        pass, when, glIsEnabled(GL_FOG) ? 1 : 0, g_fog_gl_on,
+        (unsigned) g_fog_gl_col[0], (unsigned) g_fog_gl_col[1],
+        (unsigned) g_fog_gl_col[2],
+        (unsigned) g_fog[0], (unsigned) g_fog[1], (unsigned) g_fog[2],
+        (unsigned) g_fog[3], g_cycle_type,
+        (unsigned) ((g_om_l >> 30) & 3u), (unsigned) ((g_om_l >> 26) & 3u),
+        (g_geom_mode & 0x00010000u) ? 1 : 0, fog_mode(),
+        g_fogp_seen, (unsigned) g_fogp_col[0], (unsigned) g_fogp_col[1],
+        (unsigned) g_fogp_col[2], g_fogp_fm, g_fogp_fo,
+        g_dl_frame - g_fogp_frame, fogm);
+}
+
+/* #68 THE SCENE-ASSEMBLY ESCAPE HATCH, the same idiom as SL_BG_FOG,
+ * SL_BG_DECAL and SL_BG_XLU_BLEND and for the same reason: a composition
+ * change is only believable if both compositions can be captured back to back
+ * on ONE binary. The stage sky is composed beneath a replacement background by
+ * default (see sl_wa_compose_skydome for the console measurement);
+ * SL_SKY_WITH_BG=0 suppresses it there again, which is what this renderer did
+ * from 120894ae until that measurement. Default on, one cached getenv,
+ * nothing unset costs anything. */
+static int sky_with_bg_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_SKY_WITH_BG");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+static int bg_mesh_shown(unsigned mi)
+{
+    static const char *only, *hide;
+    static int init;
+
+    if (!init) {
+        init = 1;
+        only = getenv("SL_BG_ONLY");
+        hide = getenv("SL_BG_HIDE");
+        if (only != NULL && *only == '\0') only = NULL;
+        if (hide != NULL && *hide == '\0') hide = NULL;
+    }
+    if (only != NULL && !bg_mesh_listed(only, mi)) return 0;
+    if (hide != NULL && bg_mesh_listed(hide, mi)) return 0;
+    return 1;
+}
+
+/* #68 STAGE FOG ON OBJECTS, and its control - the idiom of SL_BG_REMASTER_FOG
+ * and for the same reason: SL_NATIVE_STAGE_FOG=0 leaves the game's own
+ * per-object fog in force under the same metadata-loaded frame, so the A/B is
+ * one binary. Default on, one cached getenv. */
+static int native_stage_fog_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_NATIVE_STAGE_FOG");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+/* The row that fogs the game's per-object draws this frame, or NULL - read at
+ * the frame's start from the same facts the replacement's own fog reads: the
+ * replacement is resolved (g_bg_armed), the stage fog and its remaster row are
+ * on, and the environment the game selected has a row. It also needs both
+ * programs, since that is where the per-object tint is applied; without them
+ * the game keeps its own fog, which the fixed pipeline draws exactly. */
+static const struct sl_wa_env *stage_env_select(void)
+{
+    float vis = 0.0f;
+    if (!native_stage_fog_on() || !bg_fog_on() || !bg_remaster_fog_on()
+        || bg_level_fog_on()) return NULL;
+    if (p_Uniform4f == NULL || g_lin_state <= 0 || !shade_linear_on()
+        || g_lin_u_obj < 0) return NULL;
+    if (!sl_wa_visibility_scale(&vis) || !(vis > 0.0f)) return NULL;
+    g_stage_vis = vis;
+    return sl_wa_object_fog_env(g_bg_armed, env_in_force());
+}
+
+/* THE GAME'S HALF OF THE CONTRACT (propobj.c, lerp_rgba_s32_with_rgba_f32 -
+ * where fogGetPropDistColor's distance term is folded into a prop's or a
+ * character's fog colour): nonzero while the remaster row owns the distance
+ * of the per-object draws, so the game leaves that term out. Read-only; it
+ * answers with the decision the frame in progress was drawn under, which is
+ * the one the next display list is interpreted with unless the stage, the
+ * presentation or the environment changes in between. */
+int sl_gfx_native_stage_fog(void);
+int sl_gfx_native_stage_fog(void)
+{
+    return g_stage_env != NULL;
+}
+
+/* D-041, THE GAME'S OTHER HALF (propobj.c, chrobjRenderProp): nonzero while
+ * the remaster row owns the per-object distance AND the presentation draws
+ * props past the game's far-fog cut under that row. The game then draws a
+ * prop fogGetPropDistColor would have it remove, with the fog left to the
+ * row, exactly as sl_gfx_native_stage_fog leaves it. Read-only, the same
+ * frame's decision. */
+int sl_gfx_prop_fog_drawn(void);
+int sl_gfx_prop_fog_drawn(void)
+{
+    return g_stage_env != NULL && sl_wa_env_prop_fog_drawn((int) g_stage_env->id);
+}
+
+/* The provider's own file access happens HERE and nowhere else in the
+ * renderer, once per stage, and only when a set is selected. */
+static void sky_frame_begin(void)
+{
+    const char *item;
+
+    g_sky_done = 0;
+    g_sky_drew = 0;
+    g_sky_armed = 0;
+    g_sky_row = -1;                            /* D-031: the game's own, unless borrowed */
+    g_sky_lent = 0;                            /* D-046: set where a dome is lent */
+    g_bg_done = 0;
+    g_bgx_pending = 0;                         /* #90 nothing waits across frames */
+    g_bg_armed = 0;
+    g_stage_env = NULL;
+    /* THE GATE, RE-ASKED EVERY FRAME. Leaving the set that owns the asset must
+     * stop the suppression on the very next frame, so this is cleared here and
+     * only re-armed by a pass that actually draws - never latched. */
+    g_bg_suppress = 0;
+    g_nf_ready = 0;                            /* #78 no space until the pass runs */
+    if (!sl_wa_active()) return;               /* the whole feature, off */
+
+    item = sl_wa_stage_item_path();
+    g_sky_item = item;                         /* D-034: NULL on a stage with no item path */
+    if (item == NULL) return;                  /* this stage has no item path */
+
+    /* #68 SCENE ASSEMBLY, and the REPLACEMENT is asked first because it is the
+     * half that decides. The two classes resolve independently - each by its
+     * own (class, item path) - and this seam used to compose whatever both
+     * lookups returned, so PRESENCE IN THE ARCHIVE decided the scene. It is
+     * sl_wa_compose_skydome that decides it now; see there for the contract and
+     * the console measurement - the stage sky is the replacement's companion,
+     * drawn at the seam immediately BEFORE the replacement (the seam macro
+     * emits sky_draw, then bg_draw), depth-less, so the replacement lands over
+     * it as authored. Asked here rather than
+     * at the draw so a sky this composition does not contain is never even
+     * opened, and the census reports what was composed rather than what
+     * exists. */
+    if (g_bg_asset == NULL)
+        g_bg_asset = sl_wa_lookup(SL_WA_CLASS_BACKGROUND, item);
+    g_bg_armed = (g_bg_asset != NULL);
+    g_stage_env = stage_env_select();          /* #68 STAGE FOG ON OBJECTS */
+
+    if (!sl_wa_compose_skydome(g_bg_armed) || (g_bg_armed && !sky_with_bg_on())) {
+        if (!g_sky_notsaid) {
+            g_sky_notsaid = 1;
+            fprintf(stderr, "#68 worldasset: skydome/%s is not composed - "
+                            "SL_SKY_WITH_BG=0 suppresses the stage sky beneath "
+                            "background/%s\n", item, item);
+        }
+        return;                                /* g_sky_armed stays clear */
+    }
+
+    /* D-031: a stage with no sky of its own may draw another's - Bunker 1
+     * Surface 1's, under row 36 - only while the game holds no environment
+     * row, and every other stage asks for its own item exactly as before. */
+    {
+        unsigned row = 0u;
+        const char *sky_item = sl_wa_sky_borrow(item, sl_fog_environment_id(), &row);
+        g_sky_row = (sky_item != NULL) ? (int) row : -1;
+        /* D-044: a stage the source holds no dome for may be lent one,
+         * shaded by its own row (g_sky_row stays -1: the live path). */
+        if (sky_item == NULL) {
+            sky_item = sl_wa_sky_lent(item);
+            g_sky_lent = (sky_item != NULL);
+        }
+        if (sky_item == NULL) sky_item = sl_wa_stage_sky_item_path();
+        if (sky_item == NULL) sky_item = item;
+        if (g_sky_asset == NULL)
+            g_sky_asset = sl_wa_lookup(SL_WA_CLASS_SKYDOME, sky_item);
+    }
+    g_sky_armed = (g_sky_asset != NULL);       /* missing or invalid: ORIGINAL */
+}
+
+/* Upload the asset's own item-local images. They are the ASSET's resources -
+ * they carry no N64 texture number, they are not in the image table, and
+ * nothing in #47's mapping is touched by them. */
+/* THE SAMPLER, per axis, derived rather than defaulted.
+ *
+ * WRAP on both axes, and S is not a preference: the dome's U is its azimuth
+ * and the prepared coordinates run 0.479 .. 1.479, so a full turn CROSSES the
+ * integer boundary. Under any clamp everything past 1.0 collapses into the
+ * last texel column, which is a smear across half the sky rather than a seam.
+ * T runs 0.0048 .. 1.0049 - the 0.49% overshoot is the dome's bottom rim,
+ * below the horizon - so the axes take the same mode and the source's own
+ * texture records carry no clamp field to say otherwise.
+ *
+ * MIPMAPPED, and this is the part the first attempt got wrong twice over.
+ * The source ships a complete pyramid for both of this item's images (11
+ * levels for the 1024-square, 10 for the 512-square), so the reference
+ * sampler is mip-filtered and reproducing that is matching it, not masking
+ * something. The earlier probe that "measured 0.00% of pixels" asked for mip
+ * GENERATION while GL_TEXTURE_MIN_FILTER stayed at GL_LINEAR - a filter that
+ * never samples a level above zero - so 0.00% was the arithmetic result of
+ * the experiment and evidence about nothing. It is not cited any more.
+ *
+ * The pyramid is built HERE, item-locally, with the same box filter and the
+ * same two-scratch-buffer walk the game's own textures take (B-119,
+ * mip_box_halve): GL_GENERATE_MIPMAP and GL_TEXTURE_MAX_LEVEL are both absent
+ * from this tree's GL headers. Nothing about #47's global filtering policy is
+ * read or changed by any of this - these are the asset's own images. */
+static unsigned g_sky_min_filter, g_sky_mag_filter, g_sky_levels;
+
+/* Upload one world asset's item-local images. Shared by both classes so the
+ * sampler rule, the mip pyramid and the read-back census cannot drift apart;
+ * it answers 0 when any image failed to get a GL name, which is what lets a
+ * REPLACEMENT refuse to suppress anything it could not actually draw. */
+static int wa_upload_images(const struct sl_wa_asset *a, unsigned *minf,
+                            unsigned *magf, unsigned *levels);
+
+static void sky_upload(const struct sl_wa_asset *a)
+{
+    (void) wa_upload_images(a, &g_sky_min_filter, &g_sky_mag_filter, &g_sky_levels);
+}
+
+static int wa_upload_images(const struct sl_wa_asset *a, unsigned *minf,
+                            unsigned *magf, unsigned *levels)
+{
+    unsigned i;
+    int ok = 1;
+    struct sl_wa_asset *m = (struct sl_wa_asset *) a;   /* the cache's own record */
+
+    if (a->uploaded) {
+        for (i = 0; i < a->texture_count; i++)
+            if (a->gl_tex[i] == 0) return 0;
+        return 1;
+    }
+    for (i = 0; i < a->texture_count; i++) {
+        const unsigned w = a->textures[i].w, h = a->textures[i].h;
+        unsigned char *mb0 = NULL, *mb1 = NULL;
+        GLuint name = 0;
+        GLint got = 0;
+
+        if (w > 1u || h > 1u) {
+            size_t half = (size_t) ((w + 1u) / 2u) * (size_t) ((h + 1u) / 2u) * 4u;
+            mb0 = (unsigned char *) malloc(half);
+            mb1 = (unsigned char *) malloc(half);
+            if (mb0 == NULL || mb1 == NULL) { free(mb0); free(mb1); mb0 = mb1 = NULL; }
+        }
+        glGenTextures(1, &name);
+        glBindTexture(GL_TEXTURE_2D, name);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                        (mb0 != NULL) ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei) w, (GLsizei) h, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, a->textures[i].rgba);
+        if (mb0 != NULL) {
+            const unsigned char *cur = a->textures[i].rgba;
+            unsigned char *nxt = mb0, *oth = mb1, *tmp;
+            unsigned cw = w, ch = h, nw, nh, level = 1;
+            while (cw > 1u || ch > 1u) {
+                mip_box_halve(cur, cw, ch, nxt, &nw, &nh);
+                glTexImage2D(GL_TEXTURE_2D, (GLint) level, GL_RGBA,
+                             (GLsizei) nw, (GLsizei) nh, 0,
+                             GL_RGBA, GL_UNSIGNED_BYTE, nxt);
+                cur = nxt; tmp = nxt; nxt = oth; oth = tmp;
+                cw = nw; ch = nh; level++;
+            }
+            if (level > *levels) *levels = level;
+        }
+        free(mb0);
+        free(mb1);
+        /* What GL HOLDS, not what was asked for - the reading the census
+         * prints, so the sampler state is measured rather than assumed. */
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &got);
+        *minf = (unsigned) got;
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &got);
+        *magf = (unsigned) got;
+        m->gl_tex[i] = (unsigned) name;
+        if (name == 0) ok = 0;
+    }
+    m->uploaded = 1;
+    /* The upload bound a name behind the DL texture cache's back. */
+    g_tex_gl_bound = 0;
+    return ok;
+}
+
+/* #68 the skydome anchor's control, one cached getenv. Unset draws the source
+ * contract (the item's origin on the eye); SL_SKY_ANCHOR=bounds draws the
+ * earlier bounds-centre rule, so the A/B is one binary. */
+static int sky_anchor_bounds(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_SKY_ANCHOR");
+                  on = (s != NULL && strcmp(s, "bounds") == 0); }
+    return on;
+}
+
+/* #68 #76 D-023 THE GENERATED CLOUD FIELD, and the switch that restores the
+ * source dome. A skydome bundle may carry one more draw than the source's - a
+ * cloud field the preparation grew from the dome image's own cloud band
+ * (SL_WA_MAT_GENERATED, and SL_WA_MAT_CLOUD_PLANE when it rides the game's
+ * cloud plane) - in place of the remaster's clear cap inside a still ring of
+ * cloud. Default ON; SL_SKY_ZENITH=0 leaves every generated material out,
+ * which draws the source dome exactly. One cached getenv, the SL_PROP_FADE
+ * idiom. */
+static int sky_zenith_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_SKY_ZENITH");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+/* D-030 THE GAME'S CLOUD COMBINER on the dome: sky.c draws its cloud layer
+ * through (SHADE - ENV) * TEXEL0 + ENV with ENV the environment's fog colour,
+ * so a dark texel is the fog and a bright one the vertex's cloud shade. Here
+ * that is GL_INTERPOLATE(primary, constant, texture) with the fog colour in
+ * the texture environment colour (through envcol_set's mirror), and the
+ * dome's own image as the texel; alpha keeps MODULATE, so the generated
+ * field's feathered rim is unchanged. Called outside glBegin; the pass's
+ * teardown re-issues the renderer's texture environment (g_texenv = -1). */
+static void sky_atm_texenv(const float fog[3])
+{
+#if defined(SL_TEXENV_COMBINE) && defined(GL_INTERPOLATE) && defined(GL_CONSTANT) \
+    && defined(GL_SOURCE2_RGB) && defined(GL_OPERAND2_RGB)
+    envcol_set(fog[0] / 255.0f, fog[1] / 255.0f, fog[2] / 255.0f, 1.0f);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+    glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_INTERPOLATE);
+    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_PRIMARY_COLOR);
+    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_CONSTANT);
+    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR);
+    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE2_RGB, GL_TEXTURE);
+    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND2_RGB, GL_SRC_COLOR);
+    glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_MODULATE);
+    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_TEXTURE);
+    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
+    glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_ALPHA, GL_PRIMARY_COLOR);
+    glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_ALPHA, GL_SRC_ALPHA);
+    g_texenv = -1;
+#else
+    (void) fog;
+#endif
+}
+
+static void sky_draw(void)
+{
+    const struct sl_wa_asset *a = g_sky_asset;
+    float C[16];
+    float org[3];                      /* the space C consumes, as an offset */
+    float cen[3], eyep[3];             /* the dome's anchor, and the eye */
+    unsigned i, mi;
+    int plain;
+    int trace_line = 0;                /* the witness wants a line this frame */
+    float treye[3];                    /* the eye the GAME has, absolute      */
+    float kscale = 0.0f;               /* recovered eye -> game eye, measured */
+    static float *clip;                /* clip coords, one grow for the run */
+    static unsigned clip_cap;
+    int cloud_ok = 0;                  /* D-023: the game's cloud layer read */
+    float cloud_phase = 0.0f, cloud_height = 0.0f, cloud_eye[3];
+    unsigned cloud_w = 0, cloud_h = 0;
+    int atm = 0;                       /* D-030: shaded as the game's cloud layer */
+    float atm_fog[3], atm_cloud[3];
+    int scr = 0;                       /* D-046: ... where it lies on the screen */
+    float scr_rows[10];
+    int scr_fill[4];
+
+    g_sky_done = 1;
+    if (a == NULL) return;
+#if defined(SL_TEXENV_COMBINE) && defined(GL_INTERPOLATE) && defined(GL_CONSTANT) \
+    && defined(GL_SOURCE2_RGB) && defined(GL_OPERAND2_RGB)
+    if (g_sky_row >= 0)                /* D-031: the borrowed row, from the game's table */
+        atm = sl_wa_env_game_atmosphere(g_sky_row)
+              && sl_wa_game_atmosphere_row((unsigned) g_sky_row, atm_fog, atm_cloud);
+    else
+        atm = sl_wa_stage_game_atmosphere(g_sky_item, sl_fog_environment_id())
+              && sl_wa_game_atmosphere(atm_fog, atm_cloud);   /* D-030, D-034 */
+    /* D-046: a lent dome takes the game's cloud fraction where the game's
+     * layer lies on the screen, and the fog colour below its edge. */
+    if (atm && g_sky_lent && g_sky_row < 0 && sl_wa_sky_lent_edge())
+        scr = sl_wa_sky_screen(scr_rows, scr_fill);
+#endif
+
+    /* WHICH MATRIX TAKES A WORLD POSITION TO CLIP SPACE, AND WHAT SPACE IT
+     * EXPECTS THAT POSITION TO BE IN. Both READ, neither inferred.
+     *
+     *   which == 1  fr.c's PLAIN perspective. The seam supplies world-to-view
+     *               itself (sl_wa_view_matrix, built from viewtoworldmtxf,
+     *               whose translation row is the ABSOLUTE eye), so the space
+     *               is absolute world and the offset is zero.
+     *   which == 2  bondview2.c's, with the view already folded in. The space
+     *               is world MINUS the frame's render origin, because that is
+     *               what the game's own rooms and view matrices are built in.
+     *
+     * The discriminator is the projection's ADDRESS, not its shape. The shape
+     * test this replaced could not be stable: both projections legitimately
+     * stand at this seam on different frames, so it alternated, and because
+     * the two branches fed the same absolute coordinates into matrices that
+     * consume different spaces, the dome jumped by the render origin - about
+     * 25000 units - every time it flipped.
+     *
+     * Getting this wrong applies the camera twice, not at all, or in the wrong
+     * frame of reference, so it is read from the game rather than guessed. */
+    /* The point of the dome that belongs on the eye: the item's own ORIGIN,
+     * which is where the source's dome draw puts the camera (a modelview with
+     * zero translation) - see sl_wa_sky_anchor. SL_SKY_ANCHOR=bounds is the
+     * control that restores the earlier bounds-centre rule. No format change
+     * and no re-preparation either way. */
+    sl_wa_sky_anchor(a->bounds_min, a->bounds_max, sky_anchor_bounds(), cen);
+
+    plain = (g_proj_world_which != 2);
+    if (plain) {
+        float view[16];
+        if (!sl_wa_view_matrix(view)) {          /* no camera yet: no sky */
+            g_sky_refused++;
+            return;
+        }
+        mtx_mul(view, g_proj, C);                /* v * V * P */
+    } else {
+        memcpy(C, g_proj, sizeof C);             /* the view is already in it */
+    }
+
+    /* WHERE THE DOME GOES: its anchor onto the eye, and the eye read OUT
+     * OF THE TRANSFORM rather than out of the game. One rule, both
+     * projections, and it cannot disagree with the matrix it is paired with -
+     * which is what the two earlier attempts each got wrong in a different
+     * way. See sl_wa_view_origin for why the struct's camera is not the same
+     * camera. A matrix this cannot read is not drawn. */
+    if (!sl_wa_view_origin(C, eyep)) {
+        g_sky_refused++;
+        return;
+    }
+    org[0] = cen[0] - eyep[0];
+    org[1] = cen[1] - eyep[1];
+    org[2] = cen[2] - eyep[2];
+
+    /* THE WITNESS. Off unless SL_SKY_TRACE names it, bounded, and it prints
+     * the three things that decide where this asset lands: which branch the
+     * classification took, the frame's render origin (the floating origin the
+     * game's own world geometry is drawn relative to), and the translation row
+     * of the transform actually used. A line is printed when any of them
+     * CHANGES, plus the first frame, so a stable dome is a handful of lines and
+     * an unstable one is one line per flip. */
+    {
+        static int on = -1;
+        extern unsigned sl_record_index(void);
+        if (on < 0) { const char *v = getenv("SL_SKY_TRACE"); on = (v != NULL && *v != '0'); }
+        if (on) {
+            static int last_plain = -2, lines;
+            static float last_ro[3] = { 1e30f, 1e30f, 1e30f };
+            float ro[3];
+            int have_ro = sl_wa_render_origin(ro);
+            float eye[16];
+            int have_eye = sl_wa_view_matrix(eye);
+            int every = (getenv("SL_SKY_TRACE_ALL") != NULL);
+            /* THE EYE THE GAME HAS, against the eye this pass RECOVERED, in
+             * the same units - the only pair that can say whether the anchor
+             * is the camera or merely self-consistent. residual_w below is
+             * computed from the recovered eye and is therefore zero whatever
+             * that eye is; it is not evidence about this. */
+            treye[0] = treye[1] = treye[2] = 0.0f;
+            if (have_eye) {
+                int jj;
+                for (jj = 0; jj < 3; jj++)
+                    treye[jj] = -(eye[12] * eye[jj * 4 + 0]
+                                + eye[13] * eye[jj * 4 + 1]
+                                + eye[14] * eye[jj * 4 + 2]);
+            }
+            if (have_eye && have_ro) {
+                float dx = treye[0] - ro[0], dy = treye[1] - ro[1], dz = treye[2] - ro[2];
+                float qx = cen[0] - org[0], qy = cen[1] - org[1], qz = cen[2] - org[2];
+                float qn = qx * qx + qy * qy + qz * qz;
+                if (qn > 1.0e-6f)
+                    kscale = (float) sqrt((double) ((dx * dx + dy * dy + dz * dz) / qn));
+            }
+            /* THE ANCHOR. Where the asset's own bounds centre lands in NDC,
+             * through the transform actually used. This is the number that
+             * says whether the dome MOVED: it is a property of the asset and
+             * the transform alone, so a jump in it is a jump of the sky and
+             * nothing else. */
+            /* A point ON the dome, not its anchor - the anchor now sits on
+             * the eye and its projection is degenerate. */
+            float ax = a->bounds_max[0] - org[0];
+            float ay = a->bounds_max[1] - org[1];
+            float az = a->bounds_max[2] - org[2];
+            float aw = ax * C[3] + ay * C[7] + az * C[11] + C[15];
+            float anx = (ax * C[0] + ay * C[4] + az * C[8]  + C[12]);
+            float any = (ax * C[1] + ay * C[5] + az * C[9]  + C[13]);
+            if (aw != 0.0f) { anx /= aw; any /= aw; }
+            if (!have_ro) { ro[0] = ro[1] = ro[2] = 0.0f; }
+            if (lines < 4000
+                && (every || plain != last_plain
+                    || fabsf(ro[0] - last_ro[0]) > 0.5f
+                    || fabsf(ro[1] - last_ro[1]) > 0.5f
+                    || fabsf(ro[2] - last_ro[2]) > 0.5f)) {
+                /* THE ANCHORING RESIDUAL, in one number, and the reason this
+                 * witness exists. After the offset the dome's anchor
+                 * should BE the eye, so it must map to the view origin - clip
+                 * w exactly zero - under either projection. Whatever this
+                 * reads is the anchoring error in world units along the view
+                 * axis, and it is what separated the three attempts: about
+                 * 25000 when the folded projection was fed absolute
+                 * coordinates, about 40 and drifting when the dome was pinned
+                 * to the struct's camera instead of the matrix's, and 0 once
+                 * the eye is read out of the matrix in force. */
+                float rw = (cen[0] - org[0]) * C[3] + (cen[1] - org[1]) * C[7]
+                         + (cen[2] - org[2]) * C[11] + C[15];
+                fprintf(stderr, "#68 skyanchor: read %u frame %u which %d "
+                                "ndc %.5f %.5f w %.3f residual_w %.5f\n",
+                        sl_record_index(), g_sky_frames, g_proj_world_which,
+                        anx, any, aw, rw);
+                fprintf(stderr,
+                    "#68 skytrace: frame %u which %d branch %s offset %.3f %.3f %.3f "
+                    "renderorigin %.3f %.3f %.3f Ctrans %.3f %.3f %.3f %.3f "
+                    "eyeview %.3f %.3f %.3f uploaded %d texbound %d\n",
+                    g_sky_frames, g_proj_world_which, plain ? "PLAIN+view" : "FOLDED",
+                    org[0], org[1], org[2], ro[0], ro[1], ro[2],
+                    C[12], C[13], C[14], C[15],
+                    have_eye ? eye[12] : 0.0f, have_eye ? eye[13] : 0.0f,
+                    have_eye ? eye[14] : 0.0f, a ? (int) a->uploaded : -1,
+                    (int) g_tex_gl_bound);
+                fprintf(stderr,
+                    "#68 skyeye: trueeye %.3f %.3f %.3f recovered %.3f %.3f %.3f "
+                    "k %.4f forward %.4f %.4f %.4f scale %.6f %.6f\n",
+                    treye[0], treye[1], treye[2],
+                    cen[0] - org[0], cen[1] - org[1], cen[2] - org[2], kscale,
+                    have_eye ? -eye[2] : 0.0f, have_eye ? -eye[6] : 0.0f,
+                    have_eye ? -eye[10] : 0.0f,
+                    (float) sqrt((double) (C[0]*C[0] + C[4]*C[4] + C[8]*C[8])),
+                    (float) sqrt((double) (C[1]*C[1] + C[5]*C[5] + C[9]*C[9])));
+                /* The aperture belongs with these, but a glGet between
+                 * glBegin and glEnd is undefined - so it is printed in the GL
+                 * section below, once the batch is closed. */
+                trace_line = 1;
+                lines++;
+                last_plain = plain;
+                last_ro[0] = ro[0]; last_ro[1] = ro[1]; last_ro[2] = ro[2];
+            }
+        }
+    }
+
+    if (clip_cap < a->vertex_count) {
+        float *n = (float *) realloc(clip, (size_t) a->vertex_count * 4u * sizeof *n);
+        if (n == NULL) return;
+        clip = n; clip_cap = a->vertex_count;
+    }
+
+    /* WORLD -> CLIP on the CPU, and the one liberty this pass takes: clip z.
+     *
+     * The asset is tens of thousands of units across and the game's frustum
+     * ends at its own far plane (5 .. 15000 at the Dam, measured), so drawn
+     * under that projection unaltered it would be clipped almost entirely
+     * away. Rather than substitute a projection - which would have to
+     * reproduce the #45 aspect and field-of-view arithmetic and could drift
+     * from it - the clip coordinate is computed here and its Z REPLACED by
+     * zero, with x, y and w untouched.
+     *
+     * That is exact, not an approximation. The screen position of a vertex is
+     * x/w and y/w, and neither moves; perspective-correct interpolation is a
+     * function of w, and w does not move; the near plane still clips, because
+     * a vertex behind the eye has w <= 0 and no z can rescue it. Only the
+     * depth changes, to a value that is inside -w..w for every vertex in
+     * front of the eye - and depth is tested and written by nothing in this
+     * pass. The vertices are then handed to GL as clip coordinates under an
+     * identity projection and modelview, so GL applies no further transform.
+     */
+    for (i = 0; i < a->vertex_count; i++) {
+        const struct sl_wa_vertex *v = &a->vertices[i];
+        float *c = &clip[i * 4u];
+        const float x = v->x - org[0], y = v->y - org[1], z = v->z - org[2];
+        int j;
+        for (j = 0; j < 4; j++)
+            c[j] = x * C[j] + y * C[4 + j] + z * C[8 + j] + C[12 + j];
+        c[2] = 0.0f;
+    }
+
+    /* ---- GL: leave it exactly as it was found ------------------------- */
+    batch_end();                      /* glBegin is open across most of a frame */
+    mode2d_end();
+    texenv_set(0);                    /* truthful: g_texenv still describes GL,
+                                       * and this is what unbinds the B-051
+                                       * program if it is the mode being left */
+    tex1_off();
+
+    sky_upload(a);
+
+    /* THE APERTURE. A background covers the whole picture, so the rectangle
+     * this pass draws into has to be a property of the FRAME - and until this
+     * was measured it was a property of whichever ROOM happened to draw first.
+     *
+     * The game issues `ED setscissor` before every room's display list with
+     * that room's PORTAL WINDOW, and the seam emits the dome on the frame's
+     * first world triangle - which is inside the first room's list, under that
+     * room's window. The portal traversal decides the order and the windows,
+     * and both change with the camera's heading, so the sky was being cut to a
+     * different strip of the screen at every angle. Measured at the three
+     * playtest marks near the Dam's first alarm, one pose per run, teleported:
+     * the box in force at the seam was 654,30 303x660 at theta 246.3,
+     * 516,30 441x660 at 207.0 and 3,30 954x660 (the whole picture) at 192.6,
+     * and the asset's own pixels fell INSIDE it 98.1%, 100.0% and 100.0% of
+     * the time. The playtest frames carry the same boundary: one hard
+     * vertical edge at the box's left side in the first two, and none in the
+     * third, which is the one whose box was already the whole screen.
+     *
+     * The rectangle NDC maps onto is the VIEWPORT, so that is the aperture a
+     * background wants and the one taken here - read back from GL rather than
+     * recomputed, for the same reason the sampler census reads its filters
+     * back. The previous box and enable state are restored exactly, so a frame
+     * that draws no asset and the frame after this pass see GL as it was. */
+    {
+        GLint vp[4];
+        int vpi[4], found[4], box[4], j;
+        g_sky_sciss_on = glIsEnabled(GL_SCISSOR_TEST) ? 1 : 0;
+        glGetIntegerv(GL_SCISSOR_BOX, g_sky_sciss_box);
+        glGetIntegerv(GL_VIEWPORT, vp);
+        for (j = 0; j < 4; j++) {
+            vpi[j]   = (int) vp[j];
+            found[j] = (int) g_sky_sciss_box[j];
+        }
+        sl_wa_sky_aperture(vpi, found, box);
+        if (trace_line) {
+            extern unsigned sl_frames_completed(void);
+            fprintf(stderr,
+                "#68 skyaperture: vi %u found %d %d,%d %dx%d viewport "
+                "%d,%d %dx%d drawn into %d,%d %dx%d\n",
+                sl_frames_completed(), g_sky_sciss_on,
+                found[0], found[1], found[2], found[3],
+                vpi[0], vpi[1], vpi[2], vpi[3],
+                box[0], box[1], box[2], box[3]);
+        }
+        glScissor((GLint) box[0], (GLint) box[1],
+                  (GLsizei) box[2], (GLsizei) box[3]);
+        glEnable(GL_SCISSOR_TEST);
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    g_cull_gl = 0;
+    /* THE DOME STAYS UNFOGGED, and now says so without lying to the renderer
+     * about GL's state. See bg_fog_on for the derivation: a zero fog
+     * coordinate under LINEAR(0..1) is factor 1, which is the incoming
+     * fragment untouched - the same picture the disable drew - while the
+     * enable the rest of the file mirrors is left where it was. The dome is
+     * the one pass whose recorded reason for fog-off actually holds: it is
+     * eye-anchored, carries no depth and is deliberately beyond the frustum,
+     * so the level's distance band has nothing to say about it. */
+    bg_fogtrace("skydome", "before", FOG_NONE);
+    if (bg_fog_on()) fog_neutral();
+    else             glDisable(GL_FOG);
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_TEXTURE_2D);
+    glColor4ub(255, 255, 255, 255);
+
+    /* Identity both ways: the vertices below are already clip coordinates. */
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    for (mi = 0; mi < a->mesh_count; mi++) {
+        const struct sl_wa_mesh *mh = &a->meshes[mi];
+        const struct sl_wa_material *mt = &a->materials[mh->material];
+        unsigned n;
+
+        /* D-023: a generated draw is drawn only while the zenith clouds are
+         * on, and says so once either way. */
+        if (mt->flags & SL_WA_MAT_GENERATED) {
+            static int said;
+            if (!said) {
+                said = 1;
+                fprintf(stderr, "#68 skydome: generated zenith clouds (D-023) %s\n",
+                        sky_zenith_on() ? "drawn - SL_SKY_ZENITH=0 draws the source dome"
+                                        : "NOT drawn (SL_SKY_ZENITH=0) - the source dome");
+            }
+        }
+        if (!sl_wa_material_drawn(mt->flags, sky_zenith_on())) continue;
+        /* D-023 THE CLOUD FIELD: cast onto the game's cloud plane with the
+         * game's own phase (sl_wa_cloud_coord). The game's state is read once
+         * per frame; with no cloud layer to follow the field is not drawn. */
+        if (mt->flags & SL_WA_MAT_CLOUD_PLANE) {
+            if (!cloud_ok) {
+                cloud_ok = (g_sky_row >= 0     /* D-031: the borrowed row's layer */
+                            ? sl_wa_sky_cloud_row((unsigned) g_sky_row, &cloud_phase,
+                                                  &cloud_height, cloud_eye, &cloud_w, &cloud_h)
+                            : sl_wa_sky_cloud(&cloud_phase, &cloud_height, cloud_eye,
+                                              &cloud_w, &cloud_h)) ? 1 : -1;
+                if (cloud_ok > 0) g_sky_cloud_phase = cloud_phase;
+            }
+            if (cloud_ok < 0) { g_sky_cloud_skipped++; continue; }
+        }
+
+        if (mt->blend == SL_WA_BLEND_ALPHA) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        } else {
+            glDisable(GL_BLEND);
+        }
+        glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
+        if (atm) sky_atm_texenv(atm_fog);
+
+        glBegin(GL_TRIANGLES);
+        for (n = 0; n < mh->index_count; n++) {
+            unsigned vi = a->indices[mh->first_index + n];
+            const struct sl_wa_vertex *v = &a->vertices[vi];
+            const float *c = &clip[vi * 4u];
+            if (atm) {
+                /* D-030: the game's cloud shade along this vertex's direction
+                 * from the dome's anchor (the eye), times the bundle's own
+                 * vertex colour - white on every dome measured. */
+                float dd[3], sh[3];
+                dd[0] = v->x - cen[0];
+                dd[1] = v->y - cen[1];
+                dd[2] = v->z - cen[2];
+                if (scr)                 /* D-046: at its place on the screen */
+                    sl_wa_sky_shade_frac(atm_fog, atm_cloud,
+                                         c[3] > 1.0e-6f
+                                         ? sl_wa_sky_screen_frac(scr_rows, scr_fill,
+                                                                 c[0] / c[3], c[1] / c[3])
+                                         : 1.0, sh);
+                else
+                    sl_wa_sky_shade(atm_fog, atm_cloud, dd, sh);
+                glColor4ub((GLubyte) (sh[0] * (float) v->r / 255.0f + 0.5f),
+                           (GLubyte) (sh[1] * (float) v->g / 255.0f + 0.5f),
+                           (GLubyte) (sh[2] * (float) v->b / 255.0f + 0.5f), v->a);
+            } else
+                glColor4ub(v->r, v->g, v->b, v->a);
+            if (mt->flags & SL_WA_MAT_CLOUD_PLANE) {
+                float d[3], q[3];
+                d[0] = v->x - cen[0];
+                d[1] = v->y - cen[1];
+                d[2] = v->z - cen[2];
+                sl_wa_cloud_coord(d, cloud_eye, cloud_height, cloud_phase,
+                                  cloud_w, cloud_h, q);
+                glTexCoord4f(q[0], q[1], 0.0f, q[2]);
+            } else {
+                glTexCoord2f(v->u, v->v);
+            }
+            glVertex4f(c[0], c[1], c[2], c[3]);
+        }
+        glEnd();
+        g_sky_tris += mh->index_count / 3u;
+        g_sky_verts += mh->index_count;
+    }
+    /* D-046 BELOW THE GAME'S HORIZON EDGE, THE GAME'S FILL: the fog colour,
+     * over the dome, from the edge to the bottom of the picture - what
+     * skyRender leaves there (sl_wa_sky_screen_frac in the header). The
+     * dome's own shade reaches it at the edge; this holds it exactly below,
+     * where a triangle straddling the edge would interpolate a lighter one. */
+    if (scr) {
+        float ey[2];
+        g_sky_edge_frames++;
+        if (sl_wa_sky_screen_edge(scr_rows, scr_fill, ey)) {
+            glDisable(GL_BLEND);
+            glDisable(GL_TEXTURE_2D);
+            glColor4ub((GLubyte) (atm_fog[0] + 0.5f), (GLubyte) (atm_fog[1] + 0.5f),
+                       (GLubyte) (atm_fog[2] + 0.5f), 255);
+            glBegin(GL_TRIANGLES);
+            glVertex4f(-1.0f, ey[0], 0.0f, 1.0f);
+            glVertex4f(-1.0f, -1.0f, 0.0f, 1.0f);
+            glVertex4f(1.0f, -1.0f, 0.0f, 1.0f);
+            glVertex4f(-1.0f, ey[0], 0.0f, 1.0f);
+            glVertex4f(1.0f, -1.0f, 0.0f, 1.0f);
+            glVertex4f(1.0f, ey[1], 0.0f, 1.0f);
+            glEnd();
+            glEnable(GL_TEXTURE_2D);
+        }
+    }
+    g_sky_frames++;
+    g_sky_drew = 1;                    /* #74: the shell may fade onto it */
+    bg_fogtrace("skydome", "after", FOG_NONE);
+
+    /* ---- put the renderer's own state back ---------------------------- */
+    /* The aperture first, exactly as it was found: the room whose list this
+     * pass interrupted is about to draw under it, and nothing else in the
+     * renderer mirrors the scissor, so restoring the box and the enable bit
+     * restores all of it. */
+    glScissor(g_sky_sciss_box[0], g_sky_sciss_box[1],
+              g_sky_sciss_box[2], g_sky_sciss_box[3]);
+    if (g_sky_sciss_on) glEnable(GL_SCISSOR_TEST);
+    else                glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glColor4ub(255, 255, 255, 255);
+    /* The loop above bound the asset's own names behind the DL texture
+     * cache's back, so the cache's idea of what GL holds is now stale: the
+     * next draw wanting the name it still remembers would skip its bind and
+     * sample a skydome image. Same rule the other out-of-band uploads
+     * follow. */
+    g_tex_gl_bound = 0;
+    rm_invalidate();                  /* the render mode is re-issued next draw */
+    texenv_set(0);
+    g_texenv = -1;                    /* only now forget it - see the frame
+                                       * teardown's note on this exact order */
+    texenv_set(0);
+    gl_load_projection();
+    gl_load_modelview();
+}
+
+/* ==========================================================================
+ * #68 THE WHOLE STATIC BACKGROUND, AS A REPLACEMENT
+ *
+ * The skydome above is ADDITIVE: it draws as well as the game's picture, so it
+ * names nothing in that picture and a missing asset costs a sky that was never
+ * there. This one REPLACES: under PRESENTATION XBLA, and only once a complete
+ * background is loaded, validated and uploaded, the stage's own static
+ * background emission is suppressed and this is drawn in its place.
+ *
+ * THE UNIT IS THE WHOLE ITEM, and that is the source's own unit rather than a
+ * convenience. The previous round measured that no bounded sub-target exists:
+ * the original side separates only BELOW room granularity (one N64 texture
+ * number paints the Dam's cliff; the room that carries it also carries the
+ * yard the player stands on, 72.9% of the frame), the source side is one
+ * unlabelled bundle of material batches, and no artefact in either names the
+ * other. The remaster's own display-mode switch swaps whole models paired by
+ * item path, so the whole background IS the replacement unit.
+ *
+ * WHAT IS SUPPRESSED, EXACTLY. The final native visual emission of ROOM
+ * BACKGROUND geometry, identified by the renderer's own room identity - the
+ * one the game itself branches with (g_room_num, set from the depth-1 display
+ * list operand through the same g_BgRoomInfo lookup the F8 mark uses). Props,
+ * guards, doors, the view model, the HUD, effects and 2D all carry
+ * g_room_num < 0 and are never reached by it. The display list still executes
+ * in full: every vertex loads, every matrix applies, every render mode takes
+ * effect, and the interpreter's own bookkeeping runs unchanged. No game data,
+ * room membership, collision, portal, prop list, AI visibility or save state is
+ * read or written, so the simulation cannot observe any of this.
+ *
+ * WORLD-ANCHORED, AND NONE OF THE SKYDOME'S ANCHORING APPLIES. A background
+ * stands where the original stood, through room changes and portal traversal.
+ * The asset carries ONE canonical representation - the source's own
+ * coordinates - and this converts it, per frame, into whichever space the
+ * projection in force consumes. See SL_WA_WORLD_SCALE for the measurement
+ * behind the two conversions; nothing is ever stored pre-folded for whichever
+ * room happened to render first.
+ *
+ * DEPTH IS REAL, unlike the skydome's. The replacement has to occlude and be
+ * occluded by the props, doors and characters the game still draws, so it
+ * tests and writes depth exactly as world geometry does. The one liberty is at
+ * the FAR plane: the item is larger than the game's frustum, so a clip z past
+ * w is CLAMPED to w rather than clipped away, which keeps distant terrain
+ * visible at the far plane instead of leaving a hole. x, y and w are untouched,
+ * so no screen position and no perspective-correct interpolation moves, and the
+ * near plane still clips.
+ * ========================================================================== */
+
+/* ---- #74 D-026 THE PANORAMA SHELL FADES WHERE THE FOG COVERS IT -----------
+ *
+ * The rules and their reasons are sl_gfx_worldasset.h's (SL_WA_MAT_PANORAMA and
+ * the D-026 block); this is their draw. Per frame, while the background pass
+ * runs under the remaster's stage fog and the sky dome was drawn beneath it:
+ *
+ *   1. the vertex loop bins every OTHER background vertex the fog reaches by
+ *      its azimuth from the eye, keeping the highest elevation tangent
+ *      (weighted by sl_wa_panorama_reach) per 0.25-degree bin;
+ *   2. each shell vertex takes as its haze top the highest bin within the
+ *      azimuth window (the widest gap between the shell's own columns seen
+ *      from the eye, tapering to zero at twice that), so every face of the
+ *      shell is covered by the tops of both of its columns;
+ *   3. each shell vertex gets a second texture coordinate: s, its place in the
+ *      fade above that top (linear in the elevation tangent, so exact up a
+ *      vertical face), and t, whether the fog covers it completely;
+ *   4. the shell's meshes draw blended with unit 1 holding the coverage
+ *      profile (sl_wa_panorama_alpha) - row 0 whole, row 1 the fade - under
+ *      MODULATE, so a fragment's colour and fog are exactly what they were
+ *      and only its alpha is scaled. Below the haze top, and wherever the fog
+ *      does not cover the shell completely, that alpha is exactly 1 and the
+ *      blend writes the fragment unchanged. Depth writes stay as the
+ *      material's class has them, so nothing in front of the shell draws any
+ *      differently.
+ *
+ * With no dome drawn this frame, no stage fog on the pass, or SL_SKY_PANORAMA=0
+ * the shell draws as authored. */
+#define PANO_BINS   1440                      /* 0.25 degree of azimuth each */
+#define PANO_RAMP   256                       /* profile texels */
+static const struct sl_wa_asset *g_pano_asset; /* what the tables describe */
+static unsigned *g_pano_slot;                 /* per vertex: 0, or 1 + shell slot */
+static unsigned *g_pano_vert;                 /* shell slot -> vertex */
+static unsigned  g_pano_nvert;
+static float    *g_pano_pos;                  /* shell slot -> x y z this frame */
+static float    *g_pano_st;                   /* per vertex: unit-1 coordinate */
+static float     g_pano_bin[PANO_BINS];
+static GLuint    g_pano_tex;
+static unsigned  g_pano_frames;               /* frames the rule drew, census */
+static unsigned  g_pano_meshes;               /* shell meshes it drew, census */
+static float     g_pano_top_lo, g_pano_top_hi; /* haze tops last frame, degrees */
+
+/* D-026's switch: SL_SKY_PANORAMA=0 draws the shell as authored. Default on,
+ * one cached getenv, the SL_SKY_ZENITH idiom. */
+static int sky_panorama_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *s = getenv("SL_SKY_PANORAMA");
+                  on = (s == NULL || *s != '0'); }
+    return on;
+}
+
+/* The shell's vertices, collected once per asset from the meshes whose
+ * material carries SL_WA_MAT_PANORAMA. Returns how many (0: no shell). */
+static unsigned pano_tables(const struct sl_wa_asset *a)
+{
+    unsigned mi, n, k;
+    if (a == g_pano_asset) return g_pano_nvert;
+    free(g_pano_slot); free(g_pano_vert); free(g_pano_pos); free(g_pano_st);
+    g_pano_slot = NULL; g_pano_vert = NULL; g_pano_pos = NULL; g_pano_st = NULL;
+    g_pano_nvert = 0;
+    g_pano_asset = a;
+    for (mi = 0; mi < a->mesh_count; mi++)
+        if (a->materials[a->meshes[mi].material].flags & SL_WA_MAT_PANORAMA) break;
+    if (mi == a->mesh_count) return 0;
+    g_pano_slot = (unsigned *) calloc(a->vertex_count, sizeof *g_pano_slot);
+    g_pano_st = (float *) calloc((size_t) a->vertex_count * 2u, sizeof *g_pano_st);
+    if (g_pano_slot == NULL || g_pano_st == NULL) return 0;
+    for (mi = 0; mi < a->mesh_count; mi++) {
+        const struct sl_wa_mesh *mh = &a->meshes[mi];
+        if (!(a->materials[mh->material].flags & SL_WA_MAT_PANORAMA)) continue;
+        for (n = 0; n < mh->index_count; n++) {
+            unsigned vi = a->indices[mh->first_index + n];
+            if (g_pano_slot[vi] == 0u) g_pano_slot[vi] = ++g_pano_nvert;
+        }
+    }
+    g_pano_vert = (unsigned *) malloc(g_pano_nvert * sizeof *g_pano_vert);
+    g_pano_pos = (float *) malloc((size_t) g_pano_nvert * 3u * sizeof *g_pano_pos);
+    if (g_pano_vert == NULL || g_pano_pos == NULL) { g_pano_nvert = 0; return 0; }
+    for (k = 0; k < a->vertex_count; k++)
+        if (g_pano_slot[k]) g_pano_vert[g_pano_slot[k] - 1u] = k;
+    return g_pano_nvert;
+}
+
+/* Unit 1 and its client array, and the profile image: two rows of PANO_RAMP
+ * texels, row 0 whole, row 1 sl_wa_panorama_alpha across the fade with texel
+ * 0 at s = 0 and the last texel at s = 1. Made once. */
+static int pano_gl_ok(void)
+{
+    static int st;
+    if (st != 0) return st > 0;
+    st = -1;
+    if (!post11_ok()) return 0;
+    if (p_ClientActiveTexture == NULL)
+        p_ClientActiveTexture = (SL_PFN_CLIENTACTIVETEXTURE) sl_gl_proc("glClientActiveTexture");
+    if (p_ClientActiveTexture == NULL) {
+        fprintf(stderr, "#74 worldasset: no multitexture client state - the panorama "
+                        "shell draws as authored (D-026)\n");
+        return 0;
+    }
+    {
+        static unsigned char px[2 * PANO_RAMP * 4];
+        unsigned i;
+        for (i = 0; i < PANO_RAMP; i++) {
+            float al = sl_wa_panorama_alpha((float) i / (float) (PANO_RAMP - 1));
+            int q = (int) (al * 255.0f + 0.5f);
+            if (q < 0) q = 0;
+            if (q > 255) q = 255;
+            memset(&px[i * 4u], 255, 4);
+            memset(&px[(PANO_RAMP + i) * 4u], 255, 3);
+            px[(PANO_RAMP + i) * 4u + 3u] = (unsigned char) q;
+        }
+        glGenTextures(1, &g_pano_tex);
+        glBindTexture(GL_TEXTURE_2D, g_pano_tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, PANO_RAMP, 2, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, px);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        g_tex_gl_bound = 0;
+    }
+    st = 1;
+    return 1;
+}
+
+/* Steps 2 and 3: each shell vertex's haze top and its unit-1 coordinate.
+ * `eye` is in the space the pass's positions are in; `fogc` the pass's own
+ * per-vertex fog coordinates. The fade is SL_WA_PANO_FADE degrees wide. */
+static void pano_coords(const float eye[3], const float *fogc)
+{
+    static float az[4096];
+    float gap = 0.0f, win_in, win_out;
+    unsigned k, na = 0;
+    const double tobin = PANO_BINS / 360.0;
+    g_pano_top_lo = 1e30f;
+    g_pano_top_hi = -1e30f;
+    /* The window: the widest gap between the shell's columns as seen from
+     * here. An insertion sort of at most a few hundred angles. */
+    for (k = 0; k < g_pano_nvert && na < 4096u; k++) {
+        const float *p = &g_pano_pos[k * 3u];
+        float a = (float) (atan2((double) (p[0] - eye[0]), (double) (p[2] - eye[2]))
+                           * (180.0 / 3.14159265358979));
+        unsigned j = na++;
+        if (a < 0.0f) a += 360.0f;
+        while (j > 0 && az[j - 1] > a) { az[j] = az[j - 1]; j--; }
+        az[j] = a;
+    }
+    for (k = 0; k + 1 < na; k++)
+        if (az[k + 1] - az[k] > gap) gap = az[k + 1] - az[k];
+    if (na > 0 && az[0] + 360.0f - az[na - 1] > gap) gap = az[0] + 360.0f - az[na - 1];
+    win_in = gap;
+    win_out = 2.0f * gap;
+    for (k = 0; k < g_pano_nvert; k++) {
+        const unsigned vi = g_pano_vert[k];
+        const float *p = &g_pano_pos[k * 3u];
+        const double dx = p[0] - eye[0], dz = p[2] - eye[2];
+        const double h = sqrt(dx * dx + dz * dz);
+        const float tan_e = (h > 1e-3) ? (float) ((p[1] - eye[1]) / h) : 0.0f;
+        double phi = atan2(dx, dz) * (180.0 / 3.14159265358979);
+        int b0, b, span = (int) (win_out * tobin) + 1;
+        float top = 0.0f, s;
+        if (phi < 0.0) phi += 360.0;
+        b0 = (int) (phi * tobin);
+        for (b = b0 - span; b <= b0 + span; b++) {
+            int w = ((b % PANO_BINS) + PANO_BINS) % PANO_BINS;
+            float v = g_pano_bin[w];
+            if (v > 0.0f) {
+                v *= sl_wa_panorama_taper((float) ((b + 0.5) / tobin - phi), win_in, win_out);
+                if (v > top) top = v;
+            }
+        }
+        s = sl_wa_panorama_coord(tan_e, top, SL_WA_PANO_FADE);
+        g_pano_st[vi * 2u]      = (s * (float) (PANO_RAMP - 1) + 0.5f) / (float) PANO_RAMP;
+        g_pano_st[vi * 2u + 1u] = 0.25f + 0.5f * sl_wa_panorama_fogged(fogc[vi]);
+        {
+            float deg = (float) (atan((double) top) * (180.0 / 3.14159265358979));
+            if (deg < g_pano_top_lo) g_pano_top_lo = deg;
+            if (deg > g_pano_top_hi) g_pano_top_hi = deg;
+        }
+    }
+}
+
+/* ==== #75 REPLACEMENT GEOMETRY STAYS CLOSED AT THE EYE =====================
+ *
+ * The contract (sl_gfx_worldasset.h, THE NEAR-CUT CONTRACT OF REPLACEMENT
+ * GEOMETRY): whatever part of a replacement triangle lies in front of the eye
+ * but nearer than znear is drawn at znear instead of being cut away. The
+ * original renderer keeps that coverage for an eye-crossing triangle (B-100,
+ * emit_tri) and cuts a triangle wholly in front at the near plane like the
+ * cartridge; a replacement item's triangulation is its own, so one of its
+ * walls is eye-crossing at one pose and wholly in front but inside znear a
+ * few units further on, and both have to stay closed.
+ *
+ * One primitive for every replacement seam that draws opaque geometry by
+ * index lists - the stage background and the rigid props: after a
+ * depth-writing mesh draws as before, the triangles the near plane cuts
+ * (sl_wa_near_cut_select, from this frame's clip positions) draw once more
+ * under GL_DEPTH_CLAMP - no near cut, depth held at znear, GL's side planes
+ * still taking away anything behind the eye - tested LESS behind a polygon
+ * offset, so that draw loses to the first everywhere the first drew and adds
+ * only the coverage the near cut removed. No geometry is added and no
+ * culling changes. A translucent or decal draw writes no depth to lose
+ * against and is left as it was.
+ *
+ * Controls: SL_WA_NEARKEEP=0 draws every seam the previous way,
+ * SL_WA_NEARKEEP=eye keeps only the eye-crossing population (the #75 first
+ * form), SL_BG_NEARKEEP=0 turns the background's off alone as it always has.
+ * A driver that refuses GL_DEPTH_CLAMP gets the previous way, said once. */
+static unsigned char *g_bgn_cls;             /* background: per vertex near class */
+static unsigned       g_bgn_cls_cap;
+static unsigned      *g_wan_idx;             /* one mesh's near-cut triangles */
+static unsigned       g_wan_idx_cap;
+static int            g_wan_clamp = -1;      /* -1 untried, 0 refused, 1 live */
+static unsigned       g_bgn_tris, g_bgn_frames, g_prn_tris, g_prn_draws;
+
+/* 0 off, 1 the full contract, 2 eye-crossing only. */
+static int wa_nearkeep_mode(void)
+{
+    static int m = -1;
+    if (m < 0) {
+        const char *v = getenv("SL_WA_NEARKEEP");
+        m = (v == NULL || *v == '\0') ? 1 : (*v == '0') ? 0
+          : (strcmp(v, "eye") == 0) ? 2 : 1;
+    }
+    return m;
+}
+
+static int bg_nearkeep_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_NEARKEEP"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+/* Whether the contract can be drawn at all - asked of the driver once. With
+ * SL_DEPTH_CLAMP's global clamp live everything is already clamped and there
+ * is nothing to toggle. */
+static int wa_nearkeep_ready(void)
+{
+    if (wa_nearkeep_mode() == 0 || g_dclamp_state > 0) return 0;
+    if (g_wan_clamp < 0) {
+        while (glGetError() != GL_NO_ERROR) { }
+        glEnable(GL_DEPTH_CLAMP);
+        g_wan_clamp = (glGetError() == GL_NO_ERROR);
+        glDisable(GL_DEPTH_CLAMP);
+        while (glGetError() != GL_NO_ERROR) { }
+        if (!g_wan_clamp)
+            fprintf(stderr, "#75 worldasset: GL_DEPTH_CLAMP refused - replacement geometry "
+                            "at the eye keeps GL's near cut\n");
+    }
+    return g_wan_clamp;
+}
+
+/* The second draw of one mesh's index list: the triangles the near plane
+ * cuts, clamped, losing to the first draw. Returns how many it drew. */
+static unsigned wa_near_fill(const unsigned *ix, unsigned count, const unsigned char *cls)
+{
+    const unsigned mode = (wa_nearkeep_mode() == 2) ? SL_WA_NEAR_EYE_ONLY : 0u;
+    unsigned nc = sl_wa_near_cut_select(cls, ix, count, mode, NULL);
+    if (nc == 0u) return 0u;
+    if (g_wan_idx_cap < nc) {
+        unsigned *p = (unsigned *) realloc(g_wan_idx, (size_t) nc * sizeof *p);
+        if (p == NULL) return 0u;
+        g_wan_idx = p;
+        g_wan_idx_cap = nc;
+    }
+    nc = sl_wa_near_cut_select(cls, ix, count, mode, g_wan_idx);
+    glEnable(GL_DEPTH_CLAMP);
+    glDepthFunc(GL_LESS);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(1.0f, 4.0f);
+    glDrawElements(GL_TRIANGLES, (GLsizei) nc, GL_UNSIGNED_INT, (const GLvoid *) g_wan_idx);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_DEPTH_CLAMP);
+    return nc / 3u;
+}
+
+/* #77 THE ITEM'S OWN COPLANAR SURFACES (sl_wa_coplanar_yield for the rule
+ * and the measurement): the triangles that lie exactly on an earlier surface
+ * of the same item, found once per item, and drawn LESS so that the surface
+ * the item draws first keeps the pixels, as the remaster's own depth test
+ * does. SL_BG_COPLANAR=0 draws every triangle LEQUAL as before. */
+static const struct sl_wa_asset *g_cop_asset;
+static unsigned char *g_cop_yield;           /* per triangle of g_cop_asset */
+static unsigned char *g_cop_opp;             /* ... and the two sides of one wall */
+static unsigned char *g_cop_layer;           /* ... and the stacked decals (#89) */
+static unsigned char  g_cop_mesh[SL_WA_MAX_MESHES];   /* any yielding triangle */
+static unsigned       g_cop_count, g_cop_frames, g_cop_nopp;
+static float          g_cop_eye[3];          /* this frame's eye, item coordinates */
+static int            g_cop_eye_ok;
+/* THE PUSH of a side facing away (sl_wa_coplanar_eps for the measurement):
+ * one polygon-offset step resolves an exact tie, and the two sides of a
+ * wall are exact ties. The two sides of a curved shell are not: the dome
+ * on Surface is an inside and an outside drawn on the same vertices with
+ * different triangulations, so where a triangle of one spans two of the
+ * other the two surfaces cross within the rounding of their positions (up
+ * to 0.4 item units at 41000), and a depth offset of a few steps leaves
+ * stripes of the inside across the cap. So a vertex of a two-sided
+ * triangle is also pushed in the item's own space, along the area-weighted
+ * normal of the two-sided triangles that meet at it and away from the eye,
+ * by twice the pair tolerance at its distance from the origin - past every
+ * crossing the tolerance admits, and invisible: the pushed side is the one
+ * the other covers. Per vertex, once per item (the normals) and once per
+ * frame (the positions, the same transform as the rest); the draw of a run
+ * facing away reads the pushed positions and the same indices. */
+static float         *g_cop_vn;              /* per vertex x3: the push normal, zero when not two-sided */
+static unsigned       g_cop_vn_cap;
+static float         *g_cop_clip;            /* per vertex x4: the pushed clip position, this frame */
+static float         *g_cop_zraw;            /* ... and its z before the far clamp */
+static unsigned       g_cop_clip_cap;
+static unsigned       g_cop_pushed;          /* vertices pushed this frame */
+static const float   *g_bg_clip_ptr;         /* the frame's unpushed clip array, for the restore */
+static int bg_coplanar_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_COPLANAR"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+/* TWO SIDES OF ONE WALL (sl_wa_coplanar_opposed): of two of the item's
+ * surfaces back to back in one plane, the side facing away from the eye is
+ * drawn pushed behind the other, so the side the eye faces shows from either
+ * room. SL_BG_TWOSIDED=0 draws both as the order rule alone does. */
+/* #96 THE FACE CULL (SL_WA_MAT_CULL_BACK): SL_BG_CULL=0 draws a culled
+ * material's both sides, as before. One cached getenv. g_bg_culled counts the
+ * triangles withheld, for the census; one line per item says how many of its
+ * materials carry the cull. */
+static unsigned g_bg_culled;
+static int bg_cull_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_CULL"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+static void bg_cull_say(const struct sl_wa_asset *a)
+{
+    static const struct sl_wa_asset *said;
+    unsigned m, nm = 0, nt = 0;
+    if (a == said) return;
+    said = a;
+    for (m = 0; m < a->mesh_count; m++)
+        if (a->meshes[m].material < a->material_count
+            && (a->materials[a->meshes[m].material].flags & SL_WA_MAT_CULL_BACK)) {
+            nm++;
+            nt += a->meshes[m].index_count / 3u;
+        }
+    if (nm != 0u)
+        fprintf(stderr, "#96 worldasset: background/%s - %u meshes (%u triangles) stand under the "
+                        "source's face cull and draw from their front alone (SL_BG_CULL=0 draws "
+                        "both sides)\n", a->path, nm, nt);
+}
+
+static int bg_twosided_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_TWOSIDED"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+/* #81 A TRANSLUCENT SURFACE ON AN EARLIER ONE YIELDS (sl_wa_coplanar_opposed_ex
+ * for the measurement). SL_BG_XLU_YIELD=0 leaves translucent meshes out. */
+static int bg_xlu_yield_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_XLU_YIELD"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+/* #89 STACKED DECALS ON A SURFACE OUTSIDE THE PASS (sl_wa_decal_layers for
+ * the rule and the measurement). SL_BG_DECAL_LAYER=0 drops the offset from
+ * every yielding decal as #85 did. */
+static int bg_decal_layer_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_DECAL_LAYER"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+static void bg_coplanar_prepare(const struct sl_wa_asset *a)
+{
+    unsigned m;
+    if (a == g_cop_asset) return;
+    g_cop_asset = a;
+    free(g_cop_yield);
+    free(g_cop_opp);
+    free(g_cop_layer);
+    g_cop_yield = NULL;
+    g_cop_opp = NULL;
+    g_cop_layer = NULL;
+    g_cop_count = 0u;
+    g_cop_nopp = 0u;
+    memset(g_cop_mesh, 0, sizeof g_cop_mesh);
+    if (!bg_coplanar_on() || a->index_count < 3u) return;
+    g_cop_yield = (unsigned char *) malloc(a->index_count / 3u);
+    if (g_cop_yield == NULL) return;
+    if (bg_twosided_on()) g_cop_opp = (unsigned char *) malloc(a->index_count / 3u);
+    if (g_cop_opp != NULL) {
+        unsigned t;
+        g_cop_nopp = sl_wa_coplanar_opposed_ex(a, g_cop_yield, g_cop_opp, bg_xlu_yield_on());
+        for (t = 0; t < a->index_count / 3u; t++) g_cop_count += g_cop_yield[t];
+    } else {
+        g_cop_count = sl_wa_coplanar_yield(a, g_cop_yield);
+    }
+    if (bg_decal_layer_on()) {
+        g_cop_layer = (unsigned char *) malloc(a->index_count / 3u);
+        if (g_cop_layer != NULL) {
+            unsigned t, nkeep, nover = 0;
+            nkeep = sl_wa_decal_layers(a, g_cop_yield, g_cop_layer);
+            for (t = 0; t < a->index_count / 3u; t++) nover += (g_cop_layer[t] & SL_WA_DECAL_OVER) ? 1u : 0u;
+            fprintf(stderr, "#89 worldasset: background/%s - %u yielding decal triangle%s lie on a "
+                            "surface outside the pass and keep the decal offset; %u decal "
+                            "triangle%s they yield to draw one offset nearer "
+                            "(SL_BG_DECAL_LAYER=0: dropped as before)\n", a->path,
+                    nkeep, nkeep == 1u ? "" : "s", nover, nover == 1u ? "" : "s");
+            if (nkeep == 0u) { free(g_cop_layer); g_cop_layer = NULL; }
+        }
+    }
+    for (m = 0; m < a->mesh_count && m < SL_WA_MAX_MESHES; m++) {
+        const struct sl_wa_mesh *mh = &a->meshes[m];
+        unsigned t;
+        if (mh->first_index % 3u != 0u) continue;
+        for (t = mh->first_index / 3u; t < (mh->first_index + mh->index_count) / 3u; t++)
+            if (g_cop_yield[t] || (g_cop_opp != NULL && g_cop_opp[t])
+                || (g_cop_layer != NULL && g_cop_layer[t])) { g_cop_mesh[m] = 1; break; }
+    }
+    /* the push normals of the two-sided vertices (see g_cop_vn) */
+    if (g_cop_opp != NULL && g_cop_nopp != 0u && g_cop_vn_cap < a->vertex_count) {
+        float *p = (float *) realloc(g_cop_vn, (size_t) a->vertex_count * 3u * sizeof *p);
+        if (p != NULL) { g_cop_vn = p; g_cop_vn_cap = a->vertex_count; }
+    }
+    if (g_cop_opp != NULL && g_cop_nopp != 0u && g_cop_vn != NULL && g_cop_vn_cap >= a->vertex_count) {
+        unsigned t, v;
+        memset(g_cop_vn, 0, (size_t) a->vertex_count * 3u * sizeof *g_cop_vn);
+        for (t = 0; t < a->index_count / 3u; t++) {
+            const unsigned *ix = &a->indices[t * 3u];
+            const struct sl_wa_vertex *A, *B, *C;
+            double e1[3], e2[3], n[3];
+            int k;
+            if (!g_cop_opp[t]) continue;
+            if (ix[0] >= a->vertex_count || ix[1] >= a->vertex_count || ix[2] >= a->vertex_count) continue;
+            A = &a->vertices[ix[0]]; B = &a->vertices[ix[1]]; C = &a->vertices[ix[2]];
+            e1[0] = (double) B->x - A->x; e1[1] = (double) B->y - A->y; e1[2] = (double) B->z - A->z;
+            e2[0] = (double) C->x - A->x; e2[1] = (double) C->y - A->y; e2[2] = (double) C->z - A->z;
+            n[0] = e1[1] * e2[2] - e1[2] * e2[1];
+            n[1] = e1[2] * e2[0] - e1[0] * e2[2];
+            n[2] = e1[0] * e2[1] - e1[1] * e2[0];
+            for (k = 0; k < 3; k++) {
+                float *q = &g_cop_vn[ix[k] * 3u];
+                q[0] += (float) n[0]; q[1] += (float) n[1]; q[2] += (float) n[2];
+            }
+        }
+        for (v = 0; v < a->vertex_count; v++) {
+            float *q = &g_cop_vn[v * 3u];
+            const double len = sqrt((double) q[0] * q[0] + (double) q[1] * q[1] + (double) q[2] * q[2]);
+            if (len > 1e-12) { q[0] = (float) (q[0] / len); q[1] = (float) (q[1] / len); q[2] = (float) (q[2] / len); }
+            else q[0] = q[1] = q[2] = 0.0f;
+        }
+    }
+    {
+        unsigned nm = 0;
+        for (m = 0; m < a->mesh_count && m < SL_WA_MAX_MESHES; m++) nm += g_cop_mesh[m];
+        fprintf(stderr, "#77 worldasset: background/%s - %u triangle%s of %u mesh%s lie "
+                        "exactly on an earlier surface of the item and yield to it (the "
+                        "remaster's LESS in its own order; SL_BG_COPLANAR=0 draws them "
+                        "LEQUAL)\n", a->path, g_cop_count, g_cop_count == 1u ? "" : "s",
+                nm, nm == 1u ? "" : "es");
+        if (g_cop_opp != NULL)
+            fprintf(stderr, "#77 worldasset: background/%s - %u triangle%s face the other way "
+                            "from a surface in their plane (two sides of one wall); the side "
+                            "facing away from the eye draws behind the other, pushed by the pair "
+                            "tolerance (SL_BG_TWOSIDED=0 draws both as before)\n", a->path, g_cop_nopp,
+                    g_cop_nopp == 1u ? "" : "s");
+    }
+}
+
+/* #88 THE BACKGROUND PASS'S ARRAYS IN BUFFER OBJECTS. Measured on Frigate's
+ * deck and Statue's start under XBLA (B-PERF1): drawn from client-side
+ * arrays, every glDrawElements had the driver copy the index list and every
+ * vertex between the run's lowest and highest index - Frigate's largest
+ * mesh, 391620 indices over a 126365-vertex span, cost 1.1 ms in that one
+ * call, and at Statue's start the runs' spans added up to some 14 times the
+ * item's 58701 vertices a walk (a mesh drawn as several runs copies a span
+ * per run). So the item's own records (texture coordinates, colours) and its
+ * indices go into buffer objects once per item, and the per-walk arrays
+ * (clip positions, the pushed positions, the fog coordinates) are uploaded
+ * once a walk and again only where the pass rewrites them between draws (the
+ * far pass's two ranges, a blended mesh's first-range depth, the decal pull
+ * and its restore), each upload covering the rewritten mesh's vertex span.
+ * The draws read the same values from the buffers that they read from the
+ * client arrays, in the same order under the same state, so the picture is
+ * the same. The array pointers are put back to the client arrays at the end
+ * of the pass, as they stood before. Shot-out light colours
+ * (bg_light_colours) and the material program's and the panorama's extra
+ * coordinates stay client arrays. SL_BG_VBO=0 draws from client arrays
+ * throughout (the A/B).
+ *
+ * MEASURED BOUNDARY. Those rewrite uploads go into a buffer that draws
+ * already issued still read, and at the Dam's start (some 48 rewritten
+ * meshes a walk) the driver then waits inside the pass: there the pass is no
+ * faster than from client arrays (6.2 ms either way). Three layouts that
+ * never write a buffer in flight (each range in fresh storage; a rewritten
+ * mesh from a copy of its own, or from the client arrays) were each slower
+ * than this one at Statue's start, for a reason not isolated (B-PERF1). */
+#ifndef GL_ARRAY_BUFFER
+#define GL_ARRAY_BUFFER         0x8892
+#define GL_ELEMENT_ARRAY_BUFFER 0x8893
+#define GL_STREAM_DRAW          0x88E0
+#define GL_STATIC_DRAW          0x88E4
+#endif
+typedef void (APIENTRY *SL_PFN_GENBUFFERS)(GLsizei, GLuint *);
+typedef void (APIENTRY *SL_PFN_BINDBUFFER)(GLenum, GLuint);
+typedef void (APIENTRY *SL_PFN_BUFFERDATA)(GLenum, ptrdiff_t, const GLvoid *, GLenum);
+typedef void (APIENTRY *SL_PFN_BUFFERSUBDATA)(GLenum, ptrdiff_t, ptrdiff_t, const GLvoid *);
+static SL_PFN_GENBUFFERS    p_GenBuffers;
+static SL_PFN_BINDBUFFER    p_BindBuffer;
+static SL_PFN_BUFFERDATA    p_BufferData;
+static SL_PFN_BUFFERSUBDATA p_BufferSubData;
+static int      g_bgv_state;                 /* 0 untried, 1 ready, -1 unavailable or off */
+static GLuint   g_bgv_static, g_bgv_index, g_bgv_stream;
+static const struct sl_wa_asset *g_bgv_asset; /* the item the static buffers hold */
+static unsigned *g_bgv_span;                 /* per mesh: lowest and highest vertex index */
+static unsigned g_bgv_items;                 /* items uploaded over the run */
+static int      g_bgv_live;                  /* this pass draws from the buffers */
+static const unsigned *g_bgv_idx0;           /* the item's index list: offsets from it */
+static unsigned g_bgv_n;                     /* the item's vertex count */
+static int      g_bgv_fog;                   /* the fog coordinates are uploaded */
+static unsigned long g_bgv_uploads;          /* sub-uploads after the walk's first, over the run */
+
+static int bgv_ready(void)
+{
+    if (g_bgv_state != 0) return g_bgv_state > 0;
+    {
+        const char *v = getenv("SL_BG_VBO");
+        if (v != NULL && *v == '0') { g_bgv_state = -1; return 0; }
+    }
+    p_GenBuffers    = (SL_PFN_GENBUFFERS)    sl_gl_proc("glGenBuffers");
+    p_BindBuffer    = (SL_PFN_BINDBUFFER)    sl_gl_proc("glBindBuffer");
+    p_BufferData    = (SL_PFN_BUFFERDATA)    sl_gl_proc("glBufferData");
+    p_BufferSubData = (SL_PFN_BUFFERSUBDATA) sl_gl_proc("glBufferSubData");
+    if (p_GenBuffers == NULL || p_BindBuffer == NULL || p_BufferData == NULL || p_BufferSubData == NULL) {
+        g_bgv_state = -1;
+        fprintf(stderr, "#88 worldasset: buffer objects unavailable - the background draws "
+                        "from client arrays\n");
+        return 0;
+    }
+    p_GenBuffers(1, &g_bgv_static);
+    p_GenBuffers(1, &g_bgv_index);
+    p_GenBuffers(1, &g_bgv_stream);
+    g_bgv_state = (g_bgv_static != 0u && g_bgv_index != 0u && g_bgv_stream != 0u) ? 1 : -1;
+    return g_bgv_state > 0;
+}
+
+/* The item's records and indices, once per item; each mesh's vertex span. */
+static int bgv_item(const struct sl_wa_asset *a)
+{
+    unsigned m, k;
+    if (a == g_bgv_asset) return 1;
+    free(g_bgv_span);
+    g_bgv_span = (unsigned *) malloc(((size_t) a->mesh_count + 1u) * 2u * sizeof *g_bgv_span);
+    if (g_bgv_span == NULL) { g_bgv_asset = NULL; return 0; }
+    for (m = 0; m < a->mesh_count; m++) {
+        const struct sl_wa_mesh *mh = &a->meshes[m];
+        unsigned lo = ~0u, hi = 0u;
+        for (k = 0; k < mh->index_count && mh->first_index + k < a->index_count; k++) {
+            const unsigned vi = a->indices[mh->first_index + k];
+            if (vi >= a->vertex_count) continue;
+            if (vi < lo) lo = vi;
+            if (vi > hi) hi = vi;
+        }
+        g_bgv_span[m * 2u] = lo;
+        g_bgv_span[m * 2u + 1u] = hi;
+    }
+    p_BindBuffer(GL_ARRAY_BUFFER, g_bgv_static);
+    p_BufferData(GL_ARRAY_BUFFER, (ptrdiff_t) ((size_t) a->vertex_count * sizeof a->vertices[0]),
+                 (const GLvoid *) a->vertices, GL_STATIC_DRAW);
+    p_BindBuffer(GL_ARRAY_BUFFER, 0);
+    p_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_bgv_index);
+    p_BufferData(GL_ELEMENT_ARRAY_BUFFER, (ptrdiff_t) ((size_t) a->index_count * sizeof a->indices[0]),
+                 (const GLvoid *) a->indices, GL_STATIC_DRAW);
+    p_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    g_bgv_asset = a;
+    g_bgv_items++;
+    fprintf(stderr, "#88 worldasset: background/%s in buffer objects - %u vertices, %u indices "
+                    "(SL_BG_VBO=0 draws from client arrays)\n", a->path, a->vertex_count, a->index_count);
+    return 1;
+}
+
+/* The stream buffer: the clip positions at 0, the pushed positions after
+ * them, the fog coordinates last. */
+#define BGV_PUSHED(n) ((size_t) (n) * 16u)
+#define BGV_FOG(n)    ((size_t) (n) * 32u)
+
+/* Vertices lo..hi of the clip array (and the pushed one) as they stand now. */
+static void bgv_put(const float *clip, unsigned lo, unsigned hi)
+{
+    if (!g_bgv_live || lo > hi || hi >= g_bgv_n) return;
+    p_BindBuffer(GL_ARRAY_BUFFER, g_bgv_stream);
+    p_BufferSubData(GL_ARRAY_BUFFER, (ptrdiff_t) ((size_t) lo * 16u),
+                    (ptrdiff_t) ((size_t) (hi - lo + 1u) * 16u), (const GLvoid *) &clip[lo * 4u]);
+    if (g_cop_pushed != 0u && g_cop_clip != NULL)
+        p_BufferSubData(GL_ARRAY_BUFFER, (ptrdiff_t) (BGV_PUSHED(g_bgv_n) + (size_t) lo * 16u),
+                        (ptrdiff_t) ((size_t) (hi - lo + 1u) * 16u), (const GLvoid *) &g_cop_clip[lo * 4u]);
+    p_BindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+/* One mesh's vertices, after the pass rewrote them in place. */
+static void bgv_put_mesh(const float *clip, unsigned mi)
+{
+    if (!g_bgv_live || g_bgv_span == NULL) return;
+    bgv_put(clip, g_bgv_span[mi * 2u], g_bgv_span[mi * 2u + 1u]);
+    g_bgv_uploads++;
+}
+
+/* The vertex pointer: the clip positions, or the pushed ones. */
+static void bgv_vertex_pointer(int pushed)
+{
+    if (g_bgv_live) {
+        p_BindBuffer(GL_ARRAY_BUFFER, g_bgv_stream);
+        glVertexPointer(4, GL_FLOAT, 0, (const GLvoid *) (pushed ? BGV_PUSHED(g_bgv_n) : 0u));
+        p_BindBuffer(GL_ARRAY_BUFFER, 0);
+    } else {
+        glVertexPointer(4, GL_FLOAT, 0, (const GLvoid *) (pushed ? g_cop_clip : g_bg_clip_ptr));
+    }
+}
+
+/* One background mesh's draw: exactly as before, then the near-cut fill. A
+ * mesh with yielding triangles is drawn in its own order as runs, the
+ * yielding runs under LESS. */
+static void bg_draw_mesh_run(const unsigned *ix, unsigned count, int fill)
+{
+    if (g_bgv_live) {
+        p_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_bgv_index);
+        glDrawElements(GL_TRIANGLES, (GLsizei) count, GL_UNSIGNED_INT,
+                       (const GLvoid *) ((size_t) (ix - g_bgv_idx0) * sizeof *ix));
+        p_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    } else {
+        glDrawElements(GL_TRIANGLES, (GLsizei) count, GL_UNSIGNED_INT, (const GLvoid *) ix);
+    }
+    if (fill) g_bgn_tris += wa_near_fill(ix, count, g_bgn_cls);
+}
+/* A triangle's draw state: bit 0 it yields (LESS), bit 1 it is the side of
+ * a wall facing away from this frame's eye, bits 3 and 4 its #89 decal layer
+ * (SL_WA_DECAL_KEEP, SL_WA_DECAL_OVER). */
+static unsigned char bg_cop_state(const struct sl_wa_asset *a, unsigned t)
+{
+    unsigned char y = (unsigned char) ((g_cop_yield[t] ? 1u : 0u)
+                                       | (g_cop_layer != NULL ? (unsigned) g_cop_layer[t] << 3 : 0u));
+    if (g_cop_opp != NULL && g_cop_opp[t] && g_cop_eye_ok) {
+        const unsigned *ix = &a->indices[t * 3u];
+        if (!sl_wa_tri_faces(&a->vertices[ix[0]], &a->vertices[ix[1]], &a->vertices[ix[2]],
+                             g_cop_eye))
+            y |= 2u;
+    }
+    return y;
+}
+/* #85 WHICH DECAL TRIANGLES TAKE THE DECAL OFFSET (sl_wa_decal_needs_offset
+ * for the rule and the measurement): those lying on another surface of the
+ * item, found once per item; a decal-pass surface that lies on nothing - a
+ * floor drawn in the pass - draws without it. SL_BG_DECAL_LONE=0 offsets
+ * every decal triangle as before. NULL when off or when the allocation
+ * failed - every triangle is then offset. */
+static const struct sl_wa_asset *g_dof_asset;
+static unsigned char *g_dof;
+static const unsigned char *bg_decal_offset_need(const struct sl_wa_asset *a)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_DECAL_LONE"); on = (v == NULL || *v != '0'); }
+    if (!on) return NULL;
+    if (a != g_dof_asset) {
+        unsigned nd = 0, np, t, m;
+        g_dof_asset = a;
+        free(g_dof);
+        g_dof = (a->index_count >= 3u) ? (unsigned char *) malloc(a->index_count / 3u) : NULL;
+        if (g_dof == NULL) return NULL;
+        np = sl_wa_decal_needs_offset(a, g_dof);
+        for (m = 0; m < a->mesh_count; m++) {
+            const struct sl_wa_mesh *mh = &a->meshes[m];
+            if (mh->material < a->material_count && (a->materials[mh->material].flags & SL_WA_MAT_DECAL)
+                && mh->first_index % 3u == 0u)
+                for (t = mh->first_index / 3u; t < (mh->first_index + mh->index_count) / 3u
+                                               && t < a->index_count / 3u; t++)
+                    nd++;
+        }
+        fprintf(stderr, "#85 worldasset: background/%s - %u of %u decal triangles lie on another "
+                        "surface and take the decal offset; the rest lie on nothing and draw "
+                        "without it (SL_BG_DECAL_LONE=0 offsets all)\n", a->path, np, nd);
+    }
+    return g_dof;
+}
+
+/* #85 A DECAL THAT YIELDS TO AN EARLIER DECAL draws without the decal pass's
+ * offset. Both carry the same offset and the same pull, so LESS alone is left
+ * to separate two rasterisations of one plane, and those differ by a step or
+ * two of depth that moves with the view: at Bunker 2's cells the floor (mesh
+ * 69, a translucent decal) covered the earlier stain (mesh 61) in some frames
+ * and not others under LESS, and in none with the offset dropped (13 of 13
+ * consecutive frames). Dropped, the yielding triangles sit the offset's two
+ * steps behind the earlier decal, and they still draw LESS. That floor lay on
+ * nothing else; a yielding decal that also lies on a surface outside the pass
+ * would sit at that surface's depth with the offset dropped, so it keeps the
+ * offset and the decal it yields to takes twice it (#89, sl_wa_decal_layers:
+ * Archives' blood pool and fan shadow).
+ *
+ * #90 and of a decal mesh drawn in both draws (bg_decal_mix), only the pieces
+ * of the draw at hand: g_bgx_filter 0 the first draw's, 1 the late draw's,
+ * -1 every piece; g_bgx_tri is the item's per-triangle answer. */
+static const struct sl_wa_asset *g_bgx_dec_asset;   /* the item g_bgx_tri answers for */
+static unsigned char *g_bgx_tri;                     /* per triangle: sl_wa_decal_late */
+static int g_bgx_filter = -1;
+static void bg_draw_mesh_elements(const struct sl_wa_asset *a, unsigned mi,
+                                  const struct sl_wa_mesh *mh, int fill)
+{
+    const unsigned *ix = &a->indices[mh->first_index];
+    unsigned t0, n, s, e;
+    const int dec = mh->material < a->material_count
+                 && (a->materials[mh->material].flags & SL_WA_MAT_DECAL) && bg_decal_on();
+    const unsigned char *dof = (dec && mh->first_index % 3u == 0u) ? bg_decal_offset_need(a) : NULL;
+    const int cop = !(a != g_cop_asset || g_cop_yield == NULL || mi >= SL_WA_MAX_MESHES || !g_cop_mesh[mi]);
+    const int flt = (g_bgx_filter >= 0 && g_bgx_tri != NULL && a == g_bgx_dec_asset
+                     && mh->first_index % 3u == 0u) ? g_bgx_filter : -1;
+    /* #96 the face cull: a culled material's triangles turned away from the
+     * eye are withheld (SL_WA_MAT_CULL_BACK, sl_wa_cull_drops) */
+    const unsigned mflags = mh->material < a->material_count ? a->materials[mh->material].flags : 0u;
+    const int cul = mh->first_index % 3u == 0u && sl_wa_cull_drops(mflags, bg_cull_on(), g_cop_eye_ok, 0);
+    if (cul) bg_cull_say(a);
+    if (!cop && dof == NULL && flt < 0 && !cul) {
+        bg_draw_mesh_run(ix, mh->index_count, fill);
+        return;
+    }
+    t0 = mh->first_index / 3u;
+    n = mh->index_count / 3u;
+    /* a triangle's state: bg_cop_state's bits, bit 2 a decal triangle that
+     * lies on nothing (#85, bg_decal_offset_need), bit 5 a late piece (#90),
+     * bit 6 a triangle the face cull withholds (#96) */
+#define BG_TRI_STATE(t) ((unsigned char) ((cop ? bg_cop_state(a, (t)) : 0u) \
+                                          | ((dof != NULL && !dof[(t)]) ? 4u : 0u) \
+                                          | ((flt >= 0 && g_bgx_tri[(t)] != 0u) ? 32u : 0u) \
+                                          | ((cul && !sl_wa_tri_faces(&a->vertices[a->indices[(t) * 3u]], \
+                                                                      &a->vertices[a->indices[(t) * 3u + 1u]], \
+                                                                      &a->vertices[a->indices[(t) * 3u + 2u]], \
+                                                                      g_cop_eye)) ? 64u : 0u)))
+    for (s = 0; s < n; s = e) {
+        const unsigned char y = BG_TRI_STATE(t0 + s);
+        /* #85 a decal lying on nothing, or yielding to an earlier decal, draws
+         * without the offset; #89 one that yields while lying on a surface
+         * outside the pass keeps it, and the decal it yields to takes twice it */
+        const int over = dec && (y & 16u);
+        const int bare = dec && !over && ((y & 4u) || ((y & 1u) && !(y & 8u)));
+        for (e = s + 1u; e < n && BG_TRI_STATE(t0 + e) == y; e++) { }
+        if (flt >= 0 && ((y & 32u) != 0u) != (flt != 0)) continue;   /* #90 the other draw's */
+        if (y & 64u) { g_bg_culled += e - s; continue; }             /* #96 turned away */
+        if (y & 1u) glDepthFunc(GL_LESS);
+        if (bare) glPolygonOffset(0.0f, 0.0f);              /* #85, above */
+        if (over) glPolygonOffset(-2.0f, -4.0f);            /* #89, sl_wa_decal_layers */
+        if (y & 2u) {                      /* the side facing away: behind the other */
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0f, 2.0f);
+            if (g_cop_pushed != 0u && g_cop_clip != NULL)
+                bgv_vertex_pointer(1);
+        }
+        bg_draw_mesh_run(ix + s * 3u, (e - s) * 3u, fill);
+        if (y & 2u) {
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            if (g_cop_pushed != 0u && g_cop_clip != NULL && g_bg_clip_ptr != NULL)
+                bgv_vertex_pointer(0);
+        }
+        if (y & 1u) glDepthFunc(GL_LEQUAL);
+        if (bare || over) glPolygonOffset(-1.0f, -2.0f);    /* the decal pass's, back */
+    }
+#undef BG_TRI_STATE
+}
+
+/* ==== #75 THE REPLACEMENT SHOWS THE LIGHTS THE GAME HAS SHOT OUT =========
+ *
+ * The game owns this state entirely: a bullet that hits a light-fixture
+ * triangle (chrprop.c -> lightFixtureBreak) records the fixture's vertices in
+ * lightfixture.c's darkened table and shifts their colours right by two, and
+ * nothing else about a light changes. The replacement's own fixture is static
+ * imagery, so without this it stays lit.
+ *
+ * What is read: the darkened vertices' positions (sl_wa_light_darkened, in the
+ * room data's coordinates, which are the replacement item's) and the game's
+ * own fixture reach (sl_wa_light_reach, lightIsCoordNearDarkenedVertex's
+ * `room_data_float1 * 100`). What is applied: the game's own operation, colour
+ * >> 2, to every replacement vertex of every replacement triangle whose three
+ * vertices all lie within that reach of a shot-out vertex - the replacement's
+ * surface where the game's fixture is, per fixture, so an unshot light stays
+ * lit. Positions are remembered per table slot, so a fixture stays out while
+ * its room is streamed out (the game's table persists the same way), and the
+ * dimmed colours are rebuilt only when the set changes. SL_BG_LIGHTS=0 draws
+ * every light as authored. */
+#define BGL_SLOTS 512u
+unsigned sl_wa_light_slots(void);
+int      sl_wa_light_darkened(unsigned i, unsigned *key, float *p);
+float    sl_wa_light_reach(void);
+static unsigned char *g_bgl_col;             /* per vertex RGBA, when any is out */
+static unsigned       g_bgl_cap;
+static unsigned       g_bgl_key[BGL_SLOTS];
+static float          g_bgl_pos[BGL_SLOTS][3];
+static unsigned char  g_bgl_have[BGL_SLOTS];
+static unsigned       g_bgl_sig, g_bgl_live;
+static unsigned       g_bgl_nvert, g_bgl_ntri;
+static const struct sl_wa_asset *g_bgl_asset;
+static unsigned char *g_bgl_mark;            /* per vertex: on a shot-out fixture */
+static unsigned       g_bgl_mcap;
+static float          g_bgl_pts[BGL_SLOTS][3];
+
+/* SL_BG_BACKDROP=0: the game's own flat fill stays under the replacement on a
+ * stage with no sky. Default on, one cached getenv. */
+static unsigned g_bg_backdrop_frames, g_bg_fogless_frames;
+/* #81 SL_BG_FOGLESS=0: a fogless stage's replacement draws past the game's far
+ * plane and over a black backdrop as before (sl_wa_fogless_range). */
+static int bg_fogless_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_FOGLESS"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+static int bg_backdrop_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_BACKDROP"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+static int bg_lights_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_LIGHTS"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+/* This frame's colour source: NULL for the bundle's own, else the rebuilt one. */
+static const unsigned char *bg_light_colours(const struct sl_wa_asset *a)
+{
+    unsigned i, nslot, sig = 2166136261u, known = 0;
+    float reach;
+
+    if (!bg_lights_on()) return NULL;
+    nslot = sl_wa_light_slots();
+    if (nslot > BGL_SLOTS) nslot = BGL_SLOTS;
+    for (i = 0; i < nslot; i++) {
+        unsigned key = 0;
+        float p[3];
+        const int r = sl_wa_light_darkened(i, &key, p);
+        if (r == 2) {
+            g_bgl_key[i] = key;
+            memcpy(g_bgl_pos[i], p, sizeof p);
+            g_bgl_have[i] = 1;
+        } else if (r == 0 || !g_bgl_have[i] || g_bgl_key[i] != key) {
+            g_bgl_have[i] = 0;                 /* empty, or a position never seen */
+        }
+        if (g_bgl_have[i]) {
+            unsigned w[3];
+            memcpy(w, g_bgl_pos[i], sizeof w);
+            sig = (sig ^ i) * 16777619u;
+            sig = (sig ^ w[0]) * 16777619u;
+            sig = (sig ^ w[1]) * 16777619u;
+            sig = (sig ^ w[2]) * 16777619u;
+            known++;
+        }
+    }
+    if (known == 0u) { g_bgl_live = 0; return NULL; }
+    if (g_bgl_live && sig == g_bgl_sig && g_bgl_asset == a) return g_bgl_col;
+
+    reach = sl_wa_light_reach();
+    if (!(reach > 0.0f)) { g_bgl_live = 0; return NULL; }
+    if (g_bgl_cap < a->vertex_count) {
+        unsigned char *c = (unsigned char *) realloc(g_bgl_col, (size_t) a->vertex_count * 4u);
+        if (c == NULL) { g_bgl_live = 0; return NULL; }
+        g_bgl_col = c;
+        g_bgl_cap = a->vertex_count;
+    }
+    if (g_bgl_mcap < a->vertex_count) {
+        unsigned char *m = (unsigned char *) realloc(g_bgl_mark, a->vertex_count);
+        if (m == NULL) { g_bgl_live = 0; return NULL; }
+        g_bgl_mark = m;
+        g_bgl_mcap = a->vertex_count;
+    }
+    {
+        unsigned v, np = 0;
+        for (i = 0; i < nslot; i++)
+            if (g_bgl_have[i]) memcpy(g_bgl_pts[np++], g_bgl_pos[i], sizeof g_bgl_pts[0]);
+        g_bgl_ntri = sl_wa_light_mark(a->vertices, a->vertex_count, a->indices, a->index_count,
+                                      (const float (*)[3]) g_bgl_pts, np, reach, g_bgl_mark);
+        /* The colours: the bundle's own, >> 2 where the game's fixture is. */
+        g_bgl_nvert = 0;
+        for (v = 0; v < a->vertex_count; v++) {
+            const struct sl_wa_vertex *q = &a->vertices[v];
+            const int dim = g_bgl_mark[v] != 0;
+            g_bgl_col[v * 4u + 0u] = (unsigned char) (dim ? q->r >> 2 : q->r);
+            g_bgl_col[v * 4u + 1u] = (unsigned char) (dim ? q->g >> 2 : q->g);
+            g_bgl_col[v * 4u + 2u] = (unsigned char) (dim ? q->b >> 2 : q->b);
+            g_bgl_col[v * 4u + 3u] = q->a;
+            if (dim) g_bgl_nvert++;
+        }
+    }
+    g_bgl_sig = sig;
+    g_bgl_live = 1;
+    g_bgl_asset = a;
+    fprintf(stderr, "#75 worldasset: %u shot-out light vertices known; background/%s dims "
+                    "%u triangles (%u vertices) within the game's fixture reach %.2f "
+                    "(SL_BG_LIGHTS=0 draws every light as authored)\n",
+            known, a->path, g_bgl_ntri, g_bgl_nvert, (double) reach);
+    return g_bgl_col;
+}
+
+/* #80 the first range's depth for one mesh's vertices: clip z = k1 * w - k2
+ * over the vertices its indices name, in the pass's array and (when the
+ * two-sided push is in use) the pushed one; x, y and w untouched. */
+static void bg_far_rezero(const struct sl_wa_asset *a, const struct sl_wa_mesh *mh,
+                          float *clip, float *pushed, float k1, float k2)
+{
+    unsigned n;
+    for (n = 0; n < mh->index_count; n++) {
+        const unsigned vi = a->indices[mh->first_index + n];
+        if (vi >= a->vertex_count) continue;
+        clip[vi * 4u + 2u] = k1 * clip[vi * 4u + 3u] - k2;
+        if (pushed != NULL) pushed[vi * 4u + 2u] = k1 * pushed[vi * 4u + 3u] - k2;
+    }
+}
+
+/* #81 THE DECAL PASS'S DEPTH ADJUSTMENT (SL_WA_DECAL_PULL in the header for
+ * the measurement and the rule): a decal mesh's vertices drawn at the depth
+ * of the point `pull` nearer on their own line of sight, under the range's
+ * z = za w + zb (x, y and w untouched), and put back exactly after the draw.
+ * The old depths are saved per index position and restored in reverse, so a
+ * vertex the list names twice ends with its first-saved value. `clampfar`
+ * re-applies the single-range frame's far clamp. `eye` (the item's own
+ * coordinates, or NULL): each triangle's vertices are pulled as its PLANE
+ * moved SL_WA_DECAL_PULL toward the eye (sl_wa_decal_plane_ratio), so the
+ * cover is the same at every viewing angle; without one, `pull` along the
+ * sight line as first written. SL_BG_DECAL_PULL=0: off. */
+static float   *g_dpl_save;
+static unsigned g_dpl_cap, g_dpl_n, g_dpl_draws, g_dpl_plane;
+/* #81 BLUE COVERAGE on the background (SL_WA_MAT_COVERAGE_BLUE): realised
+ * exactly as the item pass does it (chr_decal_draw, below) - the texture's
+ * alpha swizzled to its blue around the one mesh. Bunker 1's hazard strips. */
+#ifndef GL_TEXTURE_SWIZZLE_A
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#endif
+static int wa_coverage_on(void);
+static int wa_swizzle_ok(void);
+static unsigned g_bg_cover_draws;
+static int bg_decal_pull_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_DECAL_PULL"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+/* #85 WHICH DECAL TRIANGLES ARE PULLED (sl_wa_decal_needs_pull for the rule
+ * and the measurement): those with a surface within the pull in front of
+ * them, found once per item; the rest keep the decal offset alone.
+ * SL_BG_DECAL_NEED=0 pulls every decal triangle as before. NULL when off or
+ * when the allocation failed - every triangle is then pulled. */
+static const struct sl_wa_asset *g_dpl_need_asset;
+static unsigned char *g_dpl_need;
+static const unsigned char *bg_decal_need(const struct sl_wa_asset *a)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_DECAL_NEED"); on = (v == NULL || *v != '0'); }
+    if (!on) return NULL;
+    if (a != g_dpl_need_asset) {
+        unsigned nd = 0, t, m;
+        g_dpl_need_asset = a;
+        free(g_dpl_need);
+        g_dpl_need = (a->index_count >= 3u) ? (unsigned char *) malloc(a->index_count / 3u) : NULL;
+        if (g_dpl_need == NULL) return NULL;
+        (void) sl_wa_decal_needs_pull(a, g_dpl_need);
+        for (m = 0; m < a->mesh_count; m++) {
+            const struct sl_wa_mesh *mh = &a->meshes[m];
+            if (mh->material < a->material_count && (a->materials[mh->material].flags & SL_WA_MAT_DECAL)
+                && mh->first_index % 3u == 0u)
+                for (t = mh->first_index / 3u; t < (mh->first_index + mh->index_count) / 3u
+                                               && t < a->index_count / 3u; t++)
+                    nd++;
+        }
+        {
+            unsigned np = 0;
+            for (t = 0; t < a->index_count / 3u; t++) np += g_dpl_need[t];
+            fprintf(stderr, "#85 worldasset: background/%s - %u of %u decal triangles have a "
+                            "surface within the pull in front of them and are pulled; the rest "
+                            "take the decal offset alone (SL_BG_DECAL_NEED=0 pulls all)\n",
+                    a->path, np, nd);
+        }
+    }
+    return g_dpl_need;
+}
+static void bg_decal_pull(const struct sl_wa_asset *a, const struct sl_wa_mesh *mh,
+                          float *clip, float *pushed, float za, float zb, float pull,
+                          int clampfar, const float *eye)
+{
+    unsigned n;
+    float ratio = 0.0f;
+    const unsigned char *need = bg_decal_need(a);
+    int skip = 0;                            /* #85 this triangle is not pulled */
+    g_dpl_n = 0;
+    if (g_dpl_cap < mh->index_count * 2u) {
+        float *p = (float *) realloc(g_dpl_save, (size_t) mh->index_count * 2u * sizeof *p);
+        if (p == NULL) return;
+        g_dpl_save = p;
+        g_dpl_cap = mh->index_count * 2u;
+    }
+    for (n = 0; n < mh->index_count; n++) {
+        const unsigned vi = a->indices[mh->first_index + n];
+        float *c;
+        /* the plane rule (SL_WA_DECAL_PULL), once per triangle; without an
+         * eye, or for a degenerate one, the fixed distance as before */
+        if (n % 3u == 0u) {
+            ratio = 0.0f;
+            skip = need != NULL && (mh->first_index % 3u) == 0u
+                && !need[(mh->first_index + n) / 3u];
+            if (eye != NULL && n + 2u < mh->index_count) {
+                const unsigned i0 = a->indices[mh->first_index + n],
+                               i1 = a->indices[mh->first_index + n + 1u],
+                               i2 = a->indices[mh->first_index + n + 2u];
+                if (i0 < a->vertex_count && i1 < a->vertex_count && i2 < a->vertex_count)
+                    ratio = sl_wa_decal_plane_ratio(&a->vertices[i0].x, &a->vertices[i1].x,
+                                                    &a->vertices[i2].x, eye,
+                                                    SL_WA_DECAL_PULL);
+            }
+            if (ratio > 0.0f && !skip) g_dpl_plane++;
+        }
+        if (vi >= a->vertex_count) { g_dpl_save[n * 2u] = g_dpl_save[n * 2u + 1u] = 0.0f; continue; }
+        c = &clip[vi * 4u];
+        g_dpl_save[n * 2u] = c[2];
+        if (skip) {                          /* saved for the restore, left as it is */
+            if (pushed != NULL) g_dpl_save[n * 2u + 1u] = pushed[vi * 4u + 2u];
+            continue;
+        }
+        c[2] = ratio > 0.0f ? sl_wa_decal_plane_z(za, zb, c[3], ratio)
+                            : sl_wa_decal_pull_z(za, zb, c[3], pull);
+        if (clampfar && c[3] > 0.0f && c[2] > c[3]) c[2] = c[3];
+        if (pushed != NULL) {
+            float *q = &pushed[vi * 4u];
+            g_dpl_save[n * 2u + 1u] = q[2];
+            q[2] = ratio > 0.0f ? sl_wa_decal_plane_z(za, zb, q[3], ratio)
+                                : sl_wa_decal_pull_z(za, zb, q[3], pull);
+            if (clampfar && q[3] > 0.0f && q[2] > q[3]) q[2] = q[3];
+        }
+    }
+    g_dpl_n = mh->index_count;
+    g_dpl_draws++;
+}
+static void bg_decal_unpull(const struct sl_wa_asset *a, const struct sl_wa_mesh *mh,
+                            float *clip, float *pushed)
+{
+    unsigned n = g_dpl_n;
+    while (n-- > 0u) {
+        const unsigned vi = a->indices[mh->first_index + n];
+        if (vi >= a->vertex_count) continue;
+        clip[vi * 4u + 2u] = g_dpl_save[n * 2u];
+        if (pushed != NULL) pushed[vi * 4u + 2u] = g_dpl_save[n * 2u + 1u];
+    }
+    g_dpl_n = 0;
+}
+
+/* #80 THE SHELL ON A TWO-RANGE FRAME. The panorama shell (SL_WA_MAT_PANORAMA)
+ * carried the streaks: its translucent upper band always blends, and while
+ * D-026 fades it its opaque wall is drawn blended too, so across the two
+ * ranges' overlap it was laid twice - on Surface two dark wedges in the haze
+ * along the streaks' lines - and with no overlap the streaks themselves. It
+ * is the item's outermost ring (prepare.panorama_shell: every vertex of it
+ * farther out than every other vertex), so along any ray from an eye inside
+ * it it is the last surface: it is drawn ONCE, whole, in the first range,
+ * under GL_DEPTH_CLAMP so its part nearer than that range's start keeps its
+ * pixels (at the nearest depth) instead of being cut, and the second range
+ * skips it. Nothing the first range draws can lie in front of a part nearer
+ * than the start - that would be farther out than the ring - and the second
+ * range's nearer scenery draws over it as it always did. */
+static int bg_far_shell(const struct sl_wa_material *mt)
+{
+    return (mt->flags & SL_WA_MAT_PANORAMA) != 0u;
+}
+
+static int bg_farpass_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_FARPASS"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+/* #90 the late translucent draw (sl_wa_blend_late): on by default,
+ * SL_BG_XLU_LATE=0 draws the whole item at the first world draw as before. */
+static int bg_xlu_late_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_XLU_LATE"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+/* #90 A DECAL ON A SOLID SURFACE IS DRAWN WITH IT (sl_wa_blend_late,
+ * sl_wa_decal_late), piece by piece: a translucent decal triangle goes late
+ * only when a translucent surface lies on or just over it, or it lies on
+ * nothing that writes depth, found once per item. A decal mesh with pieces
+ * of both kinds takes part in both draws, each drawing its own pieces
+ * (g_bgx_filter, bg_draw_mesh_elements). SL_BG_XLU_DECAL=0 draws every
+ * translucent decal late, as the rule first did. */
+static unsigned char g_bgx_mix[SL_WA_MAX_MESHES]; /* per mesh: sl_wa_decal_mix */
+static unsigned bg_decal_mix(const struct sl_wa_asset *a, unsigned mi)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_XLU_DECAL"); on = (v == NULL || *v != '0'); }
+    if (!on) return SL_WA_DECAL_MIX_LATE;
+    if (a != g_bgx_dec_asset) {
+        unsigned m, nd = 0, nl = 0, nmix = 0, nx;
+        g_bgx_dec_asset = a;
+        free(g_bgx_tri);
+        g_bgx_tri = (a->index_count >= 3u) ? (unsigned char *) malloc(a->index_count / 3u) : NULL;
+        nx = (g_bgx_tri != NULL) ? sl_wa_decal_late(a, g_bgx_tri) : 0u;
+        for (m = 0; m < a->mesh_count && m < SL_WA_MAX_MESHES; m++) {
+            const struct sl_wa_material *mt;
+            g_bgx_mix[m] = (unsigned char) sl_wa_decal_mix(a, g_bgx_tri, m);
+            if (a->meshes[m].material >= a->material_count) continue;
+            mt = &a->materials[a->meshes[m].material];
+            if ((mt->flags & SL_WA_MAT_DECAL) && mt->blend == SL_WA_BLEND_ALPHA
+                && !(mt->flags & SL_WA_MAT_PANORAMA)) {
+                nd++;
+                if (g_bgx_mix[m] & SL_WA_DECAL_MIX_LATE) nl++;
+                if (g_bgx_mix[m] == (SL_WA_DECAL_MIX_LATE | SL_WA_DECAL_MIX_EARLY)) nmix++;
+            }
+        }
+        fprintf(stderr, "#90 worldasset: background/%s - %u translucent decal triangles, in %u of %u "
+                        "translucent decal meshes (%u of them in part), lie on or under a translucent "
+                        "surface (x) or on nothing that writes depth (n) and are drawn late; the rest "
+                        "are drawn with their surface in the first draw (SL_BG_XLU_DECAL=0 draws all "
+                        "late):", a->path, nx, nl, nd, nmix);
+        for (m = 0; m < a->mesh_count && m < SL_WA_MAX_MESHES; m++) {
+            const struct sl_wa_mesh *mh = &a->meshes[m];
+            unsigned t, k = 0, bits = 0;
+            if (!(g_bgx_mix[m] & SL_WA_DECAL_MIX_LATE) || g_bgx_tri == NULL || mh->first_index % 3u != 0u)
+                continue;
+            for (t = mh->first_index / 3u; t < (mh->first_index + mh->index_count) / 3u; t++)
+                if (g_bgx_tri[t]) { k++; bits |= g_bgx_tri[t]; }
+            fprintf(stderr, " %u%s%s", m, (bits & SL_WA_DECAL_LATE_XLU) ? "x" : "",
+                    (bits & SL_WA_DECAL_LATE_LONE) ? "n" : "");
+            if (k != mh->index_count / 3u) fprintf(stderr, "(%u/%u)", k, mh->index_count / 3u);
+        }
+        fprintf(stderr, "\n");
+    }
+    return (mi < a->mesh_count && mi < SL_WA_MAX_MESHES) ? g_bgx_mix[mi] : SL_WA_DECAL_MIX_EARLY;
+}
+
+/* #90 What the frame's first draw computed and the late draw reuses, so the
+ * translucent meshes land on exactly the depths, fog and offsets the opaque
+ * ones were drawn with - nothing is recomputed under whatever projection or
+ * fog register the walk holds by then. The clip, fog and raw-depth arrays
+ * themselves are bg_draw_pass's own statics, which nothing else writes. */
+static struct {
+    int   farpass, fogless, fogm, pano, dz_ok;
+    float dpull, dz_a, dz_b;
+    unsigned char fogcol[4];
+} g_bgx;
+
+static void bg_draw_pass(int late);
+
+/* #94 SL_BG_CUTOUT_LAST=0 draws the background in the source's order
+ * (sl_wa_mesh_deferred for the rule). One cached getenv. */
+static int bg_cutout_last_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_BG_CUTOUT_LAST"); on = (v == NULL || *v != '0'); }
+    return on;
+}
+static void bg_draw(void) { bg_draw_pass(0); }
+
+/* #90 draw what the frame's first draw left for the translucent walk, once.
+ * `why` indexes the census: 0 the first room SECONDARY list, 1 the
+ * first-person weapon, 2 a 2D draw, 3 a draw outside the world projection,
+ * 4 the end of the walk. */
+static void bg_xlu_flush(int why)
+{
+    if (!g_bgx_pending) return;
+    if (why >= 0 && why < 5) g_bgx_flush[why]++;
+    bg_draw_pass(1);
+}
+
+static void bg_draw_pass(int late)
+{
+    const struct sl_wa_asset *a = g_bg_asset;
+    float C[16], org[3], ro[3];
+    static float *zraw;               /* the clip z before the far clamp */
+    unsigned nfar = 0;
+    float wmax = 0.0f;
+    int farpass = 0, pass;
+    float fz_k1 = 0.0f, fz_k2 = 0.0f;   /* #78 the first range's depth */
+    float fz_t1 = 0.0f, fz_t2 = 0.0f;   /* #80 ... for a blended draw */
+    float sc, vis;
+    unsigned i, mi, mrun, cutfirst;
+    int plain, fogm;
+    int remfog = 0, remarr = -1;      /* #68 remaster stage fog: on, array state */
+    int pano = 0;                     /* #74 D-026: the shell fades this frame */
+    int nearkeep = 0;                 /* #75 the near-cut fill, this frame */
+    float dpull = 0.0f, dz_a = 0.0f, dz_b = 0.0f;   /* #81 the decal pass's pull */
+    int dz_ok = 0;
+    int fogless = 0;                  /* #81 the game's own range and fill */
+    float viewm[16];                  /* #69 the world-to-view matrix, for the frame */
+    int have_view = 0;
+    unsigned nmatx = 0;               /* #69 meshes drawn through the material program */
+    const unsigned char *lc = NULL;   /* #75 the shot-out lights' colours, when any */
+    static float *clip;
+    static float *fogc;               /* one fog coordinate per vertex, #68 */
+    static unsigned clip_cap;
+    unsigned nlate = 0;               /* #90 meshes left for, or drawn in, the late draw */
+
+    if (late) {
+        /* #90 the frame's translucent meshes, on the state the first draw
+         * computed. Nothing to do unless that draw left some. */
+        g_bgx_pending = 0;
+        if (a == NULL || clip == NULL) return;
+        farpass = g_bgx.farpass;
+        fogless = g_bgx.fogless;
+        fogm    = g_bgx.fogm;
+        pano    = g_bgx.pano;
+        dz_ok   = g_bgx.dz_ok;
+        dpull   = g_bgx.dpull;
+        dz_a    = g_bgx.dz_a;
+        dz_b    = g_bgx.dz_b;
+        goto gl_state;
+    }
+
+    g_bg_done = 1;
+    g_bg_suppress = 0;                 /* nothing is suppressed until this pass
+                                        * has actually drawn the replacement */
+    if (a == NULL) return;
+
+    /* WHICH SPACE THE MATRIX CONSUMES, and the conversion each one needs. All
+     * READ - the branch from the address the game named, the render origin from
+     * the player's own floating origin, the two scales from the stage - never
+     * inferred from a shape.
+     *
+     * THE VISIBILITY SCALE IS THE SECOND HALF OF THE SPACE, and leaving it out
+     * is what the matched-presentation playtest marks exposed. The room space is
+     * `position * level_scale - render_origin`, and then the GAME multiplies
+     * every matrix it hands the RSP by `bgGetLevelVisibilityScale()` -
+     * `bg.c:1088-1091` into `matrixmath.c:478`, applied by
+     * `matrix_4x4_f32_to_s32` (`matrixmath.c:495-511`), and again by name at
+     * `bondview2.c:8798-8800`. So the space those matrices consume is the room
+     * space TIMES that number. It is 1.0 on every stage but two, which is
+     * exactly why it could go unnoticed: `levelinfotable` carries 0.2 for the
+     * Dam (`bg.c:291`) and for Surface (`bg.c:294`) and 1.0 for the other
+     * twenty-one. The Dam is the stage this asset ships for.
+     *
+     * Measured before it was written: `sl_wa_view_origin` recovers the eye from
+     * the FOLDED matrix at exactly 0.2 of `game eye - render origin` (ratio
+     * 5.0000 at both playtest poses), the game's own room vertices reach
+     * the interpreter scaled by `level_scale * 0.2`, and ray-casting the
+     * prepared bundle from `origin + (eye - origin) * 0.2` reproduces the
+     * picture this pass was drawing while casting from the true eye reproduces
+     * the game's own. Omitting it drew the level five times its size about the
+     * render origin, which moves the apparent viewpoint by 4/5 of the player's
+     * offset from their own room's origin - the player standing somewhere else,
+     * and floating. */
+    if (!sl_wa_level_scale(&sc) || !(sc > 0.0f)) { g_bg_refused++; return; }
+    if (!sl_wa_visibility_scale(&vis) || !(vis > 0.0f)) { g_bg_refused++; return; }
+    /* THE ITEM'S OWN SCALE, read from the stage like the two above: the source
+     * authors a stage background at the room coordinates times 100 / the
+     * stage's last levelinfotable column (sl_wa_source_scale for the
+     * measurement), so one factor takes the item into the room space before
+     * the level scale takes that into the frame's. It is exactly 1.0 at the
+     * Dam, whose item therefore lands on the same floats as before. */
+    {
+        float src;
+        if (!sl_wa_source_scale(&src) || !(src > 0.0f)) { g_bg_refused++; return; }
+        sc *= src;
+    }
+    nf_begin(a, sc);                        /* #78 the fill's grid for this item */
+    bg_coplanar_prepare(a);                 /* #77, before the vertex loop: the push reads its normals */
+    plain = (g_proj_world_which != 2);
+    if (plain) {
+        float view[16];
+        int r;
+        if (!sl_wa_view_matrix(view)) { g_bg_refused++; return; }
+        /* The seam supplies world-to-view itself here, so the scale goes on
+         * that view's OUTPUT - the same place the game's own modelview carries
+         * it. Columns 0..2 only: w is untouched, so no screen position moves
+         * and only the eye-space depth changes, which is precisely what has to
+         * agree with the geometry this pass is depth-tested against. */
+        for (r = 0; r < 4; r++) {
+            view[r * 4 + 0] *= vis;
+            view[r * 4 + 1] *= vis;
+            view[r * 4 + 2] *= vis;
+        }
+        mtx_mul(view, g_proj, C);
+        org[0] = org[1] = org[2] = 0.0f;   /* that view is in position*scale   */
+    } else {
+        memcpy(C, g_proj, sizeof C);   /* the view is already folded in */
+        if (!sl_wa_render_origin(ro)) { g_bg_refused++; return; }
+        org[0] = ro[0];                /* ... and this space has the frame's */
+        org[1] = ro[1];                /* floating origin taken out of it    */
+        org[2] = ro[2];
+    }
+
+    /* THE WITNESS. Off unless SL_BG_TRACE names it, bounded, and it prints the
+     * three points that decide where a world-anchored asset lands: the eye the
+     * GAME has, the frame's render origin, and the eye RECOVERED from the
+     * transform in force. `sl_wa_view_origin`'s eye is expressed in whatever
+     * space its matrix consumes, so those three together say what that space
+     * is - which is the only way to check a world transform without guessing.
+     * A line per branch change, plus the first frame. */
+    {
+        static int on = -1;
+        if (on < 0) { const char *v = getenv("SL_BG_TRACE"); on = (v != NULL && *v != '0'); }
+        if (on) {
+            static int lines, last;
+            float eyep[3], treye[3], eye[16], ro2[3];
+            int have_e = sl_wa_view_origin(C, eyep);
+            int have_v = sl_wa_view_matrix(eye);
+            int have_r = sl_wa_render_origin(ro2);
+            int every = (getenv("SL_BG_TRACE_ALL") != NULL);
+            treye[0] = treye[1] = treye[2] = 0.0f;
+            if (have_v) {
+                int jj;
+                for (jj = 0; jj < 3; jj++)
+                    treye[jj] = -(eye[12] * eye[jj * 4 + 0] + eye[13] * eye[jj * 4 + 1]
+                                + eye[14] * eye[jj * 4 + 2]);
+            }
+            if (!have_r) ro2[0] = ro2[1] = ro2[2] = 0.0f;
+            if (lines < 400 && (every || last != g_proj_world_which)) {
+                /* THE NUMBER THAT SETTLES THE SPACE, printed beside the one the
+                 * stage declares. `measured` is how far the game's eye is from
+                 * this branch's own origin divided by how far the RECOVERED eye
+                 * is from it - so it is the scale of the space the matrix in
+                 * force consumes, taken from the matrix itself. It must equal
+                 * 1 / visibility. A disagreement is the fault returning, and it
+                 * is a number rather than an argument. */
+                double dw = 0.0, dc = 0.0, measured = 0.0;
+                int jj;
+                for (jj = 0; jj < 3; jj++) {
+                    double w = treye[jj] - org[jj];
+                    dw += w * w;
+                    dc += (double) eyep[jj] * eyep[jj];
+                }
+                if (have_e && dc > 1e-6) measured = sqrt(dw) / sqrt(dc);
+                last = g_proj_world_which;
+                lines++;
+                fprintf(stderr,
+                    "#68 bgtrace: which %d branch %s gameeye %.2f %.2f %.2f "
+                    "renderorigin %.2f %.2f %.2f recovered %s %.2f %.2f %.2f "
+                    "scale %.4f visibility %.4f (1/%.4f) measured 1/%.4f "
+                    "offset %.2f %.2f %.2f bounds %.1f %.1f %.1f .. "
+                    "%.1f %.1f %.1f\n",
+                    g_proj_world_which, plain ? "PLAIN+view" : "FOLDED",
+                    treye[0], treye[1], treye[2], ro2[0], ro2[1], ro2[2],
+                    have_e ? "yes" : "NO", eyep[0], eyep[1], eyep[2],
+                    sc, vis, (vis > 0.0f) ? 1.0f / vis : 0.0f, measured,
+                    org[0], org[1], org[2],
+                    a->bounds_min[0], a->bounds_min[1], a->bounds_min[2],
+                    a->bounds_max[0], a->bounds_max[1], a->bounds_max[2]);
+            }
+        }
+    }
+
+    /* THE FOG THE ROOM BACKGROUND IS DRAWN UNDER. Read, never configured, and
+     * read from the game's own fog emitter rather than from the display-list
+     * state that happens to stand at the seam - see the MW_FOG case for the
+     * measurement that forced that distinction. A level whose environment
+     * calls for no fog issues no fog position, so nothing here arms and the
+     * replacement draws unfogged for the same reason its own geometry does:
+     * the data decides. See bg_fog_on. */
+    /* THE BAND IS DECODED EITHER WAY, so the census reports what the level is
+     * issuing whether or not it reaches this pass; only whether it is APPLIED
+     * is the destination rule's business. */
+    {
+        int band = sl_wa_fog_band(g_fogp_seen, g_fogp_fm, g_fogp_fo,
+                                  g_dl_frame - g_fogp_frame,
+                                  &g_bg_fog_start, &g_bg_fog_end);
+        /* AND WHERE THAT BAND FADES TO. The game writes ONE environment RGB
+         * to both its backdrop fill and its fog colour, so its distance fades
+         * into the picture behind it and leaves no seam. This pass IS that
+         * backdrop now, and it brings the remaster's own baked atmospheric
+         * perspective with it - so the level's band would be a second
+         * atmosphere toward a backdrop that is no longer on screen, which is
+         * a flat wall wherever it saturates. See sl_wa_fog_level_applies for
+         * the measurement; g_bg_armed is the same fact the suppression and
+         * the scene-assembly rule read. */
+        g_bg_fog_level = (bg_level_fog_on()
+                          || sl_wa_fog_level_applies(g_bg_armed));
+        fogm = (bg_fog_on() && band && g_bg_fog_level) ? FOG_SHADE : FOG_NONE;
+        /* WHERE THE LEVEL'S BAND DOES NOT APPLY, THE REMASTER'S OWN DOES. The
+         * replacement's source programs fog toward the remaster's colour for
+         * the environment the game has in force - see bg_remaster_fog_on. One
+         * lookup a frame, from a table read once; never per vertex. */
+        g_bg_env = NULL;
+        if (fogm == FOG_NONE && !g_bg_fog_level && bg_fog_on()
+            && bg_remaster_fog_on())
+            g_bg_env = env_in_force();
+    }
+    bg_fogtrace("background", "before", fogm);
+
+    if (clip_cap < a->vertex_count) {
+        float *n = (float *) realloc(clip, (size_t) a->vertex_count * 4u * sizeof *n);
+        float *g;
+        if (n == NULL) return;
+        clip = n;
+        g = (float *) realloc(fogc, (size_t) a->vertex_count * sizeof *g);
+        if (g == NULL) return;         /* clip is grown; the cap below gates both */
+        fogc = g;
+        g = (float *) realloc(zraw, (size_t) a->vertex_count * sizeof *g);
+        if (g == NULL) return;
+        zraw = g;
+        clip_cap = a->vertex_count;
+    }
+    if (g_cop_clip_cap < a->vertex_count) {    /* #77 the pushed positions */
+        float *n = (float *) realloc(g_cop_clip, (size_t) a->vertex_count * 4u * sizeof *n);
+        float *g;
+        if (n == NULL) return;
+        g_cop_clip = n;
+        g = (float *) realloc(g_cop_zraw, (size_t) a->vertex_count * sizeof *g);
+        if (g == NULL) return;
+        g_cop_zraw = g;
+        g_cop_clip_cap = a->vertex_count;
+    }
+    g_cop_pushed = 0u;
+    g_bg_clip_ptr = clip;
+    if (g_bgn_cls_cap < a->vertex_count) {     /* #75, one near class per vertex */
+        unsigned char *b = (unsigned char *) realloc(g_bgn_cls, a->vertex_count);
+        if (b == NULL) return;
+        g_bgn_cls = b;
+        g_bgn_cls_cap = a->vertex_count;
+    }
+    {
+        float blo[3], bhi[3], eyep[3];
+        int have_e = sl_wa_view_origin(C, eyep);
+        double nearest = 1e30;
+        int j;
+        /* The FOLDED matrix carries the visibility scale already, so the point
+         * handed to it has to be in that scaled space; the PLAIN branch's view
+         * was scaled above instead, because the seam built it. One contract,
+         * applied once either way - never twice. */
+        const float post = plain ? 1.0f : vis;
+        /* #77 the same eye in the item's own coordinates, for which side of a
+         * wall faces it: the inverse of the vertex mapping below. */
+        g_cop_eye_ok = have_e && sc != 0.0f && post != 0.0f;
+        if (g_cop_eye_ok)
+            for (j = 0; j < 3; j++) g_cop_eye[j] = (eyep[j] / post + org[j]) / sc;
+        /* Under the PLAIN world projection the matrix in force recovers no
+         * eye (sl_wa_view_origin needs the projection folded in), which left
+         * the two-sided rule inert on every stage drawn that way - Runway and
+         * Surface - until the dome on Surface showed it. The game's own camera
+         * position (viewtoworldmtxf's translation through sl_wa_view_matrix,
+         * the point the fog's eye below is taken from) is the same eye, and
+         * in the item's coordinates it is that point over the scale alone on
+         * either branch: the PLAIN branch's space is the item times the scale
+         * and the folded branch's takes the origin out and puts it back. The
+         * recovered eye is kept wherever it is in hand, so a folded stage
+         * draws exactly as before. */
+        if (!g_cop_eye_ok && sc != 0.0f) {
+            float vm[16];
+            if (sl_wa_view_matrix(vm)) {
+                for (j = 0; j < 3; j++)
+                    g_cop_eye[j] = -(vm[12] * vm[j * 4 + 0] + vm[13] * vm[j * 4 + 1]
+                                     + vm[14] * vm[j * 4 + 2]) / sc;
+                g_cop_eye_ok = 1;
+            }
+        }
+        /* #78 THE NATIVE FILL takes the same scales for the room triangles
+         * that follow this pass in the frame */
+        nf_frame(sc, vis);
+        fogless = bg_fogless_on() && sl_wa_fogless_range(1, sl_fog_environment_id());
+        /* #81 the decal pull in this space's clip w: one item unit is sc x vis
+         * on either branch (the PLAIN view carries vis, the FOLDED points do);
+         * and the game range's z = a w + b, read from C */
+        if (bg_decal_pull_on() && bg_decal_on()) {
+            dpull = SL_WA_DECAL_PULL * sc * vis;
+            dz_ok = sl_wa_depth_affine(C, &dz_a, &dz_b);
+        }
+        /* THE EYE FOR THE REMASTER'S FOG DISTANCE: the game's own camera
+         * position (viewtoworldmtxf's translation, via sl_wa_view_matrix -
+         * the eye the playtest marks record), put into the space the points
+         * below are in. Not the eye recovered from C: that recovery needs the
+         * projection folded in and has no answer on the PLAIN branch. */
+        float feye[3];
+        int have_f = 0;
+        if (g_bg_env != NULL) {
+            float vm[16];
+            if (sl_wa_view_matrix(vm)) {
+                for (j = 0; j < 3; j++) {
+                    float w = -(vm[12] * vm[j * 4 + 0] + vm[13] * vm[j * 4 + 1]
+                              + vm[14] * vm[j * 4 + 2]);
+                    feye[j] = plain ? w : (w - org[j]) * vis;
+                }
+                have_f = 1;
+            }
+        }
+        /* #74 D-026: only under the remaster's stage fog, over a dome drawn
+         * this frame, on an item that has a shell. */
+        if (have_f && sky_panorama_on() && g_sky_drew && pano_tables(a) > 0u) {
+            pano = 1;
+            memset(g_pano_bin, 0, sizeof g_pano_bin);
+        }
+        /* #69 MATERIAL ANIMATION - the time this frame's displacement is
+         * evaluated at: the game's own VI frame clock, in seconds. Read once
+         * per frame, never per vertex; see SL_WA_CLOCK_HZ for why this clock
+         * and not the simulation's or the wall's. With no records, no
+         * fields, no clock or SL_BG_ANIM=0 every vertex stays where the
+         * bundle put it, which is exactly the frame drawn before this
+         * existed. */
+        unsigned long clockf = 0;
+        const int anim = (bg_anim_on() && a->vaux != NULL && a->anim_count != 0u
+                          && sl_wa_frame_clock(&clockf));
+        const double tsec = anim ? sl_wa_anim_seconds(clockf) : 0.0;
+        unsigned nanim = 0;
+        for (j = 0; j < 3; j++) { blo[j] = 1e30f; bhi[j] = -1e30f; }
+        for (i = 0; i < a->vertex_count; i++) {
+            const struct sl_wa_vertex *v = &a->vertices[i];
+            float *c = &clip[i * 4u];
+            float px = v->x, py = v->y, pz = v->z;
+            float x, y, z;
+            float envc = 0.0f;              /* remaster stage fog, #68 */
+            /* THE DISPLACEMENT, in the bundle's own units and along the
+             * vertex's own direction, before the level scale - where the
+             * source program applies it, in the item's model space. */
+            if (anim && SL_WA_VAUX(a, i)->anim != 0u) {
+                const struct sl_wa_vaux *ax = SL_WA_VAUX(a, i);
+                const float d = sl_wa_anim_displacement(&a->anims[ax->anim - 1u],
+                                                        (float) ax->wave_a,
+                                                        (float) ax->wave_b, tsec)
+                              * (1.0f / 32767.0f);
+                px += d * (float) ax->nx;
+                py += d * (float) ax->ny;
+                pz += d * (float) ax->nz;
+                nanim++;
+            }
+            x = (px * sc - org[0]) * post;
+            y = (py * sc - org[1]) * post;
+            z = (pz * sc - org[2]) * post;
+            if (x < blo[0]) blo[0] = x;  if (x > bhi[0]) bhi[0] = x;
+            if (y < blo[1]) blo[1] = y;  if (y > bhi[1]) bhi[1] = y;
+            if (z < blo[2]) blo[2] = z;  if (z > bhi[2]) bhi[2] = z;
+            if (have_e) {
+                double dx = x - eyep[0], dy = y - eyep[1], dz = z - eyep[2];
+                double d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < nearest) nearest = d2;
+            }
+            /* THE REMASTER'S DISTANCE: world units after the level scale and
+             * before the visibility scale (measured - see SLEN), so this
+             * space's distance divided by the factor applied to it. */
+            if (have_f) {
+                double fx = x - feye[0], fy = y - feye[1], fz = z - feye[2];
+                envc = sl_wa_env_fog_coord(g_bg_env, (float) (sqrt(fx * fx + fy * fy
+                                           + fz * fz) / (double) post));
+            }
+            /* #74 D-026 step 1: the shell's own positions kept for step 2;
+             * every other vertex the fog reaches raises its azimuth's bin. */
+            if (pano) {
+                const unsigned sl = g_pano_slot[i];
+                if (sl != 0u) {
+                    float *q = &g_pano_pos[(sl - 1u) * 3u];
+                    q[0] = x; q[1] = y; q[2] = z;
+                } else if (envc > SL_WA_PANO_REACH) {
+                    const double hx = x - feye[0], hz = z - feye[2];
+                    const double hh = sqrt(hx * hx + hz * hz);
+                    if (hh > 1e-3 && y > feye[1]) {
+                        const float val = sl_wa_panorama_reach(envc)
+                                        * (float) ((y - feye[1]) / hh);
+                        double ph = atan2(hx, hz) * (180.0 / 3.14159265358979);
+                        int bi;
+                        if (ph < 0.0) ph += 360.0;
+                        bi = (int) (ph * (PANO_BINS / 360.0));
+                        if (bi >= PANO_BINS) bi = PANO_BINS - 1;
+                        if (val > g_pano_bin[bi]) g_pano_bin[bi] = val;
+                    }
+                }
+            }
+            for (j = 0; j < 4; j++)
+                c[j] = x * C[j] + y * C[4 + j] + z * C[8 + j] + C[12 + j];
+            /* clamp to the far plane - the depth a single-range frame draws
+             * at; the unclamped z is kept for the second range (#78) */
+            zraw[i] = c[2];
+            if (c[3] > wmax) wmax = c[3];
+            if (!fogless && c[3] > 0.0f && c[2] > c[3]) { c[2] = c[3]; nfar++; }
+            /* #77 the pushed position of a two-sided vertex (g_cop_vn):
+             * along its normal, away from the eye, by twice the pair
+             * tolerance at its distance from the origin; every other
+             * vertex's pushed position is its own */
+            {
+                float *c2 = &g_cop_clip[i * 4u];
+                const float *vn = (g_cop_asset == a && g_cop_vn != NULL && g_cop_vn_cap >= a->vertex_count
+                                   && g_cop_nopp != 0u && g_cop_eye_ok) ? &g_cop_vn[i * 3u] : NULL;
+                if (vn != NULL && (vn[0] != 0.0f || vn[1] != 0.0f || vn[2] != 0.0f)) {
+                    const double r = sqrt((double) px * px + (double) py * py + (double) pz * pz);
+                    const double push = 2.0 * sl_wa_coplanar_eps(r, r);
+                    const double toeye = vn[0] * ((double) g_cop_eye[0] - px) + vn[1] * ((double) g_cop_eye[1] - py)
+                                       + vn[2] * ((double) g_cop_eye[2] - pz);
+                    const double s2 = (toeye > 0.0) ? -push : push;   /* away from the eye */
+                    const float qx = (float) (((double) px + vn[0] * s2) * sc - org[0]) * post;
+                    const float qy = (float) (((double) py + vn[1] * s2) * sc - org[1]) * post;
+                    const float qz = (float) (((double) pz + vn[2] * s2) * sc - org[2]) * post;
+                    for (j = 0; j < 4; j++)
+                        c2[j] = qx * C[j] + qy * C[4 + j] + qz * C[8 + j] + C[12 + j];
+                    g_cop_zraw[i] = c2[2];
+                    if (!fogless && c2[3] > 0.0f && c2[2] > c2[3]) c2[2] = c2[3];
+                    g_cop_pushed++;
+                } else {
+                    c2[0] = c[0]; c2[1] = c[1]; c2[2] = c[2]; c2[3] = c[3];
+                    g_cop_zraw[i] = zraw[i];
+                }
+            }
+            g_bgn_cls[i] = (unsigned char) sl_wa_near_class(c);   /* #75 near class */
+            /* THE FOG VALUE, from the SAME depth the depth buffer gets. The
+             * triangle path feeds fog_coord the perspective-divided z that
+             * ndc_account computed (g_vdepth, sl_gfx_dl.c:1423, cz/cw); this
+             * pass has that division's two halves in hand, so it takes the
+             * identical quotient rather than a distance of its own. A point at
+             * or behind the eye has no meaningful quotient and the near plane
+             * is the no-fog end, so it contributes zero - the same rule the
+             * triangle path's ndc row carries. The far clamp above is what
+             * keeps terrain past the frustum at full fog rather than at
+             * whatever a divergent z happened to be. */
+            fogc[i] = (fogm != FOG_NONE && c[3] > 1e-6f)
+                    ? fog_coord(fogm, c[2] / c[3]) : envc;
+            if (i == 0) { g_bg_fog_sum = 0.0; g_bg_fog_n = g_bg_fog_full = 0;
+                          g_bg_fog_min = 1e30f; g_bg_fog_max = -1e30f;
+                          g_bg_ndc_min = 1e30f; g_bg_ndc_max = -1e30f;
+                          g_bg_fog_mode = fogm; g_bg_fog_which = g_proj_world_which; }
+            g_bg_fog_sum += fogc[i];
+            g_bg_fog_n++;
+            if (fogc[i] < g_bg_fog_min) g_bg_fog_min = fogc[i];
+            if (fogc[i] > g_bg_fog_max) g_bg_fog_max = fogc[i];
+            if (fogc[i] > 0.999f) g_bg_fog_full++;
+            /* THE DEPTH ITSELF, beside the value derived from it. A coordinate
+             * of zero has two causes - the band starts beyond this geometry,
+             * or the depth is wrong - and they are the same number afterwards.
+             * This is the pair that tells them apart. */
+            if (c[3] > 1e-6f) {
+                float nz = c[2] / c[3];
+                if (nz < g_bg_ndc_min) g_bg_ndc_min = nz;
+                if (nz > g_bg_ndc_max) g_bg_ndc_max = nz;
+            }
+        }
+        /* #74 D-026 steps 2 and 3. */
+        if (pano) pano_coords(feye, fogc);
+        /* #78 BEYOND THE FAR PLANE (sl_wa_far_plane in the header for the
+         * measurement and the rule): a frame on which some of the item lies
+         * past the game's far plane is drawn in two depth ranges, so the
+         * depth test orders that part too instead of the item's draw order.
+         * The first range starts SL_WA_FAR_OVERLAP inside the far plane so
+         * the two overlap and meet without a crack (#80: a thousandth left
+         * one, see the header); on a frame with nothing past it the pass is
+         * the single draw it always was. */
+        {
+            float zf;
+            if (nfar != 0u && bg_farpass_on() && sl_wa_far_plane(C, &zf) && wmax > zf) {
+                sl_wa_far_range(zf * SL_WA_FAR_OVERLAP, wmax * 1.001f, &fz_k1, &fz_k2);
+                /* #80 a blended draw (translucent, or a cutout's soft edge)
+                 * would be laid twice in the overlap, so it keeps the
+                 * thousandth it always had (SL_WA_FAR_OVERLAP_BLEND). */
+                sl_wa_far_range(zf * SL_WA_FAR_OVERLAP_BLEND, wmax * 1.001f, &fz_t1, &fz_t2);
+                farpass = 1;
+                g_bg_far_plane = zf;
+                g_bg_far_reach = wmax;
+                g_bg_far_verts = nfar;
+            }
+        }
+        g_bg_anim_verts = nanim;
+        g_bg_anim_clock = clockf;
+        if (nanim != 0u && !g_bg_anim_said) {
+            g_bg_anim_said = 1;
+            fprintf(stderr, "#69 worldasset: material animation on background/%s - "
+                            "%u vertices through %u record%s, clock %lu VI frames "
+                            "(%.3f s) at first draw\n",
+                    a->path, nanim, a->anim_count, a->anim_count == 1u ? "" : "s",
+                    clockf, tsec);
+        }
+        if (g_bgbox_on < 0) {
+            const char *v = getenv("SL_BG_WORLDBOX");
+            g_bgbox_on = (v != NULL && *v != '0');
+        }
+        if (g_bgbox_on > 0 && (g_bg_frames % 20u) == 0u) {
+            float llo[3], lhi[3], lsc = 0.0f;
+            int nrooms = sl_wa_level_box(llo, lhi, &lsc);
+            fprintf(stderr, "#68 bgplaced: the REPLACEMENT spans %.1f %.1f %.1f "
+                            ".. %.1f %.1f %.1f in that same space; the eye is at "
+                            "%.1f %.1f %.1f and its nearest vertex is %.1f away\n",
+                    blo[0], blo[1], blo[2], bhi[0], bhi[1], bhi[2],
+                    eyep[0], eyep[1], eyep[2],
+                    (nearest < 1e29) ? sqrt(nearest) : -1.0);
+            if (nrooms > 0)
+                fprintf(stderr, "#68 bglevelbox: %d rooms, level scale %.4f, room "
+                                "origins span %.1f %.1f %.1f .. %.1f %.1f %.1f "
+                                "(the space the room transforms are built in)\n",
+                        nrooms, lsc, llo[0], llo[1], llo[2], lhi[0], lhi[1], lhi[2]);
+        }
+    }
+
+    /* #90 what the late draw reuses (see g_bgx) */
+    g_bgx.farpass = farpass;
+    g_bgx.fogless = fogless;
+    g_bgx.fogm    = fogm;
+    g_bgx.pano    = pano;
+    g_bgx.dz_ok   = dz_ok;
+    g_bgx.dpull   = dpull;
+    g_bgx.dz_a    = dz_a;
+    g_bgx.dz_b    = dz_b;
+    memcpy(g_bgx.fogcol, g_fogp_col, 4);
+
+gl_state:
+    /* ---- GL: leave it exactly as it was found ------------------------- */
+    batch_end();
+    mode2d_end();
+    texenv_set(0);
+    tex1_off();
+
+    if (!wa_upload_images(a, &g_bg_min_filter, &g_bg_mag_filter, &g_bg_levels))
+        return;                        /* an upload that failed suppresses nothing */
+
+    /* #69 the rotation the material program rotates each vertex's frame
+     * by: the game's own world-to-view matrix, read once per frame and only
+     * when some material will ask for it. */
+    if (a->matx_count > 0 && bg_material_on())
+        have_view = sl_wa_view_matrix(viewm);
+
+    {
+        GLint vp[4];
+        int vpi[4], found[4], box[4], j;
+        g_sky_sciss_on = glIsEnabled(GL_SCISSOR_TEST) ? 1 : 0;
+        glGetIntegerv(GL_SCISSOR_BOX, g_sky_sciss_box);
+        glGetIntegerv(GL_VIEWPORT, vp);
+        for (j = 0; j < 4; j++) { vpi[j] = (int) vp[j]; found[j] = (int) g_sky_sciss_box[j]; }
+        /* The same aperture rule the skydome round measured and the same
+         * reason for it: this pass runs inside the first ROOM's display list,
+         * under that room's portal window, and a background covers the whole
+         * picture. The box and the enable bit are restored exactly below. */
+        sl_wa_sky_aperture(vpi, found, box);
+        glScissor((GLint) box[0], (GLint) box[1], (GLsizei) box[2], (GLsizei) box[3]);
+        glEnable(GL_SCISSOR_TEST);
+    }
+
+    /* THE BACKDROP UNDER THE REPLACEMENT (sl_wa_backdrop_black for the rule
+     * and the measurement). Where the stage draws no sky the game's sky pass
+     * is a flat fill of the environment colour over the whole view
+     * (sl_wa_stage_flat_backdrop), and that fill is the cartridge's backdrop,
+     * not the remaster's, which clears to black. So the aperture is cleared
+     * to black here, before the first mesh; wherever the item has no surface
+     * that is what shows. SL_BG_BACKDROP=0 keeps the game's fill. */
+    /* #81 ... except on a fogless stage, whose fill is the remaster's too
+     * (sl_wa_fogless_range) */
+    if (!late && bg_backdrop_on() && !fogless
+        && sl_wa_backdrop_black(1, g_sky_drew, sl_wa_stage_flat_backdrop())) {
+        GLfloat cc[4];
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, cc);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glClearColor(cc[0], cc[1], cc[2], cc[3]);
+        g_bg_backdrop_frames++;
+    }
+    if (fogless && !late) g_bg_fogless_frames++;
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_CULL_FACE);
+    g_cull_gl = 0;
+    /* THE LEVEL'S OWN FOG, established through the SAME call the triangle path
+     * uses so the enable and the colour the rest of this file mirrors stay
+     * truthful - a raw glEnable here would desynchronise g_fog_gl_on exactly
+     * as the raw glDisable it replaces did. Where the state says no fog, or
+     * the array entry point is missing, the coordinate is pinned to zero
+     * instead of the stage being switched off: see bg_fog_on. */
+    if (bg_fog_on()) {
+        if (fogm != FOG_NONE && fogarray_ok()) {
+            /* fog_apply reads the RDP's fog register, which is the right
+             * source for a triangle the list is about to draw and the wrong
+             * one here: by the time this pass runs a prop may have left its
+             * own colour in it. The level's colour is handed over for the
+             * length of this call and the register is put back, so the
+             * renderer's mirror of GL stays truthful and its mirror of the
+             * RDP is not disturbed. */
+            unsigned char save[4];
+            memcpy(save, g_fog, 4);
+            memcpy(g_fog, late ? g_bgx.fogcol : g_fogp_col, 4);   /* #90 the first draw's */
+            fog_apply(fogm);
+            memcpy(g_fog, save, 4);
+        } else if (g_bg_env != NULL && fogarray_ok()) {
+            /* THE REMASTER'S STAGE FOG, through the same call and the same
+             * hand-over: its colour for the length of fog_apply, the register
+             * put back. The per-vertex values were computed above from the
+             * row the game's own environment selects. */
+            unsigned char save[4];
+            memcpy(save, g_fog, 4);
+            g_fog[0] = g_bg_env->rgb[0];
+            g_fog[1] = g_bg_env->rgb[1];
+            g_fog[2] = g_bg_env->rgb[2];
+            g_fog[3] = 255;
+            fog_apply(FOG_SHADE);
+            memcpy(g_fog, save, 4);
+            fogm = FOG_NONE;
+            remfog = 1;
+            {
+                static int said = -2;          /* once per environment row */
+                if (said != (int) g_bg_env->id) {
+                    said = (int) g_bg_env->id;
+                    fprintf(stderr, "#68 worldasset: remaster stage fog on the "
+                                    "replacement - environment row %d\n", said);
+                }
+            }
+        } else {
+            fogm = FOG_NONE;
+        }
+        fog_neutral();     /* whatever this pass emits without an array element
+                            * - and everything it emits when fogm is NONE -
+                            * takes a coordinate of zero, which is no fog */
+    } else {
+        fogm = FOG_NONE;
+        glDisable(GL_FOG);                 /* SL_BG_FOG=0: the previous state */
+    }
+    /* #74 D-026 needs the stage fog actually applied to this pass, and unit 1. */
+    if (pano && (!remfog || !pano_gl_ok())) pano = 0;
+    glDisable(GL_ALPHA_TEST);
+    glEnable(GL_TEXTURE_2D);
+    glColor4ub(255, 255, 255, 255);
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    /* Vertex arrays rather than the skydome's immediate mode: this item is
+     * 271080 indices, which is 27 times the dome's, and one glDrawElements per
+     * material is what keeps the pass affordable. The texture coordinate and
+     * the colour are read straight out of the asset's own interleaved records;
+     * only the clip position is computed. */
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glVertexPointer(4, GL_FLOAT, 0, (const GLvoid *) clip);
+    /* The fog value computed alongside the clip position above, as an array
+     * because this pass draws through glDrawElements. Disabled again below,
+     * before this function returns, so no later array draw can read it. */
+    if (fogm != FOG_NONE || remfog) {
+        glFogCoordPointer(GL_FLOAT, 0, (const GLvoid *) fogc);
+        if (fogm != FOG_NONE) glEnableClientState(GL_FOG_COORD_ARRAY);
+    }
+    bg_fogtrace("background", "during", fogm);
+    glTexCoordPointer(2, GL_FLOAT, (GLsizei) sizeof a->vertices[0],
+                      (const GLvoid *) &a->vertices[0].u);
+    /* SL_BG_WHITE - a diagnostic that separates the two things a pixel of this
+     * asset is made of. With the vertex colour held at white, what is left on
+     * screen is the texture alone, which is how "is that flat shading or a
+     * flat texture?" is answered by looking rather than by arguing. */
+    if (g_bg_white < 0) {
+        const char *v = getenv("SL_BG_WHITE");
+        g_bg_white = (v != NULL && *v != '0');
+    }
+    if (g_bg_white) {
+        glDisableClientState(GL_COLOR_ARRAY);
+        glColor4ub(255, 255, 255, 255);
+    } else {
+        /* #75 the shot-out lights, when the game has any: the same records
+         * with those vertices' colours >> 2 (see bg_light_colours). */
+        lc = bg_light_colours(a);
+        glEnableClientState(GL_COLOR_ARRAY);
+        if (lc != NULL)
+            glColorPointer(4, GL_UNSIGNED_BYTE, 0, (const GLvoid *) lc);
+        else
+            glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0],
+                           (const GLvoid *) &a->vertices[0].r);
+    }
+    /* #88 the same arrays from buffer objects (see bgv_ready): the item's
+     * records and indices held per item, this walk's fog coordinates now and
+     * its clip positions at each range's start, below */
+    g_bgv_live = 0;
+    if (bgv_ready() && bgv_item(a)) {
+        const size_t n = a->vertex_count;
+        const size_t ou = (size_t) ((const char *) &a->vertices[0].u - (const char *) a->vertices);
+        const size_t orr = (size_t) ((const char *) &a->vertices[0].r - (const char *) a->vertices);
+        g_bgv_live = 1;
+        g_bgv_idx0 = a->indices;
+        g_bgv_n = a->vertex_count;
+        g_bgv_fog = (fogm != FOG_NONE || remfog);
+        p_BindBuffer(GL_ARRAY_BUFFER, g_bgv_stream);
+        /* #90 the late draw finds the stream buffer as the first draw left it:
+         * nothing else writes it, and every pull is put back */
+        if (!late) {
+            p_BufferData(GL_ARRAY_BUFFER, (ptrdiff_t) (BGV_FOG(n) + n * 4u), NULL, GL_STREAM_DRAW);
+            if (g_bgv_fog)
+                p_BufferSubData(GL_ARRAY_BUFFER, (ptrdiff_t) BGV_FOG(n), (ptrdiff_t) (n * 4u), (const GLvoid *) fogc);
+        }
+        glVertexPointer(4, GL_FLOAT, 0, (const GLvoid *) 0);
+        if (g_bgv_fog) glFogCoordPointer(GL_FLOAT, 0, (const GLvoid *) BGV_FOG(n));
+        p_BindBuffer(GL_ARRAY_BUFFER, g_bgv_static);
+        glTexCoordPointer(2, GL_FLOAT, (GLsizei) sizeof a->vertices[0], (const GLvoid *) ou);
+        if (!g_bg_white && lc == NULL)
+            glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0], (const GLvoid *) orr);
+        p_BindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    nearkeep = bg_nearkeep_on() && wa_nearkeep_ready();    /* #75 */
+    if (!late) {
+        if (nearkeep) g_bgn_frames++;
+        if (g_cop_count != 0u) g_cop_frames++;
+        if (farpass) g_bg_far_frames++;
+    }
+    /* #78 the first range, then the game's own: see sl_wa_far_plane. The late
+     * draw (#90) is the game's range alone; the first range is drawn whole
+     * in the first draw. */
+    /* #94 the cutouts laid after the solid world behind them: two runs of
+     * the source's order (sl_wa_mesh_deferred), the second empty for an
+     * item with no cutout or with the rule off */
+    cutfirst = bg_cutout_last_on() ? sl_wa_first_cutout(a) : a->mesh_count;
+    for (pass = (farpass && !late) ? 0 : 1; pass < 2; pass++) {
+        if (farpass && pass == 0) {
+            /* the part of the item past the game's far plane, its depth in
+             * a range of its own; x, y and w are untouched */
+            for (i = 0; i < a->vertex_count; i++)
+                clip[i * 4u + 2u] = fz_k1 * clip[i * 4u + 3u] - fz_k2;
+            if (g_cop_pushed != 0u)
+                for (i = 0; i < a->vertex_count; i++)
+                    g_cop_clip[i * 4u + 2u] = fz_k1 * g_cop_clip[i * 4u + 3u] - fz_k2;
+        } else if (farpass) {
+            /* the game's projection, unclamped: the far plane clips what the
+             * first range drew, and the depth left behind is the one the
+             * game's own geometry tests against. The buffer holds nothing
+             * else here - this pass is the frame's first world draw, after
+             * every clear (measured: every pixel at 1.0 on entry) - so the
+             * clear restores exactly what was found, inside the aperture. */
+            GLfloat dc;
+            for (i = 0; i < a->vertex_count; i++)
+                clip[i * 4u + 2u] = zraw[i];
+            if (g_cop_pushed != 0u)
+                for (i = 0; i < a->vertex_count; i++)
+                    g_cop_clip[i * 4u + 2u] = g_cop_zraw[i];
+            if (!late) {                /* #90 the late draw keeps the frame's depth */
+                glGetFloatv(GL_DEPTH_CLEAR_VALUE, &dc);
+                glClearDepth(1.0);
+                glDepthMask(GL_TRUE);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                glClearDepth(dc);
+            }
+        }
+        /* #88 this range's clip positions, as they stand now */
+        if (g_bgv_live && a->vertex_count != 0u && !late) bgv_put(clip, 0u, a->vertex_count - 1u);
+        for (mrun = 0; mrun < 2u * a->mesh_count; mrun++) {
+            const struct sl_wa_mesh *mh;
+            const struct sl_wa_material *mt;
+            mi = mrun % a->mesh_count;
+            if (sl_wa_mesh_deferred(a, mi, cutfirst) != (mrun >= a->mesh_count)) continue;
+            mh = &a->meshes[mi];
+            mt = &a->materials[mh->material];
+            {
+            /* #80 the panorama shell, on a two-range frame */
+            const int shell_far = farpass && bg_far_shell(mt);
+            GLboolean clamp_was = GL_TRUE;
+            int pulled = 0;                          /* #81 the decal pull, this mesh */
+            int blue = 0;                            /* #81 blue coverage, this mesh */
+
+            g_bgx_filter = -1;                       /* #90 every piece, unless below */
+            if (!bg_mesh_shown(mi)) continue;        /* SL_BG_ONLY / SL_BG_HIDE */
+            /* #90 the game's range: a translucent mesh waits for the game's
+             * translucent walk, and only it is drawn there - a decal piece on
+             * a solid surface is drawn with it (bg_decal_mix) */
+            if (pass == 1) {
+                if (mt->flags & SL_WA_MAT_DECAL) {
+                    const unsigned mix = sl_wa_blend_late(mt->flags, mt->blend, 1, bg_xlu_late_on())
+                                       ? bg_decal_mix(a, mi) : SL_WA_DECAL_MIX_EARLY;
+                    if (mix & SL_WA_DECAL_MIX_LATE) nlate++;     /* left for it, or drawn in it */
+                    if (!(mix & (late ? SL_WA_DECAL_MIX_LATE : SL_WA_DECAL_MIX_EARLY))) continue;
+                    if (mix == (SL_WA_DECAL_MIX_LATE | SL_WA_DECAL_MIX_EARLY)) g_bgx_filter = late;
+                } else {
+                    const int lm = sl_wa_blend_late(mt->flags, mt->blend, 0, bg_xlu_late_on());
+                    if (lm) nlate++;                 /* left for it, or drawn in it */
+                    if (lm != late) continue;
+                }
+            }
+            if (shell_far && pass == 1) {            /* drawn whole in the first */
+                g_bg_tris += mh->index_count / 3u;
+                g_bg_draws++;
+                continue;
+            }
+            if (shell_far) {
+                clamp_was = glIsEnabled(GL_DEPTH_CLAMP);
+                if (!clamp_was) glEnable(GL_DEPTH_CLAMP);
+            } else if (farpass && pass == 0 && SL_WA_BLEND_BLENDS(mt->blend)) {
+                /* #80 the first range: a blended draw takes its own start */
+                bg_far_rezero(a, mh, clip, g_cop_pushed != 0u ? g_cop_clip : NULL,
+                              fz_t1, fz_t2);
+                bgv_put_mesh(clip, mi);                      /* #88 */
+            }
+
+            /* THREE states, not two, and the third is the one the first attempt
+             * was missing. See SL_WA_BLEND_CUTOUT for why the distinction is a
+             * DEPTH question: what decides it is read from the source's own style
+             * byte, never from whether the image happens to carry an alpha
+             * channel.
+             *
+             * They differ in two bits: the DEPTH MASK and the ALPHA REJECT. A
+             * cutout that survives the test is as opaque as a wall and writes
+             * depth like one; a translucent surface must not occlude and writes
+             * none.
+             *
+             * THE ALPHA REJECT BELONGS TO THE CUTOUT ALONE, and applying it to
+             * the translucent class as well was deleting surfaces outright.
+             *
+             *   - WHERE THE 0.33 CAME FROM. It entered with the background pass
+             *     itself, for the FOLIAGE: a tree here is a quad whose image is
+             *     transparent almost everywhere, the colour under that
+             *     transparency is whatever the artist left there, and blending it
+             *     at a low alpha is the violet wash the first render showed. At
+             *     that time foliage reached this branch, because a draw was
+             *     classified translucent if its style said so OR its image
+             *     carried alpha. It no longer does: the CUTOUT split moved every
+             *     one of those draws to SL_WA_BLEND_CUTOUT. The rule's whole
+             *     originating population is on the other branch, and the
+             *     threshold stayed behind on a class that never asked for it.
+             *
+             *   - WHAT THE SOURCE SAYS. The style word's low byte is the blend:
+             *     1 opaque, 2 translucent. Its alpha-masked group is a SEPARATE
+             *     bit, 0x0800, and on the Dam item that bit is set on exactly the
+             *     4 foliage draws (39044 of 90360 triangles) and on nothing else.
+             *     Measured over all 386 draws, no draw carries both: 0x0800 and
+             *     low byte 2 are DISJOINT. The masked group is also the only
+             *     population that needs a reject at all - it is drawn OPAQUE, so
+             *     it cannot blend its transparent texels away, whereas a blended
+             *     draw multiplies them by an alpha of zero and adds nothing.
+             *
+             *   - WHAT IT COST. Measured on the Dam bundle: of 19 translucent
+             *     materials, 4 have an alpha maximum at or below 0.33, so EVERY
+             *     fragment failed and the mesh contributed nothing. Two of them
+             *     are the tunnel's road markings, whose images reach 0.314 and
+             *     0.235 - one misses by 5% - and hiding those meshes at the
+             *     playtest tunnel mark changed zero pixels while the geometry
+             *     covers 20128 of them.
+             *
+             *   - AND THE RISK, MEASURED RATHER THAN ASSUMED, because the wash
+             *     the threshold was written against is a real effect. The band a
+             *     removal newly admits is 0 < alpha <= 0.33. Over the 17 images
+             *     the translucent class uses, 8 have NO texel in that band at all
+             *     (their alpha is binary), 6 have under 4% of one and it is dark,
+             *     and the two with a large band are the road markings themselves.
+             *     A fully transparent image stays invisible either way, because
+             *     an alpha of zero contributes nothing through the blend.
+             *
+             * So this is not a threshold retuned against a picture: it is one
+             * state removed from a class the source never put it on, and kept on
+             * the class that does. */
+            if (mt->blend == SL_WA_BLEND_ALPHA || mt->blend == SL_WA_BLEND_CUTOUT) {
+                int reject = SL_WA_BLEND_REJECTS(mt->blend) || !bg_xlu_blend_on();
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                if (reject) {
+                    glEnable(GL_ALPHA_TEST);
+                    glAlphaFunc(GL_GREATER, SL_WA_ALPHA_REF);
+                } else {
+                    glDisable(GL_ALPHA_TEST);
+                    g_bg_xlu_draws++;
+                }
+                glDepthMask(mt->blend == SL_WA_BLEND_CUTOUT ? GL_TRUE : GL_FALSE);
+            } else {
+                glDisable(GL_BLEND);
+                glDisable(GL_ALPHA_TEST);
+                glDepthMask(GL_TRUE);
+            }
+            /* THE DECAL PASS. A material the source marks SL_WA_MAT_DECAL is a
+             * surface authored to lie ON another surface, at a separation this
+             * round measured as 0.0000 world units. Drawn without a priority the
+             * two resolve per pixel by floating-point noise - at playtest mark
+             * 1 the bridge decal is in front on 21 rays and behind on 21 others,
+             * at zero separation - which is the stipple across the bridge deck.
+             *
+             * Order cannot fix it: the preparation already emits draws in the
+             * source's own command-list order and this loop draws meshes in that
+             * order, so the decal is already issued after its base. Two surfaces
+             * at the same depth need a depth term, and the source names one -
+             * `c_zadjust`, a per-draw clip-space depth adjustment its own vertex
+             * programs declare beside the projection matrix - without carrying its
+             * value (see SL_WA_MAT_DECAL).
+             *
+             * So the MAGNITUDE is this tree's own, not a number tuned against a
+             * picture: it is exactly what rm_apply already applies for the RDP's
+             * G_RM_ZMODE_DEC, which is the same contract on the original
+             * renderer's own decals and has been shipping there. Enabled
+             * immediately before this draw and disabled immediately after, so no
+             * mesh but this one is offset and nothing leaks to the DL path (which
+             * rm_invalidate below re-establishes in any case). Depth WRITES stay
+             * off for a translucent decal, so pulling it forward cannot let it
+             * occlude anything - it can only win the compare against the surface
+             * it was authored to lie on. */
+            if ((mt->flags & SL_WA_MAT_DECAL) && bg_decal_on()) {
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(-1.0f, -2.0f);
+                g_bg_decal_draws++;
+            }
+            /* #81 and its depth adjustment, under this range's z = a w + b */
+            if (dpull > 0.0f && (mt->flags & SL_WA_MAT_DECAL) && bg_decal_on() && !shell_far) {
+                float za = 0.0f, zb = 0.0f;
+                int ok = 1, clampfar = 0;
+                if (farpass && pass == 0) {
+                    if (SL_WA_BLEND_BLENDS(mt->blend)) { za = fz_t1; zb = -fz_t2; }
+                    else                                { za = fz_k1; zb = -fz_k2; }
+                } else if (dz_ok) {
+                    za = dz_a; zb = dz_b; clampfar = !farpass && !fogless;
+                } else {
+                    ok = 0;
+                }
+                if (ok) {
+                    bg_decal_pull(a, mh, clip, g_cop_pushed != 0u ? g_cop_clip : NULL,
+                                  za, zb, dpull, clampfar, g_cop_eye_ok ? g_cop_eye : NULL);
+                    pulled = 1;
+                    bgv_put_mesh(clip, mi);                  /* #88 */
+                }
+            }
+            /* PER MATERIAL, because the vertex pool is shared: a material whose
+             * source program consumes the stage-fog contract reads the array, one
+             * that does not gets a coordinate of zero - no fog. Toggled only when
+             * the answer changes. */
+            if (remfog) {
+                int want = (mt->flags & SL_WA_MAT_FOG) ? 1 : 0;
+                if (want != remarr) {
+                    if (want) glEnableClientState(GL_FOG_COORD_ARRAY);
+                    else { glDisableClientState(GL_FOG_COORD_ARRAY); glFogCoordf(0.0f); }
+                    remarr = want;
+                }
+            }
+            glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
+            blue = sl_wa_coverage_blue(mt->flags, mt->blend, wa_coverage_on()) && wa_swizzle_ok();
+            if (blue) {
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_BLUE);
+                g_bg_cover_draws++;
+            }
+            if (g_bg_nomip < 0) {
+                const char *v = getenv("SL_BG_NOMIP");   /* diagnostic: level 0 only */
+                g_bg_nomip = (v != NULL && *v != '0');
+            }
+            if (g_bg_nomip)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            /* #69 THE MATERIAL PROGRAM, for a mesh whose material carries the
+             * source's four-image record (see THE MATERIAL PROGRAM above): bound
+             * for this one draw and put back after it. Without a view matrix
+             * this frame the frame cannot be rotated, so the mesh draws its base
+             * alone and says so in the census rather than guessing a rotation. */
+            {
+                const struct sl_wa_matx *mx = (a->vframe && mh->material < a->material_count)
+                                            ? &a->matx[mh->material] : NULL;
+                int through = 0, fades = 0;
+                if (mx != NULL && mx->mode == SL_WA_MATX_NORMAL_SPHERE && bg_material_on()
+                    && matx_program_ok()) {
+                    if (have_view) {
+                        matx_bind(a, mx, viewm, (fogm != FOG_NONE || remfog));
+                        through = 1;
+                    } else {
+                        g_matx_noview++;
+                    }
+                }
+                /* #74 D-026 step 4: the shell's coverage through unit 1. Its
+                 * depth mask is left as its class set it above. */
+                if (pano && !through && sl_wa_panorama_fades(mt->flags, 1)) {
+                    fades = 1;
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glActiveTexture(GL_TEXTURE1);
+                    glEnable(GL_TEXTURE_2D);
+                    glBindTexture(GL_TEXTURE_2D, g_pano_tex);
+                    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+                    glActiveTexture(GL_TEXTURE0);
+                    p_ClientActiveTexture(GL_TEXTURE1);
+                    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid *) g_pano_st);
+                    p_ClientActiveTexture(GL_TEXTURE0);
+                }
+                /* D-048 THE GAME'S WATER (SL_WA_MAT_GAME_WATER): the image
+                 * through the game's own two-tile setup - unit 0 at tile 0's
+                 * coordinates lerps toward unit 1's sample at tile 1's by the
+                 * game's PRIM_LOD_FRAC (texenv mode 8, B-107's crossbar), unit
+                 * 1 multiplies by the vertex colour - at the phases the water
+                 * controller holds this tick (sl_wa_water_state). Both units'
+                 * texture matrices carry the shifts and are put back to the
+                 * identity the rest of this file assumes. */
+                int water = 0;
+#if defined(SL_TEXENV_COMBINE) && defined(SL_MULTITEX) && defined(GL_INTERPOLATE) \
+    && defined(GL_CONSTANT) && defined(GL_PREVIOUS)
+                if ((mt->flags & SL_WA_MAT_GAME_WATER) && !through && !fades && bg_water_on()
+                    && water_gl_ok()) {
+                    float ps, pt, pw;
+                    struct sl_wa_water ws;
+                    if (sl_wa_water_phase(&ps, &pt, &pw)) {
+                        const GLsizei vstride = (GLsizei) sizeof a->vertices[0];
+                        sl_wa_water_state(ps, pt, pw, &ws);
+                        water = 1;
+                        {
+                            /* SL_BG_WATER_TRACE: one line per drawn frame (the
+                             * first range only), bounded - the phases each frame
+                             * was drawn at, beside the frame's counter. */
+                            static int tr = -1;
+                            static unsigned lines, lastf = ~0u;
+                            if (tr < 0) { const char *v = getenv("SL_BG_WATER_TRACE");
+                                          tr = (v != NULL && *v != '0'); }
+                            if (tr && pass == 1 && !late && g_dl_frame != lastf && lines < 4000u) {
+                                lastf = g_dl_frame;
+                                lines++;
+                                fprintf(stderr, "D-048 water: f%u phase s %.4f t %.4f w %.4f "
+                                                "tile0 %.5f %.5f tile1 %.5f %.5f frac %.4f\n",
+                                        g_dl_frame, (double) ps, (double) pt, (double) pw,
+                                        (double) ws.du0, (double) ws.dv0, (double) ws.du1,
+                                        (double) ws.dv1, (double) ws.frac);
+                            }
+                        }
+                        glMatrixMode(GL_TEXTURE);
+                        glLoadIdentity();
+                        glTranslatef(ws.du0, ws.dv0, 0.0f);
+                        texenv_set(8);
+                        envcol_set(ws.frac, ws.frac, ws.frac, ws.frac);
+                        glActiveTexture(GL_TEXTURE1);
+                        glEnable(GL_TEXTURE_2D);
+                        glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
+                        glLoadIdentity();          /* unit 1's texture matrix */
+                        glTranslatef(ws.du1, ws.dv1, 0.0f);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_RGB, GL_MODULATE);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_RGB, GL_PREVIOUS);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_RGB, GL_SRC_COLOR);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE1_RGB, GL_PRIMARY_COLOR);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND1_RGB, GL_SRC_COLOR);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_COMBINE_ALPHA, GL_REPLACE);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_SOURCE0_ALPHA, GL_PREVIOUS);
+                        glTexEnvi(GL_TEXTURE_ENV, GL_OPERAND0_ALPHA, GL_SRC_ALPHA);
+                        glMatrixMode(GL_MODELVIEW);
+                        glActiveTexture(GL_TEXTURE0);
+                        p_ClientActiveTexture(GL_TEXTURE1);
+                        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                        if (g_bgv_live) {
+                            p_BindBuffer(GL_ARRAY_BUFFER, g_bgv_static);
+                            glTexCoordPointer(2, GL_FLOAT, vstride, (const GLvoid *)
+                                              ((const char *) &a->vertices[0].u - (const char *) a->vertices));
+                            p_BindBuffer(GL_ARRAY_BUFFER, 0);
+                        } else {
+                            glTexCoordPointer(2, GL_FLOAT, vstride, (const GLvoid *) &a->vertices[0].u);
+                        }
+                        p_ClientActiveTexture(GL_TEXTURE0);
+                    }
+                }
+#endif
+                /* #75: the near-cut fill, for a mesh that writes depth */
+                bg_draw_mesh_elements(a, mi, mh, nearkeep && pass == 1 && !fades && mt->blend != SL_WA_BLEND_ALPHA
+                                             && !((mt->flags & SL_WA_MAT_DECAL) && bg_decal_on()));
+#if defined(SL_TEXENV_COMBINE) && defined(SL_MULTITEX) && defined(GL_INTERPOLATE) \
+    && defined(GL_CONSTANT) && defined(GL_PREVIOUS)
+                if (water) {
+                    p_ClientActiveTexture(GL_TEXTURE1);
+                    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+                    p_ClientActiveTexture(GL_TEXTURE0);
+                    glActiveTexture(GL_TEXTURE1);
+                    glMatrixMode(GL_TEXTURE);
+                    glLoadIdentity();
+                    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                    glDisable(GL_TEXTURE_2D);
+                    glActiveTexture(GL_TEXTURE0);
+                    glLoadIdentity();              /* unit 0's texture matrix */
+                    glMatrixMode(GL_MODELVIEW);
+                    texenv_set(0);
+                    g_tex1_gl_on = 0;
+                    g_tex1_gl_bound = 0;
+                    g_tex1_env = 0;
+                    if (pass == 1) g_bg_water_draws++;
+                }
+#else
+                (void) water;
+#endif
+                if (fades) {
+                    p_ClientActiveTexture(GL_TEXTURE1);
+                    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+                    p_ClientActiveTexture(GL_TEXTURE0);
+                    glActiveTexture(GL_TEXTURE1);
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                    glDisable(GL_TEXTURE_2D);
+                    glActiveTexture(GL_TEXTURE0);
+                    g_tex1_gl_bound = 0;
+                    g_pano_meshes++;
+                }
+                if (through) {
+                    matx_unbind();
+                    g_matx_draws++;
+                    nmatx++;
+                }
+            }
+            if ((mt->flags & SL_WA_MAT_DECAL) && bg_decal_on())
+                glDisable(GL_POLYGON_OFFSET_FILL);   /* this mesh only */
+            if (blue) {                              /* this mesh only */
+                glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ALPHA);
+            }
+            if (pulled) {
+                bg_decal_unpull(a, mh, clip, g_cop_pushed != 0u ? g_cop_clip : NULL);
+                bgv_put_mesh(clip, mi);                      /* #88 */
+            }
+            if (shell_far) {
+                if (!clamp_was) glDisable(GL_DEPTH_CLAMP);
+            } else if (farpass && pass == 0 && SL_WA_BLEND_BLENDS(mt->blend)) {
+                bg_far_rezero(a, mh, clip, g_cop_pushed != 0u ? g_cop_clip : NULL,
+                              fz_k1, fz_k2);                /* back for the rest */
+                bgv_put_mesh(clip, mi);                      /* #88 */
+            }
+            if (pass == 1) {
+                g_bg_tris += mh->index_count / 3u;
+                g_bg_draws++;
+            }
+            }
+        }
+    }
+    g_bgx_filter = -1;                       /* #90 back to every piece */
+    if (pano && !late) g_pano_frames++;
+    {
+        static int said;
+        if (!said && pano_tables(a) != 0u) {
+            if (pano && g_pano_meshes != 0u) {
+                said = 1;
+                fprintf(stderr, "#74 worldasset: panorama shell of background/%s fades "
+                                "where the stage fog covers it (D-026) - %u vertices, "
+                                "haze top %.1f..%.1f deg this frame; SL_SKY_PANORAMA=0 "
+                                "draws it as authored\n",
+                        a->path, g_pano_nvert, (double) g_pano_top_lo,
+                        (double) g_pano_top_hi);
+            } else if (!sky_panorama_on()) {
+                said = 1;
+                fprintf(stderr, "#74 worldasset: panorama shell of background/%s drawn "
+                                "as authored (SL_SKY_PANORAMA=0)\n", a->path);
+            }
+        }
+    }
+    if (g_bg_water_draws != 0u) {
+        static int said;
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "D-048 worldasset: game water on background/%s - its water moves "
+                            "with the game's own water phases (SL_BG_WATER=0 draws it still)\n",
+                    a->path);
+        }
+    }
+    if (nmatx != 0u && !g_matx_said) {
+        g_matx_said = 1;
+        fprintf(stderr, "#69 worldasset: material program on background/%s - %u mesh%s "
+                        "shade through the source's four-image program, terms %u "
+                        "(SL_BG_MATERIAL=0 draws the base alone; SL_BG_MAT_TERMS=<mask> "
+                        "keeps 1 warp, 2 normal map, 4 reflection)\n",
+                a->path, nmatx, nmatx == 1u ? "" : "es", bg_material_terms());
+        if (have_view) {
+            /* THE FRAME'S ROTATION, witnessed: where the rows put the
+             * world's three axes. The world's up must land on view +y and
+             * the eye's right on view +x for the sphere lookup to read the
+             * image the way the source does. */
+            fprintf(stderr, "#69 worldasset: world axes in view space - x (%.3f %.3f %.3f) "
+                            "y (%.3f %.3f %.3f) z (%.3f %.3f %.3f)\n",
+                    viewm[0], viewm[1], viewm[2], viewm[4], viewm[5], viewm[6],
+                    viewm[8], viewm[9], viewm[10]);
+        }
+    }
+    if (late) g_bg_matx_meshes += nmatx;      /* #90 the first draw's, plus the late */
+    else      g_bg_matx_meshes = nmatx;
+    if (g_bgv_live) {
+        /* #88 the pointers back to the client arrays, as the pass left them before */
+        glVertexPointer(4, GL_FLOAT, 0, (const GLvoid *) clip);
+        if (g_bgv_fog) glFogCoordPointer(GL_FLOAT, 0, (const GLvoid *) fogc);
+        glTexCoordPointer(2, GL_FLOAT, (GLsizei) sizeof a->vertices[0], (const GLvoid *) &a->vertices[0].u);
+        if (!g_bg_white && lc == NULL)
+            glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0],
+                           (const GLvoid *) &a->vertices[0].r);
+        g_bgv_live = 0;
+    }
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+    if (fogm != FOG_NONE || remfog) {
+        glDisableClientState(GL_FOG_COORD_ARRAY);
+        /* An array draw leaves the CURRENT fog coordinate undefined, and the
+         * interpreter's own list resumes immediately after this pass under the
+         * fogless paths' assumption that it is zero. Pin it, for the same
+         * reason and in the same way fog_neutral exists. */
+        fog_neutral();
+    }
+    glDisable(GL_ALPHA_TEST);
+    if (late) g_bgx_meshes += nlate;
+    else {
+        g_bg_verts += a->vertex_count;
+        g_bg_frames++;
+    }
+    if (!late) bg_fogtrace("background", "after", fogm);
+    if (bg_fogtrace_on() && !late) {
+        static unsigned n;
+        /* SL_BG_FOGTRACE=<stride>: one line every <stride> drawn frames, so a
+         * run long enough to reach a pose can be sampled at it rather than
+         * only at its first frames. 1 (or an unparsed value) is every frame. */
+        static int stride;
+        if (stride == 0) { const char *v = getenv("SL_BG_FOGTRACE");
+                           stride = (v != NULL && atoi(v) > 1) ? atoi(v) : 1; }
+        if ((g_bg_frames % (unsigned) stride) == 0u && n++ < 200u)
+            fprintf(stderr, "#68 fogdepth: f%u projection %d mode %d ndc "
+                            "%.5f .. %.5f coord %.4f .. %.4f mean %.4f\n",
+                    g_dl_frame, g_bg_fog_which, g_bg_fog_mode,
+                    g_bg_ndc_min, g_bg_ndc_max, g_bg_fog_min, g_bg_fog_max,
+                    g_bg_fog_n ? (float) (g_bg_fog_sum / g_bg_fog_n) : 0.0f);
+    }
+
+    /* THE VALIDITY GATE. Suppression is armed only HERE - after a complete
+     * replacement has been loaded, validated, uploaded and actually drawn this
+     * frame. Missing, invalid or a failed upload leaves it clear and the
+     * original draws exactly as it does today, which is the one outcome the
+     * replacement contract demands and the reason the flag is set at the end of
+     * this function rather than at lookup. */
+    g_bg_suppress = 1;
+    /* #90 and the translucent meshes this draw left wait for the game's
+     * translucent walk (bg_xlu_flush) */
+    if (!late) g_bgx_pending = (nlate != 0u);
+
+    /* ---- put the renderer's own state back ---------------------------- */
+    glScissor(g_sky_sciss_box[0], g_sky_sciss_box[1],
+              g_sky_sciss_box[2], g_sky_sciss_box[3]);
+    if (g_sky_sciss_on) glEnable(GL_SCISSOR_TEST);
+    else                glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_POLYGON_OFFSET_FILL);   /* the decal pass leaves none behind */
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glColor4ub(255, 255, 255, 255);
+    g_tex_gl_bound = 0;
+    rm_invalidate();
+    texenv_set(0);
+    g_texenv = -1;
+    texenv_set(0);
+    gl_load_projection();
+    gl_load_modelview();
+}
+
+/* One int test on the common path. Inlined by hand into emit_tri's head.
+ *
+ * ORDER: the sky first - it carries no depth and is the backdrop - then the
+ * background, which paints over it where it stands and writes the depth the
+ * game's remaining geometry then tests against. A triangle outside the world
+ * projection draws the background's translucent meshes first if they are still
+ * waiting (#90, bg_xlu_flush). */
+#define SKY_MAYBE()  do { if (g_proj_is_world) {                              \
+                              if (g_sky_armed && !g_sky_done) sky_draw();     \
+                              if (g_bg_armed  && !g_bg_done)  bg_draw();      \
+                          } else if (g_bgx_pending) bg_xlu_flush(3);          \
+                        } while (0)
+
+void sl_sky_report(FILE *f);
+void sl_sky_report(FILE *f)
+{
+    if (f == NULL) return;
+    sl_wa_report(f);
+    /* #71 THE DYNAMIC DOOR (src/sl_chr_asset.h) - both of its paths */
+    if (g_door_brackets || g_door_cut_draws)
+        fprintf(f, "#71 dynamic doors: %u native door draws kept closed at the eye "
+                   "(%u near-crossing triangles); %u item cuts, %u item vertices "
+                   "processed, %u triangles drawn from them (SL_DYNDOOR=0: off)\n",
+                g_door_brackets, g_door_nk_tris, g_door_cut_draws, g_door_cut_verts,
+                g_door_cut_tris);
+    /* The background's half of this census must print whether or not a sky was
+     * composed - the scene-assembly rule can now leave the sky out entirely,
+     * and a silent background report would read as a background that did
+     * nothing. */
+    if (g_sky_frames || g_sky_armed || g_sky_refused || g_sky_notsaid
+        || g_bg_frames || g_bg_armed || g_bg_refused) {
+        /* `g_sky_frames` is the guard, not the flag alone: a run that composed
+         * the sky somewhere and then met a replacement has both, and what it
+         * did is the more useful half to print. */
+        if (g_bg_frames)
+            fprintf(f, "#78 background beyond the far plane: %u of %u frames drawn in "
+                       "two depth ranges; last such frame %u vertices past the game's "
+                       "far plane w %.1f, the item reaching w %.1f%s\n",
+                    g_bg_far_frames, g_bg_frames, g_bg_far_verts,
+                    (double) g_bg_far_plane, (double) g_bg_far_reach,
+                    bg_farpass_on() ? "" : " (SL_BG_FARPASS=0: clamped to the far plane)");
+        if (g_bg_frames)
+            fprintf(f, "#90 background translucent draws: %u meshes drawn late, at the "
+                       "first secondary room list on %u frames, the weapon %u, a 2D draw "
+                       "%u, outside the world projection %u, the walk's end %u%s\n",
+                    g_bgx_meshes, g_bgx_flush[0], g_bgx_flush[1], g_bgx_flush[2],
+                    g_bgx_flush[3], g_bgx_flush[4],
+                    bg_xlu_late_on() ? "" : " (SL_BG_XLU_LATE=0: drawn with the rest)");
+        if (g_sky_notsaid && g_sky_frames == 0u)
+            fprintf(f, "#68 skydome: NOT COMPOSED - SL_SKY_WITH_BG=0 suppresses "
+                       "the stage sky beneath the REPLACEMENT background\n");
+        else
+            fprintf(f, "#68 skydome: drawn on %u frames, %u triangles and %u "
+                       "vertices per frame, %d frames skipped (projection)\n",
+                    g_sky_frames, g_sky_frames ? g_sky_tris / g_sky_frames : 0u,
+                    g_sky_frames ? g_sky_verts / g_sky_frames : 0u, g_sky_refused);
+        if (g_sky_edge_frames)
+            fprintf(f, "#90 skydome: %u frames of the lent dome shaded where the game's "
+                       "cloud layer lies on the screen, the fog colour below its edge "
+                       "(D-046; SL_XBLA_LENT_SKY_EDGE=0: along each direction)\n",
+                    g_sky_edge_frames);
+        if (g_sky_frames)
+            fprintf(f, "#68 skydome: cloud field (D-023) on the game's cloud phase, "
+                       "%.3f at the last frame; %u frames without a cloud layer to "
+                       "follow\n", (double) g_sky_cloud_phase, g_sky_cloud_skipped);
+        /* Read back from GL, not echoed from the request. */
+        if (g_bgbox_n) {
+            fprintf(f, "#68 bgworldbox: the GAME's room background, %u triangles, "
+                       "spans %.1f %.1f %.1f .. %.1f %.1f %.1f in the space the "
+                       "world projection consumes\n", g_bgbox_n,
+                    g_bgbox_lo[0], g_bgbox_lo[1], g_bgbox_lo[2],
+                    g_bgbox_hi[0], g_bgbox_hi[1], g_bgbox_hi[2]);
+        }
+        if (g_bg_frames || g_bg_armed || g_bg_refused) {
+            fprintf(f, "#68 background: drawn on %u frames, %u triangles and %u "
+                       "vertices per frame, %u GL draws per frame, %d frames "
+                       "skipped (projection)\n",
+                    g_bg_frames, g_bg_frames ? g_bg_tris / g_bg_frames : 0u,
+                    g_bg_frames ? g_bg_verts / g_bg_frames : 0u,
+                    g_bg_frames ? g_bg_draws / g_bg_frames : 0u, g_bg_refused);
+            fprintf(f, "#68 background decals: %u of those GL draws per frame "
+                       "carry the source's decal pass (SL_WA_MAT_DECAL, one "
+                       "polygon offset each, enabled and disabled around that "
+                       "draw alone); %u decal draws over the run pulled %.1f item units "
+                       "nearer, %u triangles of them along their plane's normal "
+                       "(#81, SL_BG_DECAL_PULL=0: off)\n",
+                    g_bg_frames ? g_bg_decal_draws / g_bg_frames : 0u, g_dpl_draws,
+                    (double) SL_WA_DECAL_PULL, g_dpl_plane);
+            fprintf(f, "#81 background blue coverage: %u mesh draws over the run took a "
+                       "blended draw's coverage from its image's blue channel "
+                       "(SL_WA_COVERAGE=0 draws the image's alpha)\n", g_bg_cover_draws);
+            fprintf(f, "#75 near-cut fill (%s): background %u triangles over %u frames, "
+                       "props %u triangles over %u draws (SL_WA_NEARKEEP=0 / =eye, "
+                       "SL_BG_NEARKEEP=0%s); shot-out lights %s, %u triangles dimmed at "
+                       "the last change (SL_BG_LIGHTS=0: off)\n",
+                    wa_nearkeep_mode() == 0 ? "off" : wa_nearkeep_mode() == 2 ? "eye-crossing only"
+                                                                               : "near-cut contract",
+                    g_bgn_tris, g_bgn_frames, g_prn_tris, g_prn_draws,
+                    g_wan_clamp == 0 ? ", GL_DEPTH_CLAMP refused" : "",
+                    g_bgl_live ? "shown" : "none", g_bgl_live ? g_bgl_ntri : 0u);
+            if (g_bg_backdrop_frames)
+                fprintf(f, "#68 background backdrop: %u frames cleared to the remaster's "
+                           "black under the replacement (no sky on this stage; "
+                           "SL_BG_BACKDROP=0 keeps the game's fill)\n", g_bg_backdrop_frames);
+            if (g_bg_fogless_frames)
+                fprintf(f, "#81 background on a fogless stage: %u frames drawn in the game's "
+                           "own range over its own fill (SL_BG_FOGLESS=0 draws past the far "
+                           "plane over black)\n", g_bg_fogless_frames);
+            if (g_pano_nvert != 0u)
+                fprintf(f, "#74 background panorama shell (D-026): %u vertices, faded on "
+                           "%u frames (%u mesh draws), haze top %.1f..%.1f deg on the "
+                           "last%s\n",
+                        g_pano_nvert, g_pano_frames, g_pano_meshes,
+                        (double) g_pano_top_lo, (double) g_pano_top_hi,
+                        sky_panorama_on() ? "" : " (SL_SKY_PANORAMA=0: as authored)");
+            fprintf(f, "#69 background animation: %u vertices displaced per frame "
+                       "by the bundle's own records, clock %lu VI frames at the "
+                       "last draw%s\n",
+                    g_bg_anim_verts, g_bg_anim_clock,
+                    bg_anim_on() ? "" : " (SL_BG_ANIM=0: at rest)");
+            fprintf(f, "#69 background material: %u mesh%s per frame through the "
+                       "source's four-image program (terms %u), %u draws over the "
+                       "run, %u fell back for want of a view matrix%s\n",
+                    g_bg_matx_meshes, g_bg_matx_meshes == 1u ? "" : "es",
+                    bg_material_terms(), g_matx_draws, g_matx_noview,
+                    bg_material_on() ? "" : " (SL_BG_MATERIAL=0: base image alone)");
+            fprintf(f, "#88 background arrays: %s, %u item%s uploaded, %lu mesh re-upload%s "
+                       "after a rewrite\n",
+                    g_bgv_state > 0 ? "buffer objects"
+                                    : g_bgv_state < 0 ? "client arrays (SL_BG_VBO=0 or no buffer objects)"
+                                                      : "not drawn yet",
+                    g_bgv_items, g_bgv_items == 1u ? "" : "s", g_bgv_uploads, g_bgv_uploads == 1ul ? "" : "s");
+            fprintf(f, "#68 background fog: projection %d, mode %d (0 none, 1 the RSP's "
+                       "per-vertex value, 2 the fog colour's alpha), colour "
+                       "%u %u %u, band fm %d fo %d (no fog below ndc z %.5f, "
+                       "full at %.5f); the depth over %u vertices runs "
+                       "%.5f .. %.5f and the coordinates handed to GL run "
+                       "%.4f .. %.4f, mean %.4f, %u (%.1f%%) at full fog\n",
+                    g_bg_fog_which, g_bg_fog_mode, (unsigned) g_fogp_col[0],
+                    (unsigned) g_fogp_col[1], (unsigned) g_fogp_col[2],
+                    g_fogp_fm, g_fogp_fo,
+                    g_bg_fog_start, g_bg_fog_end,
+                    g_bg_fog_n,
+                    g_bg_fog_n ? g_bg_ndc_min : 0.0f,
+                    g_bg_fog_n ? g_bg_ndc_max : 0.0f,
+                    g_bg_fog_n ? g_bg_fog_min : 0.0f,
+                    g_bg_fog_n ? g_bg_fog_max : 0.0f,
+                    g_bg_fog_n ? (float) (g_bg_fog_sum / g_bg_fog_n) : 0.0f,
+                    g_bg_fog_full,
+                    g_bg_fog_n ? 100.0 * g_bg_fog_full / g_bg_fog_n : 0.0);
+            /* The band above is what the LEVEL issues. Whether it reaches
+             * this pass is a separate question with its own rule, and a
+             * report that printed only the first would read as a band that
+             * was applied. */
+            fprintf(f, "#68 background fog destination: the level's band is %s "
+                       "- a replacement IS this stage's backdrop and carries "
+                       "its own distance shading, and the level's band fades "
+                       "into the backdrop it replaced (SL_BG_LEVEL_FOG=1 "
+                       "applies it anyway)\n",
+                    g_bg_fog_level ? "APPLIED to the replacement"
+                                   : "NOT applied to the replacement");
+            /* ...and the objects standing in front of it (STAGE FOG ON
+             * OBJECTS): how many per-object triangles took the row, and how
+             * many the fixed pipeline kept on the register alone. */
+            fprintf(f, "#68 object fog: %u per-object triangles per frame took "
+                       "the remaster's stage fog, %u per frame stayed on the "
+                       "fixed pipeline with the per-object register only%s\n",
+                    g_bg_frames ? g_stage_tris / g_bg_frames : 0u,
+                    g_bg_frames ? g_stage_fixed_tris / g_bg_frames : 0u,
+                    native_stage_fog_on() ? ""
+                                          : " (SL_NATIVE_STAGE_FOG=0: off)");
+            fprintf(f, "#68 background translucency: %u of those GL draws per "
+                       "frame are blended with NO alpha reject (the source's "
+                       "masked group is a separate bit and is disjoint from "
+                       "its blended one; SL_BG_XLU_BLEND=0 restores the reject "
+                       "on both)\n",
+                    g_bg_frames ? g_bg_xlu_draws / g_bg_frames : 0u);
+            fprintf(f, "#68 background: replacement %s; %u original triangles "
+                       "suppressed over %u drawn frames (%u per frame)\n",
+                    g_bg_frames ? "ACTIVE - the original room background is "
+                                  "suppressed" : "inactive - the original draws",
+                    g_wr_suppressed, g_bg_frames,
+                    g_bg_frames ? g_wr_suppressed / g_bg_frames : 0u);
+            if (g_bg_asset != NULL)
+                fprintf(f, "#68 background resident: %u vertices, %u indices, "
+                           "%u materials, %u meshes, %u images, %u mip level(s), "
+                           "min %#x mag %#x\n",
+                        g_bg_asset->vertex_count, g_bg_asset->index_count,
+                        g_bg_asset->material_count, g_bg_asset->mesh_count,
+                        g_bg_asset->texture_count, g_bg_levels,
+                        g_bg_min_filter, g_bg_mag_filter);
+        }
+        if (g_sky_min_filter)
+            fprintf(f, "#68 skydome sampler: wrap s/t %#x/%#x, min %#x, mag "
+                       "%#x, %u mip level(s) uploaded\n",
+                    (unsigned) GL_REPEAT, (unsigned) GL_REPEAT,
+                    g_sky_min_filter, g_sky_mag_filter, g_sky_levels);
+    }
+}
+
 static void emit_tri(int a, int b, int c)
 {
     struct nearv in[3], pa[NEARG_MAX], pb[NEARG_MAX];
@@ -12719,6 +18388,10 @@ static void emit_tri(int a, int b, int c)
     float se[3][3], sd[3];
     float wmax;
     int idx[3], i, j, n, cross, eyec, guard;
+
+    /* #68: the frame's first world triangle. After every clear, before any
+     * world geometry - and one int test when no set is selected. */
+    SKY_MAYBE();
 
     idx[0] = a; idx[1] = b; idx[2] = c;
     for (i = 0; i < 3; i++)
@@ -12799,7 +18472,7 @@ static void emit_tri(int a, int b, int c)
      * triangle whose nearest vertex is a few units ahead of the eye and 167
      * below it projects that vertex at |y/w| in the tens; the RSP clips it
      * against the 2w planes and shades the clipped polygon, this path handed
-     * GL the whole triangle. MEASURED on the owner's Surface 2 report ("the
+     * GL the whole triangle. MEASURED on the Surface 2 playtest report ("the
      * ground lights up in patches as I walk"), spawn walk under
      * SL_VI_CATCHUP=0, a shot per sim step: the near floor band read 92
      * where the cartridge at the same eye position read 110, then jumped to
@@ -12821,7 +18494,8 @@ static void emit_tri(int a, int b, int c)
         in[i].v = g_vbuf[idx[i]];
     }
 
-    if (eyec == 0) {
+    if (g_door_nearkeep && eyec == 0 && cross) g_door_nk_tris++;
+    if (eyec == 0 && !g_door_nearkeep) {
         /* Every vertex has w > 0: CLIP AT THE NEAR PLANE, z + w >= 0 -
          * another plane through the clip-space origin, so the cut is
          * projectively exact with no epsilon. This is the cartridge's own
@@ -12866,7 +18540,7 @@ static void emit_tri(int a, int b, int c)
         /* Guard clip - see the block comment above. Four planes through the
          * clip-space origin whose intersection implies w >= 0; every edge
          * they generate projects outside the viewport by construction.
-         * NO near-plane cut on this population: the owner's cartridge test
+         * NO near-plane cut on this population: the cartridge test
          * (ad772496 witness, w = -1.3 / -7.7 vertices) shows a wall the
          * camera touches must FILL, not open - its sub-near region is kept
          * and saturated below. */
@@ -12902,14 +18576,14 @@ static void emit_tri(int a, int b, int c)
      * clip-space parameter. z/w is a ratio of two functions that ARE linear
      * in t, so the lerp agrees with the truth only at the two ends and can
      * be wildly off between them: on Surface 2's spawn valley the floor is
-     * triangles spanning 6..246 eye units (owner mark 20260914-234420
+     * triangles spanning 6..246 eye units (playtest mark 20260914-234420
      * mark-001, candidates seq 29-31), and every one of them crosses the
      * guard planes, so the fan is built from generated vertices. The edge
      * from 6 to 246 units cut at t = 0.5 sits at w = 126: its true NDC z is
      * 1.002 - 4.004/126 = 0.970, fog (fm 2976, fo -2720) 167/255; the lerp
      * gave (0.335 + 0.986)/2 = 0.66, fog CLAMPED TO 0. A vertex a hundred
      * units out drawn as unfogged, next to one drawn right: that is the
-     * owner's "ground lighting up in patches as I walk" - the cut moves
+     * reported "ground lighting up in patches as I walk" - the cut moves
      * with the camera, so the patches do. The RSP derives a clipped vertex's
      * fog from the clipped vertex's own screen z, which is what this
      * restores: every survivor - lerped, saturated or original (for which
@@ -12928,6 +18602,12 @@ static void emit_tri(int a, int b, int c)
         for (j = 0; j < 3; j++) se[i][j] = g_veye[idx[i]][j];
         sd[i] = g_vdepth[idx[i]];
     }
+    /* #78 the parent's fill decision, before its slots are overwritten */
+    g_nf_fan = (g_bg_suppress && !g_bg_nosup && g_room_num >= 0
+                && (g_room_kind == 1 || g_room_kind == 2) && nf_on() && g_nf_ready
+                && nf_opaque()) ? nf_registered(a, b, c) : 0;
+    g_nf_fan_fade = (g_bg_suppress && !g_bg_nosup && g_room_num >= 0) ? nf_fade_kept(a, b, c) : 0;
+    g_nf_fan_kept = (g_bg_suppress && !g_bg_nosup && g_room_num >= 0) ? nf_room_kept(a, b, c) : 0;
     g_clipemit = 1;
     for (i = 2; i < n; i++) {
         int src[3];
@@ -12948,7 +18628,7 @@ static void emit_tri(int a, int b, int c)
          * cull bits - see nearcull_would_drop. Only the guard (eyec > 0)
          * output is saturated below the near plane; the near-clipped fan
          * keeps real depth and stays under cull_apply like any other draw. */
-        if (eyec > 0 && nearcull_would_drop(a, b, c)) { g_nearcull_dropped++; continue; }
+        if ((eyec > 0 || g_door_nearkeep) && nearcull_would_drop(a, b, c)) { g_nearcull_dropped++; continue; }
         emit_tri_slots(a, b, c);
     }
     g_clipemit = 0;
@@ -12990,6 +18670,74 @@ static void emit_tri(int a, int b, int c)
  * command carrying fewer than four triangles zero-fills the unused slots, and
  * b10000dc 0000c545 from the same frame is exactly that shape. Without the
  * skip those become real triangles on vertex 0 rather than nothing. */
+/* #77 THE CARRIED COORDINATES. A room triangle whose image a set replaces
+ * with a structured remastered one may have a row in the set's per-stage
+ * table (sl_texprov_uv): the remaster's own texture coordinates for that
+ * triangle, because the cartridge's bend from one triangle to the next and
+ * the replacement's lines would bend with them (docs/texture-packs.md,
+ * "Carried coordinates"). Taken only when all of these hold:
+ *
+ *   - the triangle is ROOM geometry (g_room_num), so props, characters and
+ *     the view model never reach the table;
+ *   - every corner was loaded from the room's point table (a segment-14
+ *     operand - bg.c binds SPSEGMENT_BG_VTX to the room's vertices - so the
+ *     point entry is offset / 16 plus the vertex's place in the load);
+ *   - the render tile's image is the row's id AND the provider replaces it,
+ *     so the carried coordinates only ever address the remastered image.
+ *
+ * Then the three slots' s/t are swapped for the row's for this one triangle
+ * - before emit_tri, so its near-plane and guard clipping interpolate the
+ * carried values exactly as they would the loaded ones - and put back after:
+ * the vertex buffer the next command sees is untouched. ORIGINAL, a set
+ * with no table and every non-room draw cost one test. SL_TEX_UVCARRY=0 is
+ * the control (cartridge coordinates under every set). */
+int sl_wa_stage_num(void);
+
+static int uvcarry_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_TEX_UVCARRY");
+                  on = !(v != NULL && v[0] == '0' && v[1] == '\0'); }
+    return on;
+}
+
+static void emit_tri_room(int a, int b, int c)
+{
+    int s[3], i;
+    unsigned idx[3], nw = 0, nh = 0, off = 0;
+    short st[6], keep[6];
+    const struct sl_tmem_ent *ld;
+    const unsigned char *src;
+    int id;
+
+    if (g_room_num < 0 || !sl_texprov_active() || !uvcarry_on()
+        || a < 0 || a >= 32 || b < 0 || b >= 32 || c < 0 || c >= 32) {
+        emit_tri(a, b, c);
+        return;
+    }
+    s[0] = a; s[1] = b; s[2] = c;
+    for (i = 0; i < 3; i++) {
+        if ((g_vsrc_seg[s[i]] >> 24) != 0x0Eu) { emit_tri(a, b, c); return; }
+        idx[i] = ((g_vsrc_seg[s[i]] & 0x00ffffffu) >> 4) + g_vsrc_i[s[i]];
+    }
+    ld = tmem_resolve(g_tile[g_tex_tile & 7u].tmem, &off);
+    src = (ld != NULL) ? ld->src + off : g_load_src;
+    id = (src != NULL) ? sl_texprov_id_of(src, &nw, &nh) : -1;
+    if (id < 0 || !sl_texprov_uv(sl_wa_stage_num(), g_room_num, idx, (unsigned) id, st)
+        || sl_texprov_lookup(src, nw, nh) == NULL) {
+        emit_tri(a, b, c);
+        return;
+    }
+    for (i = 0; i < 3; i++) {
+        keep[2 * i] = g_vbuf[s[i]].s; keep[2 * i + 1] = g_vbuf[s[i]].t;
+        g_vbuf[s[i]].s = st[2 * i];   g_vbuf[s[i]].t = st[2 * i + 1];
+    }
+    emit_tri(a, b, c);
+    for (i = 2; i >= 0; i--) {
+        g_vbuf[s[i]].s = keep[2 * i]; g_vbuf[s[i]].t = keep[2 * i + 1];
+    }
+}
+
 static void tri4(unsigned int w0, unsigned int w1)
 {
     int i;
@@ -13000,7 +18748,7 @@ static void tri4(unsigned int w0, unsigned int w1)
         if ((x | y | z) == 0) continue;              /* unused slot */
         g_fd_slot = i;                               /* B-043 probe */
         edge_check((int) x, (int) y, (int) z);
-        emit_tri((int) x, (int) y, (int) z);
+        emit_tri_room((int) x, (int) y, (int) z);
     }
 }
 
@@ -13642,6 +19390,781 @@ static void draw_asset_override(unsigned id, unsigned fade, unsigned sel)
     }
 }
 
+/* ==================== #70 THE CHARACTER-ASSET BRIDGE ======================
+ *
+ * A presentation's replacement for a character's body or head, drawn where
+ * the game's own lists for that part would have been (src/sl_chr_asset.h:
+ * the seam in src/native/sl_chr_asset.c withholds those lists and emits the
+ * bridge command in their place, in the opaque pass).
+ *
+ * THE POSE is the game's: the record carries the character's matrices - the
+ * same array the game's own lists read through the model-matrix segment, at
+ * the same moment of the frame - and each item joint rides the game matrix
+ * sl_chr_derive matched it to (sl_gfx_charskin.h has the arithmetic). The
+ * vertices are deformed on the host into EYE space, which is what the game's
+ * own triangles are submitted in: GL's modelview is the identity throughout
+ * the 3D path and its projection is g_proj.
+ *
+ * THE SHADING is the game character's, term for term, because the item is
+ * drawn under the character's own render state rather than one of its own:
+ *
+ *   texel * vertex colour           the game's modulate (G_CC_MODULATEIA's
+ *                                   colour half, SHADE = the item's colour)
+ *   lerp toward the shade register  G_RM_FOG_PRIM_A with the character's
+ *                                   shade (chrRenderProp's chrShade, the
+ *                                   register the game's own lists set)
+ *   the stage fog, per vertex       only where the game's own character
+ *                                   takes it (stage_fog_draw): the register
+ *                                   lerp as the program's u_obj, then GL's
+ *                                   fog toward the remaster row by the
+ *                                   vertex's distance
+ *
+ * so a replaced guard darkens in a dark room and hazes at distance exactly
+ * as the game's guard beside it does. No light, no normal map and no term of
+ * the source's own programs is invented; those programs are not reproduced.
+ *
+ * THE BODY'S BUILT-IN HEAD (SL_WA_MESH_BUILTIN_HEAD) - the body's own neck
+ * and face - is drawn only when the character wears no separate head. A body
+ * that wears one is only ever handed over beside the replacement head, whose
+ * item brings its own neck (sl_chr_compose).
+ *
+ * GL STATE. Everything established here is put back, the draw_asset_override
+ * discipline: client arrays off, the program unbound and its tint cleared,
+ * the fog register and coordinate neutral, texturing off with the cache told,
+ * the cull and render-mode caches invalidated. */
+#define CHR_MAX_VERTS   16384
+#define CHR_MAX_MTX     64
+static float    g_chr_eye[CHR_MAX_VERTS * 3];
+static float    g_chr_fog[CHR_MAX_VERTS];
+static unsigned char g_chr_ncls[CHR_MAX_VERTS];      /* #75 a prop's near classes */
+static unsigned char g_chr_col[CHR_MAX_VERTS * 4];   /* a fading draw's colours */
+static unsigned g_chr_draws, g_chr_parts, g_chr_tris, g_chr_refused, g_chr_stage, g_chr_faded,
+                g_chr_destroyed, g_chr_destroyed_v;  /* THE DESTROYED AUTOGUN: parts, vertices shaded */
+
+extern int sl_chr_draw_ok(const void *p);
+
+/* THE DYNAMIC DOOR (src/sl_chr_asset.h): the door's item as the game's live
+ * box leaves it this frame - a copy of the item's record over the cut's own
+ * vertices, skin, indices and meshes (sl_door_cut_mesh). Rebuilt on every
+ * draw from the record's cut; nothing is kept between frames. The copy
+ * shares the item's images and GL names, uploaded first. */
+static struct sl_wa_asset  g_door_a;
+static struct sl_wa_vertex g_door_v[SL_DOOR_MAX_VERTS];
+static struct sl_wa_skin   g_door_s[SL_DOOR_MAX_VERTS];
+static unsigned            g_door_i[SL_DOOR_MAX_INDICES];
+static struct sl_wa_mesh   g_door_m[SL_WA_MAX_MESHES];
+
+static const struct sl_wa_asset *door_cut_asset(const struct sl_wa_asset *a,
+                                                const struct sl_chr_map *map,
+                                                const struct sl_door_cut *cut)
+{
+    unsigned nv = 0, ni = 0;
+    if (!sl_door_cut_mesh(a, map, cut, g_door_v, g_door_s, SL_DOOR_MAX_VERTS,
+                          g_door_i, SL_DOOR_MAX_INDICES, g_door_m, &nv, &ni))
+        return NULL;
+    memcpy(&g_door_a, a, sizeof g_door_a);
+    g_door_a.vertices = g_door_v;
+    g_door_a.skin = g_door_s;
+    g_door_a.indices = g_door_i;
+    g_door_a.vertex_count = nv;
+    g_door_a.index_count = ni;
+    memcpy(g_door_a.meshes, g_door_m, a->mesh_count * sizeof g_door_m[0]);
+    g_door_a.vaux = NULL;
+    g_door_a.vm_normals = NULL;
+    g_door_cut_draws++;
+    g_door_cut_verts += a->vertex_count;
+    g_door_cut_tris += ni / 3u;
+    return &g_door_a;
+}
+
+/* SL_CHR_PRES=1: what a bridge record actually drew, per part - meshes
+ * drawn, built-in-head meshes left out, vertices deformed, triangles - one
+ * line whenever that differs from the previous record's (the seam prints the
+ * record's address beside the character it belongs to). Read-only. */
+static void chr_pres_line(const struct sl_chr_draw *r, const unsigned (*n)[4],
+                          const unsigned *verts)
+{
+    static int on = -1;
+    static unsigned last[2][4], lastv[2], lines;
+    if (on < 0) { const char *v = getenv("SL_CHR_PRES");
+                  on = (v != NULL && *v != '\0' && *v != '0'); }
+    if (!on || lines >= 256) return;
+    if (memcmp(last, n, sizeof last) == 0 && memcmp(lastv, verts, sizeof lastv) == 0) return;
+    memcpy(last, n, sizeof last);
+    memcpy(lastv, verts, sizeof lastv);
+    lines++;
+    fprintf(stderr, "sl_chrpres: bridge rec=%p wears_head=%d body meshes drawn=%u of %u "
+                    "built-in-head skipped=%u verts=%u tris=%u | head meshes drawn=%u of %u "
+                    "verts=%u tris=%u\n",
+            (const void *) r, r->wears_head, n[0][0], n[0][1], n[0][2], verts[0], n[0][3],
+            n[1][0], n[1][1], verts[1], n[1][3]);
+}
+
+/* ONE MESH OF A REPLACEMENT ITEM, with the source's decal pass honoured. A
+ * material marked SL_WA_MAT_DECAL (a prop's graffiti or label, authored
+ * exactly on the face it marks - 0.0000 item units apart on the Dam's crate
+ * stack) is drawn with the same depth priority the background pass gives its
+ * decals and rm_apply gives G_RM_ZMODE_DEC: enabled immediately before this
+ * draw, disabled immediately after, so no other mesh is offset. Depth writes
+ * are whatever the caller's pass set; a translucent decal writes none, so the
+ * offset can only win the compare against its own face. SL_BG_DECAL=0 draws
+ * it with no priority, as the background pass does. */
+static unsigned g_chr_decal_draws;
+
+/* BLUE COVERAGE (SL_WA_MAT_COVERAGE_BLUE, sl_gfx_worldasset.h): the material's
+ * alpha is its image's blue channel. Realised as the sampler does it on the
+ * source - the fetch routes blue into the alpha lane - by the texture
+ * object's alpha swizzle, set immediately before the mesh and put back to
+ * GL_ALPHA immediately after, so an image another material draws keeps its
+ * own alpha. Nothing else about the draw changes: the texture environment
+ * still multiplies it by the vertex colour's alpha and the blend is the
+ * ALPHA material's SRC_ALPHA / ONE_MINUS_SRC_ALPHA. Needs GL 3.3 or a
+ * texture-swizzle extension; without one the material draws its image's
+ * alpha (said once). SL_WA_COVERAGE=0 draws that way deliberately. */
+#ifndef GL_TEXTURE_SWIZZLE_A
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#endif
+static unsigned g_chr_cover_draws;
+
+static int wa_coverage_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *v = getenv("SL_WA_COVERAGE");
+                  on = (v == NULL || *v != '0'); }
+    return on;
+}
+
+static int wa_swizzle_ok(void)
+{
+    static int ok = -1;
+    if (ok < 0) {
+        const char *ver = (const char *) glGetString(GL_VERSION);
+        const char *ext = (const char *) glGetString(GL_EXTENSIONS);
+        int major = 0, minor = 0;
+        if (ver != NULL) (void) sscanf(ver, "%d.%d", &major, &minor);
+        ok = (major > 3 || (major == 3 && minor >= 3))
+             || (ext != NULL && (strstr(ext, "GL_ARB_texture_swizzle") != NULL
+                                 || strstr(ext, "GL_EXT_texture_swizzle") != NULL));
+        if (!ok)
+            fprintf(stderr, "sl_chrasset: no texture swizzle (GL \"%s\") - blue-coverage "
+                            "materials draw their image's alpha\n", ver != NULL ? ver : "?");
+    }
+    return ok;
+}
+
+static void chr_decal_draw(const struct sl_wa_asset *a, const struct sl_wa_mesh *mh,
+                           const struct sl_wa_material *mt)
+{
+    int dec = sl_wa_decal_priority(mt->flags, bg_decal_on());
+    int blue = sl_wa_coverage_blue(mt->flags, mt->blend, wa_coverage_on()) && wa_swizzle_ok();
+    if (blue) {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_BLUE);
+        if (g_chr_cover_draws++ == 0u)
+            fprintf(stderr, "sl_chrasset: %s takes a blended draw's coverage from its image's "
+                            "blue channel, as the source's program does (SL_WA_COVERAGE=0 "
+                            "draws the image's alpha)\n", a->path);
+    }
+    if (dec) {
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-1.0f, -2.0f);
+        if (g_chr_decal_draws++ == 0u)
+            fprintf(stderr, "sl_chrasset: %s draws the source's decal pass with the decal "
+                            "depth priority (SL_BG_DECAL=0 draws it without)\n", a->path);
+    }
+    glDrawElements(GL_TRIANGLES, (GLsizei) mh->index_count, GL_UNSIGNED_INT,
+                   (const GLvoid *) (a->indices + mh->first_index));
+    if (dec) glDisable(GL_POLYGON_OFFSET_FILL);
+    if (blue) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ALPHA);
+}
+
+/* A PROP'S REFLECTION (Egyptian's Golden Gun pickup): a prop bundle whose
+ * material names a reflection image (the preparation writes them for the
+ * props it names, prepare.PROP_REFLECTIONS) draws it as a view model does
+ * (vm_reflection): each solid, non-decal draw that names one is drawn again,
+ * the image read at the sphere coordinate of the vertex's eye-space direction
+ * and multiplied into what the first draw left at twice its value; unshaded
+ * and unfogged, then the prop path's own state put back. A bundle naming no
+ * reflection - every prop prepared before - draws exactly as before. */
+static float    g_chr_uv[CHR_MAX_VERTS * 2];
+static unsigned g_chr_reflected;
+static void chr_reflection(const struct sl_wa_asset *a, const float (*jm)[16], int stage,
+                           unsigned char fogc)
+{
+    struct sl_wa_asset *wa = (struct sl_wa_asset *) a;
+    unsigned mi;
+    int any = 0;
+    for (mi = 0; mi < a->mesh_count && !any; mi++) {
+        const struct sl_wa_material *mt = &a->materials[a->meshes[mi].material];
+        any = mt->reflect != 0u && mt->blend != SL_WA_BLEND_ALPHA
+              && (mt->flags & SL_WA_MAT_DECAL) == 0u;
+    }
+    if (!any) return;
+    if (wa->vm_normals == NULL) {
+        wa->vm_normals = (float *) malloc(sizeof(float) * 3u * a->vertex_count);
+        if (wa->vm_normals == NULL) return;
+        sl_vm_item_normals(a, wa->vm_normals);
+    }
+    sl_vm_sphere_coords(a, jm, wa->vm_normals, g_chr_uv);
+    shade_linear_bind(0);
+    if (stage) glDisableClientState(GL_FOG_COORD_ARRAY);
+    fog_neutral();
+    glDisableClientState(GL_COLOR_ARRAY);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid *) g_chr_uv);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_DST_COLOR, GL_SRC_COLOR);
+    glDepthMask(GL_FALSE);
+    for (mi = 0; mi < a->mesh_count; mi++) {
+        const struct sl_wa_mesh *mh = &a->meshes[mi];
+        const struct sl_wa_material *mt = &a->materials[mh->material];
+        if (mt->reflect == 0u || mt->blend == SL_WA_BLEND_ALPHA
+            || (mt->flags & SL_WA_MAT_DECAL) != 0u) continue;
+        glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->reflect - 1u]);
+        glDrawElements(GL_TRIANGLES, (GLsizei) mh->index_count, GL_UNSIGNED_INT,
+                       (const GLvoid *) (a->indices + mh->first_index));
+        g_chr_reflected++;
+    }
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnableClientState(GL_COLOR_ARRAY);
+    glTexCoordPointer(2, GL_FLOAT, (GLsizei) sizeof a->vertices[0],
+                      (const GLvoid *) &a->vertices[0].u);
+    if (stage) glEnableClientState(GL_FOG_COORD_ARRAY);
+#ifdef SL_FOGSTAGE
+    else if (g_fog_gl_on) glFogCoordf((GLfloat) fogc / 255.0f);
+#else
+    (void) fogc;
+#endif
+    shade_linear_bind(1);
+}
+
+static void chr_asset_draw(const struct sl_chr_draw *r)
+{
+    static float game[CHR_MAX_MTX][16];
+    static float jm[SL_CHR_MAX_JOINTS][16];
+    unsigned char save_fog[4];
+    unsigned minf = 0, magf = 0, levels = 0;
+    unsigned pres[SL_CHR_PARTS][4], pres_v[SL_CHR_PARTS];
+    int p, k, stage = 0, texon = 0, fpass, translucent = 0;
+
+    if (!sl_chr_draw_ok((const void *) r)) { g_chr_refused++; return; }
+    memset(pres, 0, sizeof pres);
+    memset(pres_v, 0, sizeof pres_v);
+    if (r->mtx == NULL || r->mtx_count <= 0 || r->mtx_count > CHR_MAX_MTX
+        || !mem_readable((unsigned long) r->mtx, (unsigned) r->mtx_count * 64u)) {
+        g_chr_refused++;
+        return;
+    }
+    for (k = 0; k < r->mtx_count; k++) {
+        mtx_to_float((const unsigned int *) r->mtx + 16 * k, game[k]);
+        /* THE WORN HAT'S SEAT: a hat item on a head item rides the hat node
+         * without the per-head entry (src/sl_chr_asset.h) */
+        (void) sl_hat_unseat(game[k], r->seat, r->rest);
+    }
+
+    /* ---- enter -------------------------------------------------------- */
+    /* The frame's backdrop first, exactly as the game's own first world
+     * triangle would have it (SKY_MAYBE, emit_tri's head): a character can be
+     * the first 3D geometry the list reaches, and the sky pass carries no
+     * depth - drawn after this, it would paint over the part of the
+     * character that stands against the sky. */
+    SKY_MAYBE();
+    batch_end();
+    mode2d_end();
+    clipemit_proj_set(0);
+    tex1_off();
+    texenv_set(0);                     /* GL_MODULATE: texel * colour         */
+    vp_use(1);
+    gl_load_projection();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glDisable(GL_ALPHA_TEST);
+    /* No depth offset but the item's own: rm_apply leaves the polygon offset
+     * of the last native triangle enabled - a decal's (-1, -2) after a bullet
+     * impact - and inherited here it pulled the whole item toward the eye by
+     * its slope. Measured on the Dam's gate door panel under XBLA: after
+     * shots into the yard gate, drawn just before the panel, the panel item's
+     * own screen surface (0.12 model units behind the game's screens) stood
+     * about 480 depth steps in front of them at 190 eye units and hid the
+     * game's red screen; up close the margin outgrew the slope term. The
+     * item's DECAL meshes take their offset in chr_decal_draw, as before. */
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    cull_set(0);
+    glEnable(GL_TEXTURE_2D);
+    g_tex_gl_on = 1;
+    texon = 1;
+
+    /* THE SHADE AND THE FOG, as stage_fog_draw shades the game's own
+     * FOG_CONST character triangle. */
+    memcpy(save_fog, g_fog, 4);
+    if (g_stage_env != NULL && stage_prog_path()) {
+        stage = 1;
+        g_obj_want[0] = (float) r->shade[0] / 255.0f;
+        g_obj_want[1] = (float) r->shade[1] / 255.0f;
+        g_obj_want[2] = (float) r->shade[2] / 255.0f;
+        g_obj_want[3] = (float) r->shade[3] / 255.0f;
+        g_fog[0] = g_stage_env->rgb[0];
+        g_fog[1] = g_stage_env->rgb[1];
+        g_fog[2] = g_stage_env->rgb[2];
+        g_fog[3] = 255;
+        fog_apply(FOG_SHADE);
+        g_chr_stage++;
+    } else {
+        memset(g_obj_want, 0, sizeof g_obj_want);
+        memcpy(g_fog, r->shade, 4);
+        fog_apply(FOG_CONST);
+#ifdef SL_FOGSTAGE
+        if (g_fog_gl_on) glFogCoordf((GLfloat) r->shade[3] / 255.0f);
+#endif
+    }
+    memcpy(g_fog, save_fog, 4);
+    shade_linear_bind(1);
+
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
+    if (stage) glEnableClientState(GL_FOG_COORD_ARRAY);
+
+    for (p = 0; p < SL_CHR_PARTS; p++) {
+        const struct sl_wa_asset *a = (const struct sl_wa_asset *) r->asset[p];
+        const struct sl_chr_map *map = r->map[p];
+        unsigned mi, i;
+        int nfill;
+        if (a == NULL || map == NULL || !map->ok || a->skin == NULL) continue;
+        pres[p][1] = a->mesh_count;
+        if (a->vertex_count > CHR_MAX_VERTS) { g_chr_refused++; continue; }
+        if (!wa_upload_images(a, &minf, &magf, &levels)) { g_chr_refused++; continue; }
+        /* THE DYNAMIC DOOR: the item as the game's live box leaves it */
+        if (p == SL_CHR_PART_BODY && r->cut.on) {
+            a = door_cut_asset(a, map, &r->cut);
+            if (a == NULL) { g_chr_refused++; continue; }
+        }
+        sl_chr_joint_matrices(map, (const float (*)[16]) game, r->mtx_count, jm);
+        sl_chr_skin_vertices(a, (const float (*)[16]) jm, g_chr_eye);
+        if (stage)
+            for (i = 0; i < a->vertex_count; i++)
+                g_chr_fog[i] = stage_fog_coord(&g_chr_eye[3 * i]);
+        /* #75 THE NEAR-CUT CONTRACT on a rigid prop (see wa_near_fill): its
+         * vertices' near classes under the projection in force. A character,
+         * a head and a fading draw are not props and are left as they were. */
+        nfill = (a->asset_class == SL_WA_CLASS_PROP && r->fade == 255 && wa_nearkeep_ready());
+        if (nfill) {
+            float cc[4];
+            for (i = 0; i < a->vertex_count; i++) {
+                near_clip4(&g_chr_eye[3 * i], cc);
+                g_chr_ncls[i] = (unsigned char) sl_wa_near_class(cc);
+            }
+            g_prn_draws++;
+        }
+        glVertexPointer(3, GL_FLOAT, 0, (const GLvoid *) g_chr_eye);
+        glTexCoordPointer(2, GL_FLOAT, (GLsizei) sizeof a->vertices[0],
+                          (const GLvoid *) &a->vertices[0].u);
+        glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0],
+                       (const GLvoid *) &a->vertices[0].r);
+        /* THE DESTROYED AUTOGUN (src/sl_chr_asset.h): the vertices riding
+         * the matrix of the list the game deformed draw their colour at the
+         * part's surviving share for the game's destroyed level - objDeform's
+         * nine-in-ten blackening at or above the part's mid-height, one in
+         * five below it; the rest of the item as it was. A fading draw
+         * carries no such level. */
+        if (r->destroyed != 0 && r->fade == 255) {
+            float hlo = 1e30f, hhi = -1e30f, hmid;
+            for (i = 0; i < a->vertex_count; i++) {
+                float h;
+                if (!sl_prop_destroyed_vertex(a, map, i, r->destroyed_mtx)) continue;
+                h = sl_prop_destroyed_height(map, a->vertices[i].x, a->vertices[i].y);
+                if (h < hlo) hlo = h;
+                if (h > hhi) hhi = h;
+            }
+            hmid = 0.5f * (hlo + hhi);
+            for (i = 0; i < a->vertex_count; i++) {
+                const struct sl_wa_vertex *v = &a->vertices[i];
+                int on = sl_prop_destroyed_vertex(a, map, i, r->destroyed_mtx);
+                unsigned sh = on ? (unsigned) sl_prop_destroyed_shade(
+                                       (int) r->destroyed,
+                                       sl_prop_destroyed_height(map, v->x, v->y) >= hmid)
+                                 : 255u;
+                if (on) g_chr_destroyed_v++;
+                g_chr_col[4 * i + 0] = on ? (unsigned char) (((unsigned) v->r * sh + 127u) / 255u) : v->r;
+                g_chr_col[4 * i + 1] = on ? (unsigned char) (((unsigned) v->g * sh + 127u) / 255u) : v->g;
+                g_chr_col[4 * i + 2] = on ? (unsigned char) (((unsigned) v->b * sh + 127u) / 255u) : v->b;
+                g_chr_col[4 * i + 3] = v->a;
+            }
+            glColorPointer(4, GL_UNSIGNED_BYTE, 0, (const GLvoid *) g_chr_col);
+            g_chr_destroyed++;
+        }
+        if (stage) glFogCoordPointer(GL_FLOAT, 0, (const GLvoid *) g_chr_fog);
+        /* THE GAME'S FADE (a record whose fade is below 255 - the player's
+         * body, which the seam hands over while the game fades it): the
+         * character is translucent by the fade, as the game's fading lists
+         * are (ENVIRONMENT alpha, a translucent surface). A remastered body
+         * is one solid, so its nearest surface is found first - a pass that
+         * writes depth and no colour - and only that surface is blended, by
+         * the fade, in the second; the game's fade has no other term. */
+        for (fpass = (r->fade < 255) ? 0 : 1; fpass < 2; fpass++) {
+            if (r->fade < 255) {
+                glColorMask(fpass ? GL_TRUE : GL_FALSE, fpass ? GL_TRUE : GL_FALSE,
+                            fpass ? GL_TRUE : GL_FALSE, fpass ? GL_TRUE : GL_FALSE);
+                glDepthMask(fpass ? GL_FALSE : GL_TRUE);
+                if (fpass) {
+                    /* the fade rides the vertex colour's alpha, which
+                     * GL_MODULATE multiplies into the texel's */
+                    for (i = 0; i < a->vertex_count; i++) {
+                        g_chr_col[4 * i + 0] = a->vertices[i].r;
+                        g_chr_col[4 * i + 1] = a->vertices[i].g;
+                        g_chr_col[4 * i + 2] = a->vertices[i].b;
+                        g_chr_col[4 * i + 3] = (unsigned char)
+                            (((unsigned) a->vertices[i].a * r->fade + 127u) / 255u);
+                    }
+                    glColorPointer(4, GL_UNSIGNED_BYTE, 0, (const GLvoid *) g_chr_col);
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                }
+            }
+            for (mi = 0; mi < a->mesh_count; mi++) {
+                const struct sl_wa_mesh *mh = &a->meshes[mi];
+                const struct sl_wa_material *mt = &a->materials[mh->material];
+                if ((mh->flags & SL_WA_MESH_BUILTIN_HEAD) && r->wears_head) {
+                    if (fpass) pres[p][2]++;
+                    continue;
+                }
+                if (mt->blend == SL_WA_BLEND_ALPHA) { translucent = 1; continue; }
+                /* THE PROP'S TWO PASSES: the solid walk's record draws these */
+                if (!sl_chr_pass_draws(r->passes, 0)) continue;
+                glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
+                chr_decal_draw(a, mh, mt);
+                if (!fpass) continue;
+                /* #75 a rigid prop stays closed at the eye, as the background
+                 * does (wa_near_fill); a decal draw writes no depth to lose to */
+                if (nfill && !sl_wa_decal_priority(mt->flags, bg_decal_on()))
+                    g_prn_tris += wa_near_fill(a->indices + mh->first_index, mh->index_count,
+                                               g_chr_ncls);
+                g_chr_tris += mh->index_count / 3u;
+                pres[p][0]++;
+                pres[p][3] += mh->index_count / 3u;
+            }
+        }
+        if (r->fade < 255) {
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            g_chr_faded++;
+        }
+        /* A PROP'S REFLECTION (chr_reflection), over its solid draws */
+        if (a->asset_class == SL_WA_CLASS_PROP && r->fade == 255
+            && !(p == SL_CHR_PART_BODY && r->cut.on) && sl_chr_pass_draws(r->passes, 0))
+            chr_reflection(a, (const float (*)[16]) jm, stage, r->shade[3]);
+        /* An item's TRANSLUCENT draws (a prop's glass, #71): after its solid
+         * ones, blended by their texel alpha, depth-tested, writing none - a
+         * prop's in the game's translucent walk, after every solid surface of
+         * the frame (THE PROP'S TWO PASSES, src/sl_chr_asset.h). */
+        if (translucent && r->fade == 255 && sl_chr_pass_draws(r->passes, 1)) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            for (mi = 0; mi < a->mesh_count; mi++) {
+                const struct sl_wa_mesh *mh = &a->meshes[mi];
+                const struct sl_wa_material *mt = &a->materials[mh->material];
+                if (mt->blend != SL_WA_BLEND_ALPHA) continue;
+                if ((mh->flags & SL_WA_MESH_BUILTIN_HEAD) && r->wears_head) continue;
+                glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
+                chr_decal_draw(a, mh, mt);
+                g_chr_tris += mh->index_count / 3u;
+                pres[p][0]++;
+                pres[p][3] += mh->index_count / 3u;
+            }
+            glDisable(GL_BLEND);
+            glDepthMask(GL_TRUE);
+        }
+        translucent = 0;
+        pres_v[p] = a->vertex_count;
+        g_chr_parts++;
+    }
+    g_chr_draws++;
+    chr_pres_line(r, (const unsigned (*)[4]) pres, pres_v);
+
+    /* ---- leave -------------------------------------------------------- */
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+    if (stage) glDisableClientState(GL_FOG_COORD_ARRAY);
+    shade_linear_bind(0);
+    memset(g_obj_want, 0, sizeof g_obj_want);
+    fog_neutral();
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    if (texon) { glDisable(GL_TEXTURE_2D); g_tex_gl_on = 0; }
+    g_tex_gl_bound = 0;
+    cull_set(0);
+    rm_invalidate();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+/* ---- #70 THE FIRST-PERSON VIEW MODEL ------------------------------------
+ *
+ * A presentation's replacement for the player's weapon and the hand holding
+ * it, drawn where the view model's own lists would have been (src/sl_chr_asset.h;
+ * the seam is src/native/sl_vm_asset.c). Everything chr_asset_draw says about
+ * the POSE and the SHADING holds, with the view model's own registers: its
+ * matrices are the ones the game's view-model code wrote this frame (the
+ * trigger finger and the slide ride their own), and its shade register is the
+ * player's tile colour, which the view model's render mode loads as its fog
+ * (model.c modelApplyRenderModeType3, PropType 4). A draw the item gates on a
+ * game switch is drawn only while the game has that switch visible
+ * (sl_vm_mesh_visible) - the hand under SW_HANDOFFn - and the watch hand's
+ * alternative sleeves by the draw's rule (sl_vm_draw_visible, THE WATCH HAND).
+ *
+ * DEPTH. The game draws its view model with the Z buffer off
+ * (gunRenderFirstPersonGunModels, zbufferenabled 0), so it is never cut by
+ * the world, and orders its own parts by its lists. A remastered weapon is an
+ * arbitrary solid and needs depth to resolve against ITSELF, so it is drawn
+ * with the depth test on inside a thin slice at the front of the range
+ * (VM_DEPTH_SLICE): everything the world wrote lies behind the slice, so the
+ * weapon is drawn over the world exactly as the game's is, and against its
+ * own surfaces by depth. The range is put back after. */
+#define VM_DEPTH_SLICE  (1.0 / 256.0)
+static unsigned g_vm_draws, g_vm_tris, g_vm_gated, g_vm_refused, g_vm_reflected, g_vm_faded;
+static float    g_vm_uv[CHR_MAX_VERTS * 2];
+
+extern int sl_vm_draw_ok(const void *p);
+
+/* THE REFLECTION of a metal weapon (sl_gfx_worldasset.h, VIEW MODELS: a
+ * material naming a reflection image). The source lays its environment image
+ * over the draw by the surface's direction to the eye; here each solid draw
+ * that names one is drawn again, the image read at the sphere coordinate of
+ * the vertex's eye-space direction (sl_vm_sphere_coords), multiplied into
+ * what the first draw left at twice its value - so a mid-grey reflection
+ * leaves the base as it is, the image's highlights brighten it and its tint
+ * colours it (gold, silver). Unshaded and unfogged: the first draw already
+ * carries both. The directions are the item's own, taken once from its
+ * triangles and kept with the asset. */
+static void vm_reflection(const struct sl_wa_asset *a, const float (*jm)[16], int alternatives,
+                          const unsigned switch_visible[2])
+{
+    struct sl_wa_asset *wa = (struct sl_wa_asset *) a;
+    unsigned mi;
+    int any = 0;
+    for (mi = 0; mi < a->mesh_count && !any; mi++)
+        any = a->materials[a->meshes[mi].material].reflect != 0u
+              && a->materials[a->meshes[mi].material].blend != SL_WA_BLEND_ALPHA;
+    if (!any) return;
+    if (wa->vm_normals == NULL) {
+        wa->vm_normals = (float *) malloc(sizeof(float) * 3u * a->vertex_count);
+        if (wa->vm_normals == NULL) return;
+        sl_vm_item_normals(a, wa->vm_normals);
+    }
+    sl_vm_sphere_coords(a, jm, wa->vm_normals, g_vm_uv);
+    shade_linear_bind(0);
+    fog_neutral();
+    glDisableClientState(GL_COLOR_ARRAY);
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glTexCoordPointer(2, GL_FLOAT, 0, (const GLvoid *) g_vm_uv);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_DST_COLOR, GL_SRC_COLOR);
+    glDepthMask(GL_FALSE);
+    for (mi = 0; mi < a->mesh_count; mi++) {
+        const struct sl_wa_mesh *mh = &a->meshes[mi];
+        const struct sl_wa_material *mt = &a->materials[mh->material];
+        if (mt->reflect == 0u || mt->blend == SL_WA_BLEND_ALPHA) continue;
+        if (!sl_vm_draw_visible(mh->flags, switch_visible, alternatives)) continue;
+        glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->reflect - 1u]);
+        glDrawElements(GL_TRIANGLES, (GLsizei) mh->index_count, GL_UNSIGNED_INT,
+                       (const GLvoid *) (a->indices + mh->first_index));
+        g_vm_reflected++;
+    }
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnableClientState(GL_COLOR_ARRAY);
+}
+
+static void vm_asset_draw(const struct sl_vm_draw *r)
+{
+    static float game[CHR_MAX_MTX][16];
+    static float jm[SL_CHR_MAX_JOINTS][16];
+    const struct sl_wa_asset *a;
+    unsigned char save_fog[4];
+    unsigned minf = 0, magf = 0, levels = 0, mi, i;
+    int k, stage = 0, pass;
+
+    if (!sl_vm_draw_ok((const void *) r)) { g_vm_refused++; return; }
+    a = (const struct sl_wa_asset *) r->asset;
+    if (a == NULL || r->map == NULL || !r->map->ok || a->skin == NULL
+        || a->vertex_count > CHR_MAX_VERTS
+        || r->mtx == NULL || r->mtx_count <= 0 || r->mtx_count > CHR_MAX_MTX
+        || !mem_readable((unsigned long) r->mtx, (unsigned) r->mtx_count * 64u)) {
+        g_vm_refused++;
+        return;
+    }
+    for (k = 0; k < r->mtx_count; k++)
+        mtx_to_float((const unsigned int *) r->mtx + 16 * k, game[k]);
+
+    SKY_MAYBE();
+    batch_end();
+    mode2d_end();
+    clipemit_proj_set(0);
+    tex1_off();
+    texenv_set(0);                     /* GL_MODULATE: texel * colour         */
+    vp_use(1);
+    gl_load_projection();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    glDepthRange(0.0, VM_DEPTH_SLICE);
+    glDisable(GL_BLEND);
+    glDisable(GL_ALPHA_TEST);
+    glDisable(GL_POLYGON_OFFSET_FILL);  /* nothing inherited (chr_asset_draw) */
+    cull_set(0);
+    glEnable(GL_TEXTURE_2D);
+    g_tex_gl_on = 1;
+
+    memcpy(save_fog, g_fog, 4);
+    if (g_stage_env != NULL && stage_prog_path()) {
+        stage = 1;
+        g_obj_want[0] = (float) r->shade[0] / 255.0f;
+        g_obj_want[1] = (float) r->shade[1] / 255.0f;
+        g_obj_want[2] = (float) r->shade[2] / 255.0f;
+        g_obj_want[3] = (float) r->shade[3] / 255.0f;
+        g_fog[0] = g_stage_env->rgb[0];
+        g_fog[1] = g_stage_env->rgb[1];
+        g_fog[2] = g_stage_env->rgb[2];
+        g_fog[3] = 255;
+        fog_apply(FOG_SHADE);
+    } else {
+        memset(g_obj_want, 0, sizeof g_obj_want);
+        memcpy(g_fog, r->shade, 4);
+        fog_apply(FOG_CONST);
+#ifdef SL_FOGSTAGE
+        if (g_fog_gl_on) glFogCoordf((GLfloat) r->shade[3] / 255.0f);
+#endif
+    }
+    memcpy(g_fog, save_fog, 4);
+    shade_linear_bind(1);
+
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    glEnableClientState(GL_COLOR_ARRAY);
+    if (stage) glEnableClientState(GL_FOG_COORD_ARRAY);
+    if (wa_upload_images(a, &minf, &magf, &levels)) {
+        sl_chr_joint_matrices(r->map, (const float (*)[16]) game, r->mtx_count, jm);
+        sl_chr_skin_vertices(a, (const float (*)[16]) jm, g_chr_eye);
+        if (stage)
+            for (i = 0; i < a->vertex_count; i++)
+                g_chr_fog[i] = stage_fog_coord(&g_chr_eye[3 * i]);
+        glVertexPointer(3, GL_FLOAT, 0, (const GLvoid *) g_chr_eye);
+        glTexCoordPointer(2, GL_FLOAT, (GLsizei) sizeof a->vertices[0],
+                          (const GLvoid *) &a->vertices[0].u);
+        glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0],
+                       (const GLvoid *) &a->vertices[0].r);
+        if (stage) glFogCoordPointer(GL_FLOAT, 0, (const GLvoid *) g_chr_fog);
+        /* THE WEAPON ON THE WATCH, translucent (r->fade below 255, the
+         * equipment page): the game draws the weapon's surfaces blended by
+         * its envcolour alpha. The item is one solid, so its nearest surface
+         * is found first - a pass that writes depth and no colour - and only
+         * that surface is blended by the fade, as a fading body is
+         * (chr_asset_draw); its translucent draws ride the fade too. */
+        if (r->fade < 255) {
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            for (mi = 0; mi < a->mesh_count; mi++) {
+                const struct sl_wa_mesh *mh = &a->meshes[mi];
+                if (a->materials[mh->material].blend == SL_WA_BLEND_ALPHA) continue;
+                if (!sl_vm_draw_visible(mh->flags, r->switch_visible, r->alternatives)) continue;
+                glDrawElements(GL_TRIANGLES, (GLsizei) mh->index_count, GL_UNSIGNED_INT,
+                               (const GLvoid *) (a->indices + mh->first_index));
+            }
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            for (i = 0; i < a->vertex_count; i++) {
+                g_chr_col[4 * i + 0] = a->vertices[i].r;
+                g_chr_col[4 * i + 1] = a->vertices[i].g;
+                g_chr_col[4 * i + 2] = a->vertices[i].b;
+                g_chr_col[4 * i + 3] = (unsigned char)
+                    (((unsigned) a->vertices[i].a * (unsigned) r->fade + 127u) / 255u);
+            }
+            glColorPointer(4, GL_UNSIGNED_BYTE, 0, (const GLvoid *) g_chr_col);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            g_vm_faded++;
+        }
+        /* The item's solid draws first; then its TRANSLUCENT ones (a clear
+         * magazine, a watch glass, a sight lens), blended by their texel
+         * alpha over what the solid ones left, tested against their depth
+         * and writing none of their own. */
+        for (pass = 0; pass < 2; pass++) {
+            if (pass == 1) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDepthMask(GL_FALSE);
+            }
+            for (mi = 0; mi < a->mesh_count; mi++) {
+                const struct sl_wa_mesh *mh = &a->meshes[mi];
+                const struct sl_wa_material *mt = &a->materials[mh->material];
+                if ((mt->blend == SL_WA_BLEND_ALPHA) != (pass == 1)) continue;
+                if (!sl_vm_draw_visible(mh->flags, r->switch_visible, r->alternatives)) {
+                    g_vm_gated++;
+                    continue;
+                }
+                glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
+                glDrawElements(GL_TRIANGLES, (GLsizei) mh->index_count, GL_UNSIGNED_INT,
+                               (const GLvoid *) (a->indices + mh->first_index));
+                g_vm_tris += mh->index_count / 3u;
+            }
+        }
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+        if (r->fade < 255)         /* the colours back for the passes below */
+            glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0],
+                           (const GLvoid *) &a->vertices[0].r);
+        else                       /* a reflection over a faded surface would
+                                    * double what the blend left; none */
+            vm_reflection(a, (const float (*)[16]) jm, r->alternatives, r->switch_visible);
+        /* THE WATCH HAND: the game draws the arm with the Z buffer off and
+         * then a watch page over it - the controls page's pad is a model
+         * drawn WITH the Z buffer - so the arm's own depth, written only to
+         * resolve the item against itself, is released where it was
+         * written (far), and nothing drawn after it is cut by it. */
+        if (r->release_depth) {
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glDepthFunc(GL_ALWAYS);
+            glDepthRange(1.0, 1.0);
+            for (mi = 0; mi < a->mesh_count; mi++) {
+                const struct sl_wa_mesh *mh = &a->meshes[mi];
+                if (a->materials[mh->material].blend == SL_WA_BLEND_ALPHA) continue;
+                if (!sl_vm_draw_visible(mh->flags, r->switch_visible, r->alternatives)) continue;
+                glDrawElements(GL_TRIANGLES, (GLsizei) mh->index_count, GL_UNSIGNED_INT,
+                               (const GLvoid *) (a->indices + mh->first_index));
+            }
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDepthFunc(GL_LEQUAL);
+        }
+        g_vm_draws++;
+    } else {
+        g_vm_refused++;
+    }
+
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glDisableClientState(GL_COLOR_ARRAY);
+    if (stage) glDisableClientState(GL_FOG_COORD_ARRAY);
+    glDepthRange(0.0, 1.0);
+    shade_linear_bind(0);
+    memset(g_obj_want, 0, sizeof g_obj_want);
+    fog_neutral();
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glDisable(GL_TEXTURE_2D);
+    g_tex_gl_on = 0;
+    g_tex_gl_bound = 0;
+    cull_set(0);
+    rm_invalidate();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
 /* ---- LIST NESTING PROBE (SL_DEPTH_DBG), off by default -------------------
  *
  * walk() refuses to descend past depth 8, so "how deep does a frame actually
@@ -13690,7 +20213,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
     if ((unsigned) depth > sl_probe_maxdepth) sl_probe_maxdepth = (unsigned) depth;
     if (dl == NULL || depth > 8) return;
     if (!ptr_ok((unsigned long) dl)) return;
-    /* LIVE OWNER BUG MARK: the base this depth's offsets are measured from.
+    /* LIVE BUG MARK: the base this depth's offsets are measured from.
      * One store per walk, no behaviour attached - see dl_off_at. */
     if (depth < 12) { g_dl_first[depth] = dl; g_dl_cur[depth] = dl; }
     for (;;) {
@@ -13724,6 +20247,23 @@ static void walk(const unsigned int *dl, int depth, int swapped)
          * See src/sl_asset_override.h. Anything that does not match falls
          * through to the unknown-opcode counter exactly as before. */
         case SL_AOV_DL_OP:
+            /* #70: the character-asset bridge (src/sl_chr_asset.h) - its
+             * word is the record, validated by the seam that owns it. */
+            if (w0 == SL_CHR_DL_W0) {
+                chr_asset_draw((const struct sl_chr_draw *) (unsigned long) w1);
+                break;
+            }
+            /* #70: the first-person view-model bridge, the same contract */
+            if (w0 == SL_VM_DL_W0) {
+                vm_asset_draw((const struct sl_vm_draw *) (unsigned long) w1);
+                break;
+            }
+            /* #71: THE DYNAMIC DOOR's bracket (src/sl_chr_asset.h) */
+            if (w0 == SL_DOOR_DL_W0) {
+                g_door_nearkeep = (w1 != 0u);
+                if (w1 != 0u) g_door_brackets++;
+                break;
+            }
             if ((w0 & SL_AOV_DL_W0_MASK) == SL_AOV_DL_W0_BASE
                 && (w1 & SL_AOV_DL_W1_MASK) == SL_AOV_DL_W1_BASE
                 && (w0 & 0xffu) < (unsigned) SL_ASSET_ID_COUNT) {
@@ -13743,6 +20283,28 @@ static void walk(const unsigned int *dl, int depth, int swapped)
                 g_fogp_cmds++;
                 g_fogp_fm = (short) ((w1 >> 16) & 0xffff);
                 g_fogp_fo = (short) ( w1        & 0xffff);
+                /* #68. THE ENVIRONMENT'S OWN FOG, latched where the game
+                 * writes it. `fogSetRenderFogColor` (bgfog.c:620) is the ONLY
+                 * emitter of this command in the game - tree-wide,
+                 * `grep -rn "gSPFogPosition" src/` names bgfog.c:632 and :637
+                 * and nothing else - and it writes SetFogColor with the
+                 * environment's RGB immediately before it, then G_FOG, then
+                 * the room background list. So the register standing at this
+                 * instant is the LEVEL's fog colour, never a per-model one,
+                 * and the pair below is the contract room background geometry
+                 * is drawn under.
+                 *
+                 * Latched rather than read at the seam because the seam is the
+                 * frame's first world triangle and that is not always a room
+                 * triangle: measured on the Dam, the blender mux standing
+                 * there is the room's A_SHADE on most frames and a PROP's
+                 * A_FOG on others, because bg.c:737 draws a room's props
+                 * before bg.c:755 draws its background. Classifying the
+                 * replacement from that made its fog flicker frame to frame.
+                 * The world-asset background reads these, not the mux. */
+                memcpy(g_fogp_col, g_fog, 4);
+                g_fogp_frame = g_dl_frame;
+                g_fogp_seen  = 1;
             }
             /* B-051 STAGE 4. gSPNumLights (gbi.h:2533) is a moveword on
              * G_MW_NUMLIGHT = 0x02 (:1297) at G_MWO_NUMLIGHT = 0 (:1312),
@@ -13836,7 +20398,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
              * iterative form draws exactly what the recursive one drew; the
              * only frames that change are the ones that were losing work.
              *
-             * (d) WHY IT LOOKS LIKE THE GUN. Owner run
+             * (d) WHY IT LOOKS LIKE THE GUN. Playtest run
              * 20260909-000116-lvl33 mark-002, Dam, post-fix: the frame list
              * chains EIGHT tail transfers, and 90 of its 116 submissions -
              * 2173 of the frame's 3173 triangles - hang off the eighth. The
@@ -13869,8 +20431,13 @@ static void walk(const unsigned int *dl, int depth, int swapped)
                 if (depth == 0) {
                     extern int sl_mark_room_of_dl(unsigned addr, int *kindout);
                     int rkind = 0;
-                    g_room_dl = (sl_mark_room_of_dl(w1, &rkind) >= 0);
+                    g_room_num = sl_mark_room_of_dl(w1, &rkind);
+                    g_room_kind = rkind;
+                    g_room_dl = (g_room_num >= 0);
                     rd_scope_reset();          /* B-125: a new submission */
+                    /* #90 the game's translucent walk begins: the background's
+                     * translucent meshes go down before its first list */
+                    if (rkind == 2) bg_xlu_flush(0);
                 }
                 dl      = (const unsigned int *) t;
                 swapped = list_swapped(t);
@@ -13879,7 +20446,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
                 continue;                  /* replaces; does not resume */
             }
 
-            /* LIVE OWNER BUG MARK. Which list a triangle came from, recorded
+            /* LIVE BUG MARK. Which list a triangle came from, recorded
              * ONLY at a branch so no other command pays for it. g_dl_addr[1]
              * is the operand the FRAME list branched with, which for room
              * geometry is OS_K0_TO_PHYSICAL(ptr_expanded_mapping_info) - the
@@ -13890,14 +20457,20 @@ static void walk(const unsigned int *dl, int depth, int swapped)
                 int pd = g_dl_depth;
                 int psub = g_mark_sub_cur;
                 int proom = g_room_dl;
+                int pnum = g_room_num, pkind = g_room_kind;
                 sl_probe_call++;
                 /* B-113. Entering a depth-1 submission: is it a room's
                  * geometry? The same lookup the mark provenance trusts. */
                 if (depth == 0) {
                     extern int sl_mark_room_of_dl(unsigned addr, int *kindout);
                     int rkind = 0;
-                    g_room_dl = (sl_mark_room_of_dl(w1, &rkind) >= 0);
+                    g_room_num = sl_mark_room_of_dl(w1, &rkind);
+                    g_room_kind = rkind;
+                    g_room_dl = (g_room_num >= 0);
                     rd_scope_reset();          /* B-125: a new submission */
+                    /* #90 the game's translucent walk begins: the background's
+                     * translucent meshes go down before its first list */
+                    if (rkind == 2) bg_xlu_flush(0);
                 }
                 if (depth + 1 < 12) g_dl_addr[depth + 1] = w1;
                 g_dl_depth = depth + 1;
@@ -13922,6 +20495,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
                  * node becomes current again. The branch form never reaches
                  * here - it replaces the list above and does not return. */
                 g_room_dl = proom;
+                g_room_num = pnum; g_room_kind = pkind;
                 g_mark_sub_cur = psub;
                 g_dl_depth = pd;
             }
@@ -14006,6 +20580,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
                         v->t = (short) SL_SW16(v->t);
                     }
                 }
+                if (g_spl_ncur) screen_place_load(src, n, &g_vbuf[v0]);
                 {   /* The RSP transforms at load; so does this. See g_veye. */
                     unsigned k;
                     for (k = v0; k < v0 + n; k++) vtx_transform(k);
@@ -14024,7 +20599,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
                         g_vredraw[k] = (unsigned char) old;
                     if (old) g_rd_loads_old++;
                 }
-                {   /* LIVE OWNER BUG MARK: source provenance, recorded where
+                {   /* LIVE BUG MARK: source provenance, recorded where
                      * the source is still in scope. Five stores per vertex,
                      * read only when a mark is written. See g_vsrc_seg. */
                     unsigned k;
@@ -14260,7 +20835,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
              * order corrected the count is 0. */
             g_fd_slot = 4;                       /* B-043 probe */
             g_tri_cw0 = w0; g_tri_cw1 = w1;      /* #25 witness */
-            emit_tri(((w1 >> 16) & 0xff) / 0xA, ((w1 >>  8) & 0xff) / 0xA,
+            emit_tri_room(((w1 >> 16) & 0xff) / 0xA, ((w1 >>  8) & 0xff) / 0xA,
                      ( w1        & 0xff) / 0xA);
             break;
         case OP_TRI4:
@@ -14710,7 +21285,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
             /* B-118. The LOD_FRACTION sibling (c-slot 13). The comment above
              * dismissed it as "the real mip chains ... no second level to
              * blend", and that assumption is the reason Surface's perimeter
-             * rendered as noise: measured at the owner's mark
+             * rendered as noise: measured at the playtest mark
              * (20260912-051649-lvl36 mark-001, SL_TEX_TRACE), the tree-wall
              * material loads TWO DIFFERENT IMAGES - tile 0 an IA8 32x32
              * noise DETAIL texture, tiles 1..6 a 64x17 RGBA16 TREELINE STRIP
@@ -14738,7 +21313,7 @@ static void walk(const unsigned int *dl, int depth, int swapped)
              *
              * Deliberately an EXACT shape, the same discipline as
              * g_cc_tex1mul and g_cc_a_envscale. Blast radius measured rather
-             * than assumed: across the owner's facility session this shape
+             * than assumed: across a recorded facility play session this shape
              * matches exactly ONE combiner word, the one above, 2869 times -
              * and B-048's mip-chain family is `...ff`, which differs only in
              * Ad1 (7 = the constant "0") and is NOT matched. One nibble
@@ -14980,8 +21555,11 @@ static void walk(const unsigned int *dl, int depth, int swapped)
             if (w1 == 0x53564D31u || w1 == 0x53564D30u) {
                 int want = (w1 == 0x53564D31u);
                 if (want != g_viewmodel) {
+                    if (want) bg_xlu_flush(1);      /* #90 before the weapon */
                     g_viewmodel = want;
-                    if (g_proj_is_world && g_fov_s != 1.0) {
+                    /* A presentation re-walk's camera correction stops and
+                     * resumes at the same edges (proj_apply_aspect). */
+                    if (g_proj_is_world && (g_fov_s != 1.0 || g_pres_pass)) {
                         proj_apply_aspect();
                         gl_load_projection();
                     }
@@ -15053,7 +21631,7 @@ void sl_phase_dl_take(double *dl_s, double *walk_s)
  * likely look fine - and looking fine proves nothing about whether it was
  * needed. What proves something is a frame where room geometry is VISIBLY
  * outside its portal box and the box would have removed it. B-143 (2026-09-17)
- * found that frame at the owner's Dam mark and the scissor is now applied on
+ * found that frame at the Dam playtest mark and the scissor is now applied on
  * every frame; the witness survives as the instrument that shows what it
  * removes, with pass A of a witness frame walking unscissored (g_wit_a).
  *
@@ -15162,9 +21740,22 @@ void sl_gfx_frame_dl(const void *first, const void *end)
      * dither, or the two images would differ in a screen-wide noise pattern
      * that has nothing to do with the scissor. The mask CACHE is still
      * dropped, because pass one entered with it dropped too. */
-    if (!g_wit_pass) {
+    if (!g_wit_pass && !g_pres_pass) {
+        extern void sl_pres_latch(void);
         g_dl_frame++;
         sl_texcov_frame_begin();   /* #47 PART A, per-frame mode */
+        /* High-refresh presentation: the list a presentation re-walk will
+         * interpret, and this frame's camera (sl_gfx_present.c). Before the
+         * headless return below, so the pair stays consecutive whatever the
+         * backend - a headless run simply never asks for a re-walk. */
+        g_last_first = first;
+        g_last_end = end;
+        g_walks_since_present++;
+        sl_pres_latch();
+        /* THE SCREEN'S PLACE: this frame's registrations */
+        memcpy(g_spl_cur, g_spl_pend, sizeof g_spl_pend[0] * g_spl_npend);
+        g_spl_ncur = g_spl_npend;
+        g_spl_npend = 0;
 
         /* A new seed every frame is what makes the dither MOVE rather than sit
          * there as a fixed screen pattern; the cached density is dropped with it
@@ -15184,14 +21775,22 @@ void sl_gfx_frame_dl(const void *first, const void *end)
      * a probe prints when it never ran: sl_gfx_frame_dl returns above this
      * line whenever there is no window, so a headless run - bootsweep is one,
      * and so is any trace replay - executes ZERO display-list commands while
-     * looking like a healthy, successful run. Three separate instruments this
-     * session could not tell "measured nothing" from "did not run", and each
+     * looking like a healthy, successful run. Three separate instruments in
+     * one investigation could not tell "measured nothing" from "did not run", and each
      * time the empty output read as a conclusive negative.
      *
      * So the reports below REFUSE to print a census unless this counter is
      * non-zero, and print why instead. A null result is only evidence when
      * the instrument can show it was switched on. */
     g_dl_ran++;
+    g_walk_t0 = sl_phase_dl_now();
+
+    /* #68 world assets. Per WALK rather than per frame, so the B-101 witness
+     * re-walk renders the same picture pass one did. Costs one int test and
+     * returns when no set is selected. */
+    sky_frame_begin();
+    g_door_nearkeep = 0;                 /* THE DYNAMIC DOOR: a bracket never spans walks */
+    if (wr_census_on() && !g_pres_pass) g_wr_frames++;   /* #68: the census's own divisor */
 
     /* B-101. The two things this function deliberately does NOT reset per
      * frame - the game's viewport rectangle and the framebuffer size - are
@@ -15200,7 +21799,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
      * before the resets, and restored at the recursion below. Four words on
      * every frame; the alternative is a second copy of the reset contract
      * that would go stale the first time this one changed. */
-    if (!g_wit_pass) {
+    if (!g_wit_pass && !g_pres_pass) {
         memcpy(g_wit_vp_rect, g_vp_rect, sizeof g_wit_vp_rect);
         g_wit_vp_have = g_vp_have;
         g_wit_scr_w = g_scr_w;
@@ -15337,7 +21936,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     g_scr_h_adopted = 0;    /* the next scissor is this frame's first */
     /* B-143. Is this the unscissored pass A of a witness frame? Decided here,
      * before the walk, by the same test the witness block makes after it. */
-    if (!g_wit_pass) {
+    if (!g_wit_pass && !g_pres_pass) {
         extern unsigned sl_record_index(void);
         g_wit_a = wit_due((int) sl_record_index());
         g_sciss_applied = 0;
@@ -15421,7 +22020,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     g_cur_ovr = 0; g_cur_applied = g_cur_tags = 0;   /* the cursor placement tag never spans frames */
     g_fr_filled = g_fr_combined = 0;
     g_fogp_cmds = 0; g_fog_geom_tris = g_fog_p_tris = 0;
-    g_tri_id = 0; g_room_dl = 0;
+    g_tri_id = 0; g_room_dl = 0; g_room_num = -1; g_room_kind = 0;
     g_fog_a_shade = g_fog_a_fog = 0; g_fog_have_at = 0;
     g_cycle_type = 0;
     g_textlod = 0;                       /* B-144: G_TL_TILE until a BA says LOD */
@@ -15496,6 +22095,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     }
     rd_scope_reset();
     g_rd_loads = g_rd_loads_old = g_rd_tris = g_rd_tris_z = g_rd_tris_same = 0;
+    g_rd_tris_notquad = 0;
     g_rd_cur = 0; g_rd_tol = 0.0f;
     rm_invalidate();
     glDisable(GL_CULL_FACE);
@@ -15526,7 +22126,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     gl_load_projection();
     gl_load_modelview();
 
-    /* LIVE OWNER BUG MARK. Arm HERE, at the top of the one list that will be
+    /* LIVE BUG MARK. Arm HERE, at the top of the one list that will be
      * walked, so the capture and the framebuffer the backend reads back a few
      * lines later in sl_gfx_end_frame belong to the SAME frame. A request
      * raised mid-frame by the input layer is taken by the next list, never by
@@ -15542,8 +22142,8 @@ void sl_gfx_frame_dl(const void *first, const void *end)
         g_mark_at = (v != NULL && *v != '\0') ? (unsigned) atoi(v) : 0xffffffffu;
         if (g_mark_at == 0u) g_mark_at = 0xffffffffu;
     }
-    if (g_mark_at == g_dl_frame && !g_wit_pass) g_mark_req = 1;
-    if (g_mark_req && !g_wit_pass) {
+    if (g_mark_at == g_dl_frame && !g_wit_pass && !g_pres_pass) g_mark_req = 1;
+    if (g_mark_req && !g_wit_pass && !g_pres_pass) {
         g_mark_req = 0;
         g_mark_on = 1;
         g_mark_n = 0; g_mark_hit = 0; g_mark_tris = 0; g_mark_dl_n = 0;
@@ -15579,6 +22179,7 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     } else {
         walk(first, 0, list_swapped((const unsigned int *) first));
     }
+    bg_xlu_flush(4);                     /* #90 the last chance: never left undrawn */
     if (g_mark_on) { g_mark_on = 0; g_mark_sub_cur = -1; g_mark_have = 1; }
     {   /* SL_DEPTH_DBG; read once, so the per-frame cost is a load */
         static int on = -1;
@@ -15615,6 +22216,12 @@ void sl_gfx_frame_dl(const void *first, const void *end)
      * read-back. The witness pass B disables it the same way after its own
      * walk. */
     glDisable(GL_SCISSOR_TEST);
+    {   /* the walk's cost to this point, which a re-walk of the same list repeats
+         * (sl_gfx_dl_walk_cost: the frame pump budgets presentation frames on it) */
+        double t = sl_phase_dl_now() - g_walk_t0;
+        if (g_pres_pass) { g_rewalk_s = t; return; }   /* presentation re-walk: GL state handed back, nothing else */
+        if (!g_wit_pass) g_walk_s = t;
+    }
 
     /* B-045 probe report. Per frame, so the output IS the gas window: the
      * environment the gas lerps to changes the FILL colour (sky.c:326 draws
@@ -15878,6 +22485,24 @@ void sl_gfx_frame_dl(const void *first, const void *end)
                 g_tex_enhanced, g_tex_decoded,
                 g_tex_palwrap_imgs, g_tex_palwrap_texels, g_tex_replaced);
         sl_texprov_report(stderr);       /* #47: the provider's own census */
+        sl_sky_report(stderr);           /* #68: the world-asset census */
+        sl_wr_report(stderr);            /* #68: the replacement census */
+        nf_report(stderr);               /* #78: the native fill's census */
+        {   /* #70: the character-asset census */
+            extern void sl_chr_asset_report(void *f);
+            sl_chr_asset_report(stderr);
+            fprintf(stderr, "sl_chrdraw: draws=%u parts=%u tris=%u stage-fogged=%u refused=%u "
+                            "destroyed-shaded=%u (vertices %u) reflected=%u\n",
+                    g_chr_draws, g_chr_parts, g_chr_tris, g_chr_stage, g_chr_refused,
+                    g_chr_destroyed, g_chr_destroyed_v, g_chr_reflected);
+        }
+        {   /* #70: the view-model census */
+            extern void sl_vm_asset_report(void *f);
+            sl_vm_asset_report(stderr);
+            fprintf(stderr, "sl_vmdraw: draws=%u tris=%u gated-off meshes=%u refused=%u "
+                            "translucent (the watch's equipment page)=%u\n",
+                    g_vm_draws, g_vm_tris, g_vm_gated, g_vm_refused, g_vm_faded);
+        }
         /* #47 PART A. The per-id coverage table, if it was asked for. CSV,
          * one row per texture number seen, plus the two aggregates the shares
          * are taken against. Written here so it lands in the same report the
@@ -16455,7 +23080,69 @@ void sl_gfx_frame_dl(const void *first, const void *end)
     if (sl_phase_dl_on()) g_phase_dl_s += sl_phase_dl_now() - g_phase_dl_t0;
 }
 
-/* ---- LIVE OWNER BUG MARK: the renderer's half of the record --------------
+/* ---- High-refresh presentation: the re-walk ------------------------------
+ *
+ * The frame pump (sl_ultra_shim.c, sl_pres_between) calls these while the
+ * game thread is blocked in it, between this frame's original walk and its
+ * regular present - the window in which every buffer the list references is
+ * the one the original walk read (see sl_gfx_present.c).
+ *
+ * READY means: a window, and exactly one original walk since the last regular
+ * present (a frame of two lists, or none, is presented as before).
+ *
+ * THE RE-WALK is the B-101 witness re-walk's contract: the frame's task state
+ * that sl_gfx_frame_dl deliberately does not reset (the game's viewport and
+ * the framebuffer size) is handed in as the original walk FOUND it, and the
+ * state the original walk LEFT is put back afterwards, so the next original
+ * walk starts exactly where it would have without any re-walk. */
+int sl_gfx_dl_rewalk_ready(void);
+int sl_gfx_dl_rewalk_ready(void)
+{
+    return sl_gfx_active() && g_walks_since_present == 1u
+        && g_last_first != NULL && g_last_end != NULL && g_last_end > g_last_first;
+}
+
+void sl_gfx_dl_presented(void);
+void sl_gfx_dl_presented(void)
+{
+    g_walks_since_present = 0;
+}
+
+/* What a re-walk of this frame's list is expected to cost: the original
+ * walk of the same list, measured to the same point. */
+double sl_gfx_dl_walk_cost(void);
+double sl_gfx_dl_rewalk_cost(void);
+double sl_gfx_dl_rewalk_cost(void) { return g_rewalk_s; }
+double sl_gfx_dl_walk_cost(void)
+{
+    return g_walk_s;
+}
+
+void sl_gfx_dl_rewalk(void);
+void sl_gfx_dl_rewalk(void)
+{
+    int save_vp[4], save_vp_have;
+    unsigned save_scr_w, save_scr_h;
+
+    if (!sl_gfx_dl_rewalk_ready()) return;
+    memcpy(save_vp, g_vp_rect, sizeof save_vp);
+    save_vp_have = g_vp_have;
+    save_scr_w = g_scr_w; save_scr_h = g_scr_h;
+
+    memcpy(g_vp_rect, g_wit_vp_rect, sizeof g_vp_rect);
+    g_vp_have = g_wit_vp_have;
+    g_scr_w = g_wit_scr_w; g_scr_h = g_wit_scr_h;
+
+    g_pres_pass = 1;
+    sl_gfx_frame_dl(g_last_first, g_last_end);
+    g_pres_pass = 0;
+
+    memcpy(g_vp_rect, save_vp, sizeof g_vp_rect);
+    g_vp_have = save_vp_have;
+    g_scr_w = save_scr_w; g_scr_h = save_scr_h;
+}
+
+/* ---- LIVE BUG MARK: the renderer's half of the record --------------------
  *
  * Renders what the interpreter saw into a caller-supplied buffer. The game's
  * half (camera, rooms, projection) is gathered separately in
@@ -16508,7 +23195,7 @@ static const char *mark_class(unsigned addr, int (*resolve)(unsigned, int *),
     return "unknown";
 }
 
-/* ---- LIVE OWNER BUG MARK: complete submission provenance -----------------
+/* ---- LIVE BUG MARK: complete submission provenance -----------------------
  *
  * Every G_DL the interpreter executed during the marked frame, in execution
  * order, with the control-flow relationship between them and the triangles
@@ -16739,11 +23426,13 @@ int sl_mark_render(char *out, int n, int (*resolve)(unsigned addr, int *kind))
         "redraw-triangles    %u re-triangulated (drawn with their quad's own tent\n"
         "                    difference as tolerance; %u of those with the exact-z\n"
         "                    stencil pass), %u same-triangulation or unrecognised\n"
-        "                    (drawn plainly)\n",
+        "                    (drawn plainly; %u of them met the edge test with\n"
+        "                    diagonals that do not cross - a box corner, not a quad)\n",
         (!redraw_on()) ? "OFF (SL_Z_REDRAW=0)"
                        : (g_rd_stencil_bits > 0 ? "on" : "INERT (no stencil plane)"),
         g_rd_depth_bits, g_rd_stencil_bits,
-        g_rd_loads_old, g_rd_loads, g_rd_tris, g_rd_tris_z, g_rd_tris_same);
+        g_rd_loads_old, g_rd_loads, g_rd_tris, g_rd_tris_z, g_rd_tris_same,
+        g_rd_tris_notquad);
 
     at = mark_cat(out, n, at, "\n[candidate-draws]\n");
 
@@ -16759,7 +23448,7 @@ int sl_mark_render(char *out, int n, int (*resolve)(unsigned addr, int *kind))
         at = mark_cat(out, n, at,
             "NO SUBMITTED TRIANGLE INTERSECTS THE CENTRE BOX.\n"
             "  %u triangles were emitted this frame and none of them projected\n"
-            "  onto the centre of the screen. Whatever the owner is looking at\n"
+            "  onto the centre of the screen. Whatever is visible at the marked point\n"
             "  did not reach the renderer as world geometry: it is backdrop\n"
             "  fill, a 2D pass, or geometry that was never submitted. The\n"
             "  [centre-pixel] section says what colour it actually is.\n"

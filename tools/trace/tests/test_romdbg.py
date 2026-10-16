@@ -3,7 +3,7 @@
 An instrument that cannot fail is worthless, and one that cannot be made to
 fire on demand cannot be shown to work at all. The recorder's live capture path
 is driven here against a SYNTHETIC mailbox - no ROM, no core, no display - so
-every branch the owner can hit while playing is exercised, including the ones a
+every branch a player can hit while playing is exercised, including the ones a
 headless run cannot reach because nobody is holding the controller.
 
 The other control in here is the one that would have caught the expensive
@@ -98,7 +98,7 @@ IDLE = InputFrame(0)
 
 
 class LiveCaptureTest(unittest.TestCase):
-    """Every line the owner can see while recording, made to appear on demand."""
+    """Every line the player can see while recording, made to appear on demand."""
 
     def setUp(self):
         self.said = []

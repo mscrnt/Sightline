@@ -169,6 +169,6 @@ ROM data, so they are safe to keep in the repo (`tools/trace/inputs/` already
 holds 119).
 
 **Why this exists.** Every bug chased on 2026-08-25 was harder without it:
-synthesised streams reached the airlock and stopped, while the owner walked
+synthesised streams reached the airlock and stopped, while in a manual playtest the player walked
 into the scientist section and hung the game inside a minute. A recording of
 that session would have turned a three-crash hunt into one replay.

@@ -126,8 +126,8 @@ def main() -> int:
         return 2
     if not eep.is_file():
         # Not a warning. Measured: a run without the eeprom answers a different
-        # saved game and the gas timer read 0.000 for a whole run the owner had
-        # blown the tanks in.
+        # saved game and the gas timer read 0.000 for a whole recorded run in
+        # which the tanks had been blown.
         print(f"rominspect: REFUSING to run without {eep} - the eeprom is not "
               f"optional, the same input answers a different saved game "
               f"without it.", file=sys.stderr)

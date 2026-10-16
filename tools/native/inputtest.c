@@ -95,14 +95,14 @@ const char *SDL_GetCurrentVideoDriver(void) { return "x11"; }
 int  SDL_ShowCursor(int toggle) { if (toggle >= 0) stub_cursor = toggle; return stub_cursor; }
 SDL_bool SDL_SetHint(const char *n, const char *v) { (void) n; (void) v; return SDL_TRUE; }
 const char *SDL_GetError(void) { return "stub"; }
-/* "x11" so read_env takes the same branch it takes on the owner's machine -
+/* "x11" so read_env takes the same branch it takes on the reference play machine -
  * the one that turns on warp-based relative mode. SDL_SetHint is stubbed, so
  * this only exercises the branch, it does not change any behaviour asserted
  * below. */
 
 
 /* No gamepad in this harness BY DEFAULT: the pad path has its own
- * owner-validated behaviour and this test is about the keyboard and mouse;
+ * playtest-validated behaviour and this test is about the keyboard and mouse;
  * read_pad exits at the first of these. The #46 controller section flips
  * stub_pad_present and drives ONE synthetic pad through the same entry
  * points (a dummy handle, a button array, a trigger pair) so the BUTTON MODE
@@ -240,8 +240,8 @@ void sl_action_channels_pulse(int action, int count)
  * setting is the renderer's, not the game's) - sl_input.c calls the native
  * consumer directly, so the harness captures THAT instead of a pulse. */
 #define ACT_TEXCYCLE 14
-static int tex_cycles;
-void sl_textures_cycle(void) { tex_cycles++; }
+static int tex_cycles;          /* #68: presentation cycles (the action F5 carries) */
+void sl_presentation_cycle(void) { tex_cycles++; }
 static void act_clear(void) { memset(act_pulse, 0, sizeof act_pulse); }
 
 /* --------------------------------------------------------------------------
@@ -316,7 +316,7 @@ static void motion(int dx, int dy, int menu, int aim)
     poll();
 }
 
-/* INVERT MOUSE Y precedence (#46 owner replay, 2026-09-18): SL_MOUSE_INVERT
+/* INVERT MOUSE Y precedence (#46 playtest, 2026-09-18): SL_MOUSE_INVERT
  * against the settings store, at read_env's first poll. Two cases, each its
  * OWN PROCESS (INPUTTEST_CASE=mouse-invert-store / mouse-invert-nostore, run
  * by inputtest.ps1 / inputtest.sh before the main run): the store is a
@@ -863,7 +863,7 @@ static int case_modern_pad(void)
     stub_padb[SDL_CONTROLLER_BUTTON_A] = 0; poll(); act_clear();
     ck(held_after_button(SDL_CONTROLLER_BUTTON_X) == (1u << ACT_RELOAD), "DEFAULT: X -> RELOAD", "");
     ck(held_after_button(SDL_CONTROLLER_BUTTON_B) == (1u << ACT_CROUCH), "DEFAULT: B -> CROUCH", "");
-    ck(held_after_button(SDL_CONTROLLER_BUTTON_Y) == 0u, "DEFAULT: Y unbound (the page says UNBOUND; what it should do is the owner's call, #64)", "");
+    ck(held_after_button(SDL_CONTROLLER_BUTTON_Y) == 0u, "DEFAULT: Y unbound (the page says UNBOUND; what it should do is an open design call, #64)", "");
     ck(held_after_button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) == (1u << ACT_FIRE), "DEFAULT: RB -> FIRE (2026-09-21: the bumpers mirror the triggers)", "");
     ck(held_after_button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) == (1u << ACT_AIM), "DEFAULT: LB -> AIM", "");
     ck(held_after_button(SDL_CONTROLLER_BUTTON_LEFTSTICK) == (1u << ACT_SPRINT), "DEFAULT: L3 -> SPRINT", "");
@@ -884,9 +884,9 @@ static int case_modern_pad(void)
        "d-pad left held: the snapshot flags DPAD_LEFT (the page lights the d-pad), no N64 bit", st());
     stub_padb[SDL_CONTROLLER_BUTTON_DPAD_LEFT] = 0; poll(); act_clear();
 
-    /* THE BUMPERS (owner, 2026-09-21): "I also don't like RB and LB and L1
-     * and R1 cycling the weapons. They should just mirror the triggers for
-     * aim and shoot. Dpad handles weapons fine." So in every live preset a
+    /* THE BUMPERS (design decision, 2026-09-21): RB and LB (R1 and L1) no
+     * longer cycle the weapons; they mirror the triggers for aim and
+     * shoot, and the d-pad handles weapons. So in every live preset a
      * bumper is a second FIRE / AIM, and FIRE and AIM are UNPAIRED actions
      * whose rows carry no context - the bumper therefore acts in every
      * context, scoped or not. The scope-aware MECHANISM is untouched and is
@@ -1024,7 +1024,7 @@ static int case_modern_pad(void)
        && held_after_button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) == (1u << ACT_AIM),
        "SOUTHPAW scoped: the bumpers still fire and aim - no zoom on a bumper", "");
     stub_scoped = 0;
-    /* BUMPER is RETIRED (owner, 2026-09-21): its point was the triggers
+    /* BUMPER is RETIRED (design decision, 2026-09-21): its point was the triggers
      * cycling weapons. The id stays occupied - pad_button_layout is
      * persisted and its ids are append-only - but it is never offered,
      * never applied and never matched. */
@@ -1107,7 +1107,7 @@ static int case_modern_pad(void)
     sl_bindings_reload();
     ck(sl_bindings_layout_get() == SL_BUTTON_LAYOUT_SOUTHPAW && table_is_layout(SL_BUTTON_LAYOUT_SOUTHPAW),
        "a stored SOUTHPAW with SOUTHPAW's lines reloads as SOUTHPAW", "");
-    /* THE RETIRED ID AT LOAD, both ways round (owner, 2026-09-21). A config
+    /* THE RETIRED ID AT LOAD, both ways round (design decision, 2026-09-21). A config
      * that recorded BUMPER loads as CUSTOM whatever its lines say: with the
      * old preset's own lines it keeps them (nobody's controls change under
      * them), and with no pad lines at all it holds the new compiled
@@ -1168,7 +1168,7 @@ static int case_modern_pad(void)
        "key:E -> [INTERACT] on the KBM column, nothing on the PAD column", "");
     ck(sl_bindings_actions_for_source(NULL, 1, acts, 4) == 0, "NULL -> 0", "");
 
-    /* THE NORTH FACE BUTTON, the owner-observed omission (2026-09-20): the
+    /* THE NORTH FACE BUTTON, the omission observed in play (2026-09-20): the
      * watch's controller page dropped a control the resolver found no
      * action for, and pad:Y is bound by NONE of the four presets, so Xbox
      * Y / DualSense TRIANGLE was absent from the page on every one of them.
@@ -2071,7 +2071,7 @@ int main(void)
     ck(stub_relmode == 0, "focus regained alone does NOT re-capture", st());
     sl_input_live_click(SDL_BUTTON_LEFT, 1); poll();
     ck(stub_relmode == 1, "a second click re-captures", st());
-    /* #40 (owner, 2026-09-17): the WATCH keeps gameplay's capture - relative
+    /* #40 (requirement, 2026-09-17): the WATCH keeps gameplay's capture - relative
      * mode, hidden cursor - and the deltas drive the drawn crosshair there.
      * Before #40 this asserted the release; the front end (menu 2) is the
      * screen class that releases relative mode, tested below. */
@@ -2256,7 +2256,7 @@ int main(void)
         /* Every default, read back through the registry as tokens - the one
          * table the input path, the parser and both editors share. A row =
          * action, kbm 1, kbm 2, pad 1, pad 2. The pad half is the DEFAULT
-         * button layout, amended 2026-09-21 by the owner's bumper decision:
+         * button layout, amended 2026-09-21 by the bumper design decision:
          * RT and RB fire, LT and LB aim, and the weapon cycle and the zoom
          * are the d-pad's alone (left / right cycle, up / down zoom); Y and
          * RS unbound. */
@@ -2280,7 +2280,7 @@ int main(void)
             /* #47: the texture-set cycle. F5 on the keyboard; on the pad,
              * BACK - the button that used to mark, which is why no pad slot
              * anywhere in this table reads "pad:BACK" for anything else. */
-            { SL_ACT_TEXTURE_CYCLE,   "key:F5",     "none",       "pad:BACK",       "none" },
+            { SL_ACT_PRESENTATION_CYCLE,   "key:F5",     "none",       "pad:BACK",       "none" },
         };
         int ok = 1, j;
         char t[4][32], line[160];
@@ -2306,7 +2306,7 @@ int main(void)
         ck(ok, "every slot reports is_default with no overrides", "");
     }
 
-    printf("\n== TEXTURE SET CYCLE (#47): F5, the pad's BACK, and the mark ==\n");
+    printf("\n== PRESENTATION CYCLE (#47, retargeted by #68): F5, the pad's BACK, and the mark ==\n");
     {
         sl_bind_source s;
         char t[32];
@@ -2317,7 +2317,7 @@ int main(void)
          * - the same edge rule every other action gets, and the reason this
          * is a registry action instead of a private `static int held`. */
         stub_keys[SDL_SCANCODE_F5] = 1; poll();
-        ck(tex_cycles == 1, "F5 pressed -> one texture-set cycle", "");
+        ck(tex_cycles == 1, "F5 pressed -> one presentation cycle", "");
         poll(); poll();
         ck(tex_cycles == 1, "F5 HELD -> still one (no repeat)", "");
         stub_keys[SDL_SCANCODE_F5] = 0; poll();
@@ -2333,7 +2333,7 @@ int main(void)
         ck(tex_cycles == 1, "pad BACK (View / Create / Select) -> one cycle", "");
         stub_padb[SDL_CONTROLLER_BUTTON_BACK] = 0; poll();
         ck(held_after_button(SDL_CONTROLLER_BUTTON_BACK) == (1u << ACT_TEXCYCLE),
-           "DEFAULT: BACK -> TEXTURE SET and nothing else", "");
+           "DEFAULT: BACK -> PRESENTATION and nothing else", "");
 
         /* A MENU OWNS INPUT: the press must not land, and it must not land
          * on the frame the menu closes either (the raw level memory has
@@ -2354,8 +2354,8 @@ int main(void)
         tex_cycles = 0;
         {   int stolen = -1;
             ck(sl_bindings_source_parse("key:F6", &s)
-               && sl_bindings_set(SL_ACT_TEXTURE_CYCLE, 0, 0, &s, &stolen),
-               "TEXTURE SET rebinds to F6 through the editor's own setter", "");
+               && sl_bindings_set(SL_ACT_PRESENTATION_CYCLE, 0, 0, &s, &stolen),
+               "PRESENTATION rebinds to F6 through the editor's own setter", "");
         }
         stub_keys[SDL_SCANCODE_F6] = 1; poll();
         ck(tex_cycles == 1, "F6 now cycles", "");
@@ -2364,11 +2364,11 @@ int main(void)
         ck(tex_cycles == 1, "... and F5 no longer does", "");
         stub_keys[SDL_SCANCODE_F5] = 0; poll();
         sl_bindings_reset_defaults();
-        sl_bindings_source_token(sl_bindings_get(SL_ACT_TEXTURE_CYCLE, 0, 0), t, 32);
+        sl_bindings_source_token(sl_bindings_get(SL_ACT_PRESENTATION_CYCLE, 0, 0), t, 32);
         ck(strcmp(t, "key:F5") == 0, "reset to defaults puts F5 back", t);
 
-        /* THE MARK. The pad's BACK no longer marks (owner, #47: "We wont
-         * need to mark with controller"), and no preset binds MARK on the
+        /* THE MARK. The pad's BACK no longer marks (#47: marking with the
+         * controller is not needed), and no preset binds MARK on the
          * pad because MARK was never a registry action at all - it is F9 /
          * F8, deliberately OUTSIDE the bindable key table so nothing can
          * steal them. Asserted rather than assumed: if either key ever
@@ -2385,7 +2385,7 @@ int main(void)
                         sl_bindings_source_token(sl_bindings_get(a, d, sl), tok, 32);
                         if (strcmp(tok, "pad:BACK") == 0) back++;
                     }
-            ck(back == 1, "pad:BACK appears in the defaults exactly once - TEXTURE SET", "");
+            ck(back == 1, "pad:BACK appears in the defaults exactly once - PRESENTATION", "");
         }
         {   int p, a, sl, bad = 0, seen = 0;
             for (p = 0; p < SL_BUTTON_LAYOUT_PRESETS; p++)
@@ -2395,7 +2395,7 @@ int main(void)
                         if (q != NULL && q->kind == SL_SRC_PAD_BUTTON
                             && q->code == SDL_CONTROLLER_BUTTON_BACK) {
                             seen++;
-                            if (a != SL_ACT_TEXTURE_CYCLE) bad++;
+                            if (a != SL_ACT_PRESENTATION_CYCLE) bad++;
                         }
                     }
             ck(bad == 0 && seen == SL_BUTTON_LAYOUT_PRESETS,
@@ -2910,7 +2910,7 @@ int main(void)
     /* The defaults themselves, asserted through behaviour rather than by
      * reading the variables, so a change to either is caught here.
      *
-     * BOTH ARE -1, and both are owner-validated physically: plain play.sh with
+     * BOTH ARE -1, and both are validated physically in playtest: plain play.sh with
      * no environment gave LEFT->LEFT, RIGHT->RIGHT, UP->UP, DOWN->DOWN on a
      * real mouse. This pair of assertions is the regression guard for that
      * result - if either default is ever changed back, these fail. */
@@ -3105,7 +3105,7 @@ int main(void)
          * meaningful. The cursor the player sees there is the GAME's, drawn by
          * frontDrawCursor (front.c:1251) from the cursor_h_pos/cursor_v_pos
          * this feature moves; leaving the host's up as well put two pointers on
-         * screen (owner-reported on file select, 2026-09-07). */
+         * screen (reported in playtest on file select, 2026-09-07). */
         stub_menu = 2; stub_ptrmenu = 1; stub_clickadv = 1; poll();
         ck(stub_relmode == 0, "front end: relative mode OFF", st());
         ck(stub_cursor == 0, "front end: HOST cursor hidden (the game draws one)", st());
@@ -3120,8 +3120,8 @@ int main(void)
         /* THE BOOT CHAIN is the same screen class - confined, visible - and it
          * gets there without any pointer menu being active. */
         /* THE BOOT CHAIN is a different screen class: it draws no pointer of
-         * its own, so the HOST cursor stays - owner's call, 2026-09-07,
-         * "Regular mouse cursor is fine for the legal, and other logos". It is
+         * its own, so the HOST cursor stays - design decision, 2026-09-07:
+         * the regular mouse cursor is fine for the legal and other logos. It is
          * still confined, and still has no relative mode. */
         stub_ptrmenu = 0; stub_clickadv = 1; poll();
         ck(stub_relmode == 0 && stub_wingrab == 1,
@@ -3351,7 +3351,7 @@ int main(void)
     {
         int i;
 
-        /* The exact sequence the owner runs: click AGENT on a front-end
+        /* The exact sequence a player runs: click AGENT on a front-end
          * screen, then the level comes up. The click armed the capture like
          * any other click, so by the first gameplay frame the grab is on and
          * read_mouse's button gate is open - and the press is still down. */

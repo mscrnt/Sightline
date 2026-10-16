@@ -29,8 +29,8 @@ retracted:
 
 The actual answer — the opcode is read from byte 0 of a display list that has
 already been rewritten to native word order, so it is at byte 3 — took one
-lookup in `ucode05.txt` once the file was finally opened, prompted by the
-project owner rather than by anything in the system.
+lookup in `ucode05.txt` once the file was finally opened, prompted by a
+manual review rather than by anything in the system.
 
 ## The design
 
@@ -48,7 +48,7 @@ when the corpus changes. Stdlib only. `--json` on every subcommand, so an MCP
 server can wrap it without reimplementing anything. Every successful lookup
 stamps a marker.
 
-**3. Hooks** — local editor/agent hooks, configured per machine and not part
+**3. Hooks** — local editor and tooling hooks, configured per machine and not part
 of the tracked tree. The enforcing layer, because hooks run whether or not
 anyone decides anything.
 - A session-start hook puts the routing and the rule in context at turn one.

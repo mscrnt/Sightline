@@ -255,7 +255,7 @@ u64 D_80040148[] = { 0, 0, 0 }; // Unused.
  * computes below is CONTINUOUS. The truncation at this call is Rare's own
  * encoding limit - the cartridge could never show the fraction - but the
  * native renderer can, and dropping it is what makes the water hold a frozen
- * origin for several presented frames and then jump (measured at the owner's
+ * origin for several presented frames and then jump (measured at the playtest
  * Dam mark: S holds 3-4 presents, T 7-10, at the native delta=1 cadence the
  * hardware never reached). So this helper now takes the PHASE, writes the
  * SAME truncated word into the command - byte-for-byte what the u32 version

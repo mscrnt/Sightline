@@ -131,7 +131,7 @@ extern int  sl_mouse_sens_get(int scoped);
 /* THE CURSOR: the game's own aiming reticle, drawn the way gunDrawSight
  * (gunfire.c:6329-6353) draws it - texSelect on crosshairimage, then
  * display_image_at_position with a half-extent - at this fraction of the
- * sight's 16-unit half-extent. Owner request 2026-09-17: a SMALLER copy of
+ * sight's 16-unit half-extent. Requirement 2026-09-17: a SMALLER copy of
  * the in-game crosshair, no new art. Half size. */
 #define SL_WATCH_CURSOR_SCALE 0.5f
 #define SL_WATCH_CURSOR_ALPHA 0xFF   /* the sight uses 0x6E over the world;
@@ -1271,7 +1271,7 @@ void sl_watch_pointer_frame(Mtx *pagemtx)
  * on top of the text, as the sight sits on top of the HUD. Framebuffer
  * coordinates, so it follows the window like every other texrect.
  *
- * ACROSS THE CONTENT RECT (owner-observed 2026-09-20: "in the watch the
+ * ACROSS THE CONTENT RECT (observed in play 2026-09-20: "in the watch the
  * cursor goes BEHIND watch UI/bezel at the edges and becomes hard/impossible
  * to see"). Measured before this change on a 1280x720 16:9 window: the
  * pointer in either 160 px band drew NOTHING - the mapping above answered

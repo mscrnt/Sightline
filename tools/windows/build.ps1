@@ -225,7 +225,7 @@ try {
     #
     # -Demo is a build-time switch, never a runtime one: the shipped demo must
     # behave the same however it is launched, and an environment variable the
-    # owner could forget to set (or a player could unset) is not a policy. So
+    # packager could forget to set (or a player could unset) is not a policy. So
     # there is deliberately no SL_DEMO getenv anywhere - the whole identity is
     # this one -D, read by #if defined(SL_DEMO_BUILD) in the sources.
     #
@@ -241,7 +241,7 @@ try {
     # src/platform/sl_ultra_shim.c, so a define added only to $DEFS compiled
     # the front-end policy in and left the save path out - MEASURED, as a demo
     # build that correctly applied the front-end policy (then Facility-only)
-    # but still wrote the owner's normal eeprom.bin. Both sites now take
+    # but still wrote the player's normal eeprom.bin. Both sites now take
     # $DEMO_DEFS.
     $DEMO_DEFS = @()
     if ($Demo) { $DEMO_DEFS = @('-DSL_DEMO_BUILD') }
@@ -387,9 +387,15 @@ try {
     }
     Write-TextFileLf $stamp $stampKey
 
+    # Every header under src\ and include\: a header newer than an object
+    # rebuilds it. The scan once took src\, src\game\ and include\ alone, so a
+    # change to a header in src\gfx\ or src\platform\ rebuilt nothing, and the
+    # objects built against the old layout read the new record at the old
+    # offsets (#92: sl_gfx_worldasset.h's asset record grew with the image
+    # limit, and the background pass crashed reading it).
     $hdrTime = [DateTime]::MinValue
-    foreach ($pat in @('src\*.h', 'src\game\*.h', 'include\*.h', 'include\PR\*.h')) {
-        $hs = Get-ChildItem -Path (Join-Path $repo $pat) -File -ErrorAction SilentlyContinue
+    foreach ($top in @('src', 'include')) {
+        $hs = Get-ChildItem -Path (Join-Path $repo $top) -Filter '*.h' -File -Recurse -ErrorAction SilentlyContinue
         foreach ($h in $hs) {
             if ($h.LastWriteTimeUtc -gt $hdrTime) { $hdrTime = $h.LastWriteTimeUtc }
         }

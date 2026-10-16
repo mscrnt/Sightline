@@ -1,0 +1,5 @@
+# Bunker 2's prop set as accepted (#85). The stage derivation
+# (tools/worldasset/stageprops.py) and the texture-scale rules have since
+# grown to read these items; they are held back here so that
+# `prepare-xbla-assets.ps1 -Level bunker2 -Props` reproduces the accepted set.
+# Remove a line to take the item.

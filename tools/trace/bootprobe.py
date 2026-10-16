@@ -4,8 +4,8 @@
 WHAT THIS IS FOR
 ----------------
 Sightline's front-end timing has been "fixed" three times by reasoning from
-counter arithmetic in `front.c` and `title.c`, and three times the owner has
-re-tested and found it still wrong. The arithmetic was never the problem: the
+counter arithmetic in `front.c` and `title.c`, and three times a manual playtest has
+found it still wrong. The arithmetic was never the problem: the
 question "how long does the Legal screen stay ON SCREEN" is not answerable from
 a threshold constant, because the visible duration includes whatever the game
 does AFTER the timer expires - screen switches, PI DMAs, EEPROM reads - none of
@@ -26,7 +26,7 @@ WHY BOTH HALVES ARE NEEDED
 the television is showing: MENU_SWITCH_SCREENS is a black gap, and a stage's
 image can persist across the state change. "State entry" and "first visible
 frame" are different frames and this reports them separately, because the whole
-disagreement between the owner's stopwatch and the source's constants lives in
+disagreement between a playtest stopwatch and the source's constants lives in
 that gap.
 
 INSTRUMENT DISCIPLINE

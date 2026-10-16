@@ -5,7 +5,7 @@
 # Fog's contribution is the pixel difference between the same frame rendered
 # with SL_FOG on and off. Camera motion cancels because both runs replay the
 # same deterministic input. Stable fog varies a few percent between adjacent
-# frames; the flicker the owner sees swings by multiples.
+# frames; the flicker visible in play swings by multiples.
 #
 # THE PRECONDITION IS THE POINT. Four separate measurements in this
 # investigation were taken on frames where the gas had never triggered, and

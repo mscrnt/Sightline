@@ -56,6 +56,15 @@ EnvironmentRecord * g_EnvironmentMainp;
 */
 EnvironmentRecord * g_EnvironmentAltp;
 
+#if !defined(__sgi)
+/* #77. How far fogSwitchToSolosky2 last took the environment from the MAIN
+ * row toward the ALT row (0..1), and 0 again whenever a level's environment
+ * is loaded afresh. Recorded where the game applies the blend so that a
+ * reader sees exactly what the game drew with; read through
+ * sl_fog_environment_alt below. Nothing in the game reads it. */
+static f32 sl_env_alt_frac;
+#endif
+
 /**
  * Unreferenced.
  *
@@ -386,7 +395,7 @@ void fogLoadCurrentEnvironment(EnvironmentRecord *arg0)
      *     fog ONLY, and the near-fog pointer is stored by `ADDIU T7,A1,000C`
      *     - a raw pointer into the table row; at 7F054B80 the triple is read
      *     back from +0/+4/+8 of that pointer with no scale applied
-     *   - measurement: the owner's Dam log reproduces the unscaled formula at
+     *   - measurement: the playtest Dam log reproduces the unscaled formula at
      *     9 of 9 sample points, each within one alpha step (docs/divergences.md)
      *
      * On the seventeen levels whose visibility scale is 1.0 this block is
@@ -466,6 +475,9 @@ void fogLoadLevelEnvironment(s32 level_id, s32 arg1)
     s32 num_players;
 
     sp1C = NULL;
+#if !defined(__sgi)
+    sl_env_alt_frac = 0.0f;           /* #77: a fresh environment is unblended */
+#endif
 
     num_players = getPlayerCount();
 
@@ -556,6 +568,33 @@ void fogLoadLevelEnvironment(s32 level_id, s32 arg1)
     g_EnvironmentFoundp = NULL;
 }
 
+#if !defined(__sgi)
+/* #68. READ-ONLY: the Id of the environment row the game itself selected
+ * above (stage id plus its +900 cinema / +100..400 variant), or -1 while a
+ * fogless record is in force. The world-asset renderer keys the remaster's
+ * stage-fog metadata by it (sl_gfx_worldasset.h, SLEN), so the selector is
+ * this function's and not a second one. Changes no state. */
+int sl_fog_environment_id(void)
+{
+    return (g_EnvironmentFoundp != NULL) ? (int) g_EnvironmentFoundp->Id : -1;
+}
+
+/* #77. READ-ONLY: the Id of the ALT environment row and, in *frac, how far
+ * the game has blended toward it (fogSwitchToSolosky2: Facility's gas, the
+ * main row's far fog and colour lerped toward the next row's by the gas
+ * timer), or -1 while no blend is in force - no environment row, or none
+ * applied since the level's environment was loaded. Changes no state. */
+int sl_fog_environment_alt(float *frac)
+{
+    if (frac == NULL) return -1;
+    *frac = 0.0f;
+    if (g_EnvironmentFoundp == NULL || g_EnvironmentAltp == NULL) return -1;
+    if (!(sl_env_alt_frac > 0.0f)) return -1;
+    *frac = (sl_env_alt_frac < 1.0f) ? sl_env_alt_frac : 1.0f;
+    return (int) g_EnvironmentAltp->Id;
+}
+#endif
+
 /**
  * Address 0x7F0BACA8.
  * Switch to next Environment.
@@ -607,6 +646,9 @@ void fogSwitchToSolosky2(f32 arg0)
     static_envr.Sky.Green &= 0xf8;
     static_envr.Sky.Blue &= 0xf8;
 
+#if !defined(__sgi)
+    sl_env_alt_frac = arg0;           /* #77: the blend this frame draws with */
+#endif
     fogLoadCurrentEnvironment(&static_envr);
 }
 
@@ -790,7 +832,7 @@ s32 fogGetPropDistColor(PropRecord *prop, rgba_f32 *color)
      * them from Visibility.BlendMultiplier and Visibility.FarFog - and
      * facility's ALT (gas) row takes FarFog from 5000 to 1000. That moves this
      * threshold by 5x the moment the tanks blow, which is the shape of the
-     * owner's tank report.
+     * tank playtest report.
      *
      * Also note it runs BEFORE the PROPDEF_TINTED_GLASS branch, so it can drop
      * a glass pane too.

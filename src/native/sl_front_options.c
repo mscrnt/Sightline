@@ -15,6 +15,8 @@
  *                        DISPLAY   WINDOW MODE    <mode>               (#52)
  *                                  RESOLUTION   -  <WxH>  +  [list]   (#52)
  *                                  VSYNC  OFF ON                      (#52)
+ *                                  FRAME RATE  -  <rate>  +           (#87)
+ *                                  SHOW FPS  OFF ON                   (#87)
  *                                  ASPECT RATIO  4:3  16:9  21:9  32:9   (#45)
  *                                  FIELD OF VIEW  -  <h16>  +      [bar] (#45, #50)
  *                                  WORLD DETAIL  ORIGINAL ENHANCED       (#43)
@@ -33,11 +35,15 @@
  *     MENU_SL_BINDINGS the bindings editor (src/native/sl_front_bindings.c),
  *                      BACK returns here with the cursor on BINDINGS
  *     (the DISPLAY tab first carried a #43 Phase A presentation row for one
- *      round, retired unshipped on 2026-09-18 - owner decision. It returned
+ *      round, retired unshipped on 2026-09-18 - design decision. It returned
  *      for #45 with the aspect row, and on 2026-09-21 the re-scoped #43
  *      landed its WORLD DETAIL row - the render-visibility profile, NOT a
- *      presentation / filtering switch; texture / lighting rows are #47 /
- *      #48 when they come.)
+ *      presentation / filtering switch. #47 added a TEXTURES row beside it on
+ *      2026-09-21, and #68 turned that row into PRESENTATION on 2026-09-23 -
+ *      one visual selection resolving every visual provider. The retired #43
+ *      row and this one share a word and nothing else: that one was a
+ *      filtering toggle, this one is the content selection. Lighting, #48,
+ *      would resolve through the same policy rather than gain its own row.)
  *     MENU_CHEAT       Rare's cheat menu, entered from CHEATS, unchanged
  *
  * BUILT THE WAY RARE BUILT THE SCREENS AROUND THEM, and that is the whole
@@ -57,7 +63,7 @@
  * already works, and a click on a VALUE sets that value directly - the #40
  * watch rule - because the cursor was over it when A arrived.
  *
- * THE TAB STRIP (owner decision, #42: "use tabs in the options menu instead
+ * THE TAB STRIP (design decision, #42: "use tabs in the options menu instead
  * of adding more options"). A tab is a hit band exactly like a row: the strip
  * is the band above the first content row, split into columns at each tab's
  * x, and A / Z / START / a click on a tab SELECTS it - the content area below
@@ -134,8 +140,25 @@
  *       controls first, then ASPECT RATIO and FIELD OF VIEW (the content).
  *       The watch's SIGHTLINE -> DISPLAY child is the other view, same
  *       calls.
- *   THE RESOLUTION LIST (#52 follow-up, owner 2026-09-20: "instead of
- *       clicking through each of the resolutions, can it be a drop down?"):
+ *   FRAME RATE (#87, 2026-10-07) -> render_fps on the same store through
+ *       sl_render_fps / _step / _name (src/platform/sl_window.c): ORIGINAL
+ *       (0, the accepted pacing and the default), 30, 60, 120, 144, 165,
+ *       240, UNLIMITED (-1), wrapping; `-` / `+` step, the value and the
+ *       label step up. The row prints the value IN FORCE - SL_RENDER_FPS
+ *       when set, until the row is changed - and the frame pump reads it
+ *       every frame (sl_ultra_shim.c), so a press applies on the next
+ *       frame. Above the display's refresh with VSYNC on, the swap waits a
+ *       refresh and the display sets the rate. The watch's DISPLAY child is
+ *       the other view, same calls.
+ *   SHOW FPS (#87) -> show_fps on the same store through sl_show_fps /
+ *       _set (src/platform/sl_window.c): OFF (the default) / ON, a
+ *       two-value row (a value cell sets it, the label flips it). The row
+ *       prints the value IN FORCE - SL_SHOW_FPS when set, until the row is
+ *       changed - and the SDL backend reads it at every present, so the
+ *       counter appears or goes on the next presented frame. The watch's
+ *       DISPLAY child is the other view, same calls.
+ *   THE RESOLUTION LIST (#52 follow-up, requirement 2026-09-20: a drop-down
+ *       instead of clicking through each of the resolutions):
  *       a press on the row's LABEL or its VALUE opens the current mode's
  *       list under the row (`-` and `+` keep stepping: they cost nothing);
  *       see THE DROPDOWN below the tab geometry for the rules. A pick files
@@ -157,7 +180,7 @@
  *       same `-` / value / `+` row as FIELD OF VIEW, its three cells shifted
  *       one column right so the two long labels clear them. The watch's
  *       SIGHTLINE -> CONTROLS child is the other view, same two calls.
- *   THE BARS (#50 owner request, 2026-09-19): FIELD OF VIEW and the two
+ *   THE BARS (#50 requirement, 2026-09-19): FIELD OF VIEW and the two
  *       sensitivities are SLIDER rows - the same cells over a 007-mode bar
  *       (set_slider_row; the geometry and the press / drag rules are at
  *       SET_BAR_*). A press on the bar sets the value at the cursor's
@@ -273,10 +296,13 @@ extern void  sl_action_mode_set(int which, int toggle);
  * _ENHANCED. The same pair the watch's GRAPHICS child calls. */
 extern int   sl_world_detail(void);
 extern void  sl_world_detail_set(int detail);
-/* TEXTURES (sl_settings_apply.c, #47): SL_TEXTURES_ORIGINAL / _COMMUNITY /
- * _XBLA. The same pair the watch's GRAPHICS child calls. */
-extern int   sl_textures(void);
-extern void  sl_textures_step(int dir);
+/* PRESENTATION (src/platform/sl_presentation.c, #68): the ONE visual
+ * selection, SL_PRESENTATION_ORIGINAL / _COMMUNITY / _XBLA, which resolves
+ * every visual provider. The same trio the watch's GRAPHICS child calls, and
+ * the same value F5 steps - none of the three holds a copy. */
+extern int         sl_presentation(void);
+extern const char *sl_presentation_name(int presentation);
+extern void        sl_presentation_step(int dir);
 /* The N64 include tree's <stdlib.h> has no getenv (sl_cheat.c's rule). */
 extern char *getenv(const char *);
 
@@ -487,10 +513,11 @@ Gfx *sl_constructor_menu_options(Gfx *DL)
 #define SET_X_VAL3_1  (SET_X_VAL0 + 0x33)    /* short-value rows: the second column */
 #define SET_X_VAL3_2  (SET_X_VAL0 + 0x66)    /* short-value rows: the third column */
 #define SET_X_VAL3_3  (SET_X_VAL0 + 0x99)    /* short-value rows: the fourth column (32:9; ends at ~362, clear of PREVIOUS at 390) */
-#define SET_ROW_Y(i)  (0x50 + (i) * 0x20)
+#define SET_ROW_Y(i)  set_row_y(i)       /* 0x50 + i * 0x20; a full tab packs closer (set_row_y) */
+static s32 set_row_y(s32 slot);
 #define SET_ROW_TOP(i) ((f32) (SET_ROW_Y(i) - 9))
 #define SET_COL_TOP(x) ((f32) ((x) - 6))
-/* THE SLIDER ROWS (#50 owner request, 2026-09-19: "same in the out of game
+/* THE SLIDER ROWS (#50 requirement, 2026-09-19: "same in the out of game
  * settings menu"): MOUSE SENSITIVITY, SCOPED SENSITIVITY and FIELD OF VIEW
  * draw as the 007-mode page's bars (front.c constructor_menu09_007options):
  * the label on its line, the bar under it - the track from x 55 to 355 at
@@ -515,11 +542,27 @@ Gfx *sl_constructor_menu_options(Gfx *DL)
 #define SET_COL_BAR    3                     /* the bar, in s_set_col */
 #define SET_TAB_Y     0x30
 #define SET_TAB_X(i)  (SET_X_LABEL + (i) * 0x5A)
-#define SET_SLOTS     8                      /* slots per tab, BACK included: 5 until #46
+#define SET_SLOTS     10                     /* slots per tab, BACK included: 5 until #46
                                               * added the BINDINGS row, 6 until #50 added
-                                              * the two sensitivity rows; slot 7 sits at
+                                              * the two sensitivity rows, 8 until #87 added
+                                              * FRAME RATE to DISPLAY, 9 until #87 added
+                                              * SHOW FPS; slot 7 sits at
                                               * y 0x130, inside the bindings editor's own
-                                              * footer / message band (0x122 / 0x134) */
+                                              * footer / message band (0x122 / 0x134). A
+                                              * tab of more than eight slots packs its rows
+                                              * closer (set_row_y): at 0x20 a ninth slot
+                                              * would sit at y 0x150, below the cursor's
+                                              * reach (front.c clamps it at the screen's
+                                              * foot less 20, y 310) */
+#define SET_PITCH_9   0x1B                   /* a nine-slot tab's pitch below a non-slider
+                                              * row (a slider row keeps 0x20: its bar ends
+                                              * at y + 28) */
+#define SET_PITCH_10  0x18                   /* a ten-slot tab's: DISPLAY (nine rows, one
+                                              * slider) puts BACK at y 304, the widest pitch
+                                              * that keeps BACK above the clamp (0x19: 312);
+                                              * a row's highlight box spans y - 1 ..
+                                              * y + 0xE, and the RESOLUTION list's
+                                              * own pitch is 0x14 */
 #define SET_ROW_BACK_MIN 5                   /* BACK's slot on a tab of up to five rows -
                                               * the accepted GAMEPLAY / DISPLAY layout;
                                               * a longer tab's BACK follows its last row
@@ -542,7 +585,9 @@ enum { SR_NONE = 0, SR_LOOK, SR_AIM, SR_MINV, SR_SPRINT, SR_BINDINGS, SR_ASPECT,
        SR_RES,          /* #52: RESOLUTION - `-` <WxH> `+` through the display's list; informational in BORDERLESS */
        SR_VSYNC,        /* #52: VSYNC - OFF / ON, a two-value row */
        SR_WDETAIL,      /* #43: WORLD DETAIL - ORIGINAL / ENHANCED, a two-value row (sl_world_detail) */
-       SR_TEXTURES };   /* #47: TEXTURES - one value cell, advancing (ORIGINAL / COMMUNITY HD / XBLA) */
+       SR_PRESENTATION, /* #68: PRESENTATION - one value cell, advancing (ORIGINAL / COMMUNITY HD / XBLA) */
+       SR_FPS,          /* #87: FRAME RATE - `-` <rate> `+` (ORIGINAL / 30 .. 240 / UNLIMITED, wrapping) */
+       SR_SHOWFPS };    /* #87: SHOW FPS - OFF / ON, a two-value row (sl_show_fps) */
 
 /* THE TAB LIST. Adding a tab = one entry: its label and its content rows in
  * slot order (BACK takes the slot after the last row, SET_ROW_BACK_MIN at
@@ -563,10 +608,16 @@ static const struct sl_settings_tab s_tabs[] = {
      * WORLD DETAIL row after FIELD OF VIEW - what stays eligible inside the
      * frustum the two rows above it shape - six rows, so BACK takes slot 6
      * (y 0x110, as the PAD tab's BACK already sits at slot 7). #47
-     * (2026-09-21): the TEXTURES row after WORLD DETAIL - which artwork the
-     * eligible geometry is drawn with - seven rows, so BACK takes slot 7
-     * (y 0x130, the PAD tab's own BACK slot). */
-    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_ASPECT, SR_FOV, SR_WDETAIL, SR_TEXTURES } },    /* #52, #45, #43, #47 */
+     * (2026-09-21): a TEXTURES row after WORLD DETAIL - seven rows, so BACK
+     * takes slot 7 (y 0x130, the PAD tab's own BACK slot). #68 (2026-09-23):
+     * that row became PRESENTATION - the one visual selection, which resolves
+     * the texture provider AND the world-asset provider together. Same slot,
+     * same cell shape, same row count: nothing below it moved. */
+    /* #87 (2026-10-07): FRAME RATE after VSYNC, the two pacing controls
+     * together, then SHOW FPS, which reads what they produce - nine rows,
+     * the one tab using all SET_SLOTS slots, so it packs at SET_PITCH_10 and
+     * its BACK stays inside the cursor's reach. */
+    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_FPS, SR_SHOWFPS, SR_ASPECT, SR_FOV, SR_WDETAIL, SR_PRESENTATION } },  /* #52, #87, #45, #43, #68 */
     /* #63: the pad's own tab (a fourth tab: CONTROL was full when it landed,
      * and the accepted rows do not move; three glyphs, so the strip's fourth
      * slot at x 0x145 clears the PREVIOUS tab at 390): the two layouts, the
@@ -869,6 +920,21 @@ static s32 set_row_kind(s32 slot)
     return s_tabs[s_set_tab].rows[slot];
 }
 
+/* A slot's text y: 0x50 + slot * 0x20 on every tab of up to eight slots (the
+ * accepted layouts, unchanged); a longer tab packs at SET_PITCH_9 (nine
+ * slots) or SET_PITCH_10 (ten) below a non-slider row and 0x20 below a
+ * slider row, whose bar ends at y + SET_BAR_BOTTOM. */
+static s32 set_row_y(s32 slot)
+{
+    s32 y = 0x50, k, back = set_row_back(), pitch;
+    if (back < 8)
+        return 0x50 + slot * 0x20;
+    pitch = back == 8 ? SET_PITCH_9 : SET_PITCH_10;
+    for (k = 0; k < slot; k++)
+        y += set_row_is_slider(set_row_kind(k)) ? 0x20 : pitch;
+    return y;
+}
+
 /* The top of a slot's hit band: 9 above its text, or the foot of the bar
  * above it when the slot above is a slider row (#50). */
 static f32 set_row_top(s32 slot)
@@ -976,6 +1042,18 @@ static void set_activate(s32 row, s32 col)
             else
                 dd_open(row);
             break;
+        case SR_FPS:
+            /* #87: `-` (col 0) steps the frame rate down, `+` (col 2), the
+             * value (col 1) and the label step it up, wrapping (ORIGINAL /
+             * 30 .. 240 / UNLIMITED); the store is written on change and the
+             * frame pump reads the value in force on the next frame. */
+            sl_render_fps_step(col == 0 ? -1 : +1);
+            break;
+        case SR_SHOWFPS:
+            /* #87: a value cell sets OFF (0) / ON (1), the label flips; the
+             * counter appears or goes on the next presented frame. */
+            sl_show_fps_set(col < 0 ? !sl_show_fps() : col);
+            break;
         case SR_VSYNC:
             /* #52: a value cell asks for OFF (0) / ON (1), the label flips;
              * the backend reads the swap interval back before it is stored. */
@@ -993,11 +1071,12 @@ static void set_activate(s32 row, s32 col)
                                            ? SL_WORLD_DETAIL_ORIGINAL : SL_WORLD_DETAIL_ENHANCED)
                                         : col);
             break;
-        case SR_TEXTURES:
-            /* #47: the label or the name advances to the next set and
-             * wraps (the WINDOW MODE rule); the provider reads the store
-             * at each texture's next resolve, the next frame drawn. */
-            sl_textures_step(1);
+        case SR_PRESENTATION:
+            /* #68: the label or the name advances to the next presentation
+             * and wraps (the WINDOW MODE rule). Both providers ask the policy
+             * at their own next seam, so the artwork and the world assets
+             * move together on the next frame drawn. */
+            sl_presentation_step(1);
             break;
         case SR_BINDINGS:
             s_set_go = MENU_SL_BINDINGS;         /* #46: the editor screen */
@@ -1053,7 +1132,7 @@ static void set_activate(s32 row, s32 col)
         int wm = 0, ww = 0, wh = 0, wv = 0, sw = 0, sh = 0;
         sl_window_state(&wm, &ww, &wh, &wv);
         sl_window_size_shown(&sw, &sh);
-        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d wdetail=%d(%s) textures=%d(%s)\n",
+        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d fps=%d(%s) showfps=%d wdetail=%d(%s) textures=%d(%s)\n",
                 (int) s_set_tab, (int) row, (int) col,
                 sl_settings_get(SL_SET_LOOK_UPDOWN),
                 sl_settings_get(SL_SET_AIM_CONTROL), sl_mouse_invert_y_get(),
@@ -1068,8 +1147,9 @@ static void set_activate(s32 row, s32 col)
                 sl_action_mode(1), sl_action_mode(0),
                 wm, sl_window_mode_name(sl_window_mode_shown()), sw, sh, sl_window_size_editable() ? "editable" : "info",
                 wv, sl_window_request_pending(),
+                sl_render_fps(), sl_render_fps_name(sl_render_fps()), sl_show_fps(),
                 sl_world_detail(), sl_world_detail_name(sl_world_detail()),
-                sl_textures(), sl_textures_name(sl_textures()));
+                sl_presentation(), sl_presentation_name(sl_presentation()));
     }
 }
 
@@ -1203,6 +1283,13 @@ void sl_interface_menu_settings(void)
                     else if (SET_COL_TOP(SET_X_VAL3_2) <= cursor_h_pos)  s_set_col = 1;
                     else if (SET_COL_TOP(SET_X_VAL3_1) <= cursor_h_pos)  s_set_col = 0;
                 }
+                else if (set_row_kind(s_set_row) == SR_FPS)
+                {
+                    /* #87: RESOLUTION's three cells - `-`, the rate, `+`. */
+                    if (SET_COL_TOP(SET_X_VAL3_3) <= cursor_h_pos)         s_set_col = 2;
+                    else if (SET_COL_TOP(SET_X_VAL3_1) <= cursor_h_pos)    s_set_col = 1;
+                    else if (SET_COL_TOP(SET_X_VAL0) <= cursor_h_pos)      s_set_col = 0;
+                }
                 else if (set_row_kind(s_set_row) == SR_RES)
                 {
                     /* #52: `-` at the first value column, the size at the
@@ -1216,7 +1303,7 @@ void sl_interface_menu_settings(void)
                 }
                 else if (set_row_kind(s_set_row) != SR_BLAYOUT && set_row_kind(s_set_row) != SR_SLAYOUT
                     && set_row_kind(s_set_row) != SR_BINDINGS && set_row_kind(s_set_row) != SR_WMODE
-                    && set_row_kind(s_set_row) != SR_TEXTURES   /* #47: one cell, like WINDOW MODE */
+                    && set_row_kind(s_set_row) != SR_PRESENTATION  /* #68: one cell, like WINDOW MODE */
                     && set_row_kind(s_set_row) != SR_PAD && s_set_row != set_row_back())
                 {
                     if (SET_COL_TOP(SET_X_VAL1) <= cursor_h_pos)      s_set_col = 1;
@@ -1376,11 +1463,14 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
     static char l_wmode[] = "WINDOW MODE\n";    /* #52 */
     static char l_res[]   = "RESOLUTION\n";
     static char l_vsync[] = "VSYNC\n";
+    static char l_fps[]   = "FRAME RATE\n";      /* #87 */
+    static char l_showfps[] = "SHOW FPS\n";      /* #87 */
+    static char v_fps[16];
     static char l_wdetail[]  = "WORLD DETAIL\n"; /* #43 */
     static char v_original[] = "ORIGINAL\n";
     static char v_enhanced[] = "ENHANCED\n";
-    static char l_textures[] = "TEXTURES\n";     /* #47 */
-    static char v_textures[16];
+    static char l_presentation[] = "PRESENTATION\n";   /* #68 */
+    static char v_presentation[16];
     static char v_minus[] = "-\n";
     static char v_plus[]  = "+\n";
     static char v_res[16];
@@ -1543,23 +1633,45 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
             DL = set_two_value_row(DL, i, l_vsync, v_off, v_on, vs ? 1 : 0);
             break;
         }
+        case SR_SHOWFPS:
+            /* #87: OFF / ON, the value in force. */
+            DL = set_two_value_row(DL, i, l_showfps, v_off, v_on, sl_show_fps() ? 1 : 0);
+            break;
+        case SR_FPS:
+        {
+            /* #87: `-` <rate> `+` - the value in force (the store's, or
+             * SL_RENDER_FPS until the row is changed), RESOLUTION's cells. */
+            const char *n = sl_render_fps_name(sl_render_fps());
+            s32 k = 0;
+            while (n[k] != '\0' && k < 13) { v_fps[k] = n[k]; k++; }
+            v_fps[k++] = '\n'; v_fps[k] = '\0';
+            on = s_set_row == i && !tab_prev_highlight;
+            DL = set_text(DL, SET_X_LABEL, y, l_fps, 0xFF, on && s_set_col < 0);
+            DL = set_text(DL, SET_X_VAL0, y, (s8 *) v_minus, 0xFF, on && s_set_col == 0);
+            DL = set_text(DL, SET_X_VAL3_1, y, (s8 *) v_fps, SHADE_ON, on && s_set_col == 1);
+            DL = set_text(DL, SET_X_VAL3_3, y, (s8 *) v_plus, 0xFF, on && s_set_col == 2);
+            break;
+        }
         case SR_WDETAIL:
             /* #43: ORIGINAL / ENHANCED, the store's profile. */
             DL = set_two_value_row(DL, i, l_wdetail, v_original, v_enhanced,
                                    sl_world_detail() == SL_WORLD_DETAIL_ENHANCED ? 1 : 0);
             break;
-        case SR_TEXTURES:
+        case SR_PRESENTATION:
         {
-            /* #47: the set's name as the one value cell, lit as the value,
-             * boxed with the label (the WINDOW MODE row's shape): ORIGINAL /
-             * COMMUNITY HD / XBLA, the store's set. */
-            const char *n = sl_textures_name(sl_textures());
+            /* #68: the presentation's name as the one value cell, lit as the
+             * value, boxed with the label (the WINDOW MODE row's shape):
+             * ORIGINAL / COMMUNITY HD / XBLA. It is the SAME value the watch's
+             * GRAPHICS child shows and the same one F5 steps - read here, never
+             * cached, so opening this tab after a press shows where F5 left
+             * it. */
+            const char *n = sl_presentation_name(sl_presentation());
             s32 k = 0;
-            while (n[k] != '\0' && k < 13) { v_textures[k] = n[k]; k++; }
-            v_textures[k++] = '\n'; v_textures[k] = '\0';
+            while (n[k] != '\0' && k < 13) { v_presentation[k] = n[k]; k++; }
+            v_presentation[k++] = '\n'; v_presentation[k] = '\0';
             on = s_set_row == i && !tab_prev_highlight;
-            DL = set_text(DL, SET_X_LABEL, y, l_textures, 0xFF, on);
-            DL = set_text(DL, SET_X_VAL0, y, (s8 *) v_textures, SHADE_ON, on);
+            DL = set_text(DL, SET_X_LABEL, y, l_presentation, 0xFF, on);
+            DL = set_text(DL, SET_X_VAL0, y, (s8 *) v_presentation, SHADE_ON, on);
             break;
         }
         case SR_PAD:

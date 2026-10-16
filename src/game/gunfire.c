@@ -1510,7 +1510,7 @@ void gunAdvanceBeamTimer(BeamRecord* beam)
  *   05006138 05004038 05004958 05004a80 05004c48 05004dc0 05004fe8 05004808
  *   05004660 05004528 05004390 05004158 05005188 05005398 05005ab0 05005c78
  *   05005e00 05005b68 05005fc0
- * which is byte-for-byte the set at ord=29..47 of the owner's mark-007, in
+ * which is byte-for-byte the set at ord=29..47 of playtest mark-007, in
  * the same order. That is what identifies the viewmodel inside an F8 record. */
 static void sl_gun_probe(const Gfx *from, const Gfx *to, s32 hands_drawn)
 {
@@ -1643,7 +1643,22 @@ void gunRenderFirstPersonGunModels(Gfx **gdlptr)
             }
         }
  
+#ifndef __sgi
+        /* #70: a presentation's replacement for this weapon and the hand that
+         * holds it, drawn in place of the view model's own lists
+         * (src/sl_chr_asset.h). Render-only; the walk below is unchanged. */
+        {
+            extern void sl_vm_asset_begin(int hand, void *model, ModelRenderData *mr);
+            sl_vm_asset_begin(handnum, &handptr->field_B68, &renderdata);
+        }
+#endif
         subdraw(&renderdata, (Model *)&handptr->field_B68);
+#ifndef __sgi
+        {
+            extern void sl_vm_asset_end(void);
+            sl_vm_asset_end();
+        }
+#endif
         gdl = renderdata.gdl;
  
         if (bondwalkItemCheckBitflags(item, WEAPONSTATBITFLAG_MIRROR_DUAL) != 0) 
@@ -1835,7 +1850,21 @@ Gfx *set_enviro_fog_for_items_in_solo_watch_menu(Gfx *gdl, ITEM_IDS itemid, Mtxf
     }
 
     renderdata.zbufferenabled = FALSE;
+#ifndef __sgi
+    /* #70: the presentation's item for this weapon, as in the hand
+     * (src/sl_chr_asset.h, THE WEAPON ON THE WATCH). Render-only. */
+    {
+        extern void sl_vm_menu_begin(int item, void *model, ModelRenderData *mr);
+        sl_vm_menu_begin((int) itemid, &model, &renderdata);
+    }
+#endif
     subdraw(&renderdata, (Model *) &model);
+#ifndef __sgi
+    {
+        extern void sl_vm_asset_end(void);
+        sl_vm_asset_end();
+    }
+#endif
     gdl = renderdata.gdl;
     matrix_4x4_7F058C64();
     j = 0;

@@ -77,7 +77,7 @@
  *     showcase should look like. So the window is HIDDEN - not closed, not
  *     detached, not replaced by -mwindows. The console stays attached, the
  *     standard handles stay valid, isatty stays true, and every branch above
- *     resolves the way it does for the owner. That is the only console change
+ *     resolves the way it does in a manual launch. That is the only console change
  *     that costs nothing.
  *
  *     And it is done ONLY when this process is the console's sole client
@@ -87,7 +87,7 @@
  *
  *     DO NOT link this -mwindows. That gives the core no console at all,
  *     isatty(2) becomes false, and the run capture silently changes
- *     behaviour - a different program from the one the owner accepted.
+ *     behaviour - a different program from the one accepted in playtest.
  */
 
 /* GetConsoleProcessList and BCrypt both need a modern target; mingw's default

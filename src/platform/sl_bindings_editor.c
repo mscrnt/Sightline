@@ -27,7 +27,7 @@ static const unsigned char g_order[] = {
     SL_ACT_INTERACT, SL_ACT_RELOAD, SL_ACT_CROUCH, SL_ACT_SPRINT,
     SL_ACT_WEAPON_PREVIOUS, SL_ACT_WEAPON_NEXT,
     SL_ACT_ZOOM_IN, SL_ACT_ZOOM_OUT,
-    SL_ACT_TEXTURE_CYCLE            /* #47: last, below the gameplay rows */
+    SL_ACT_PRESENTATION_CYCLE            /* #47: last, below the gameplay rows */
 };
 #define N_ORDER ((int) (sizeof g_order / sizeof g_order[0]))
 

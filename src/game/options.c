@@ -36,7 +36,7 @@
  *            is_holding_greater_than_2E_down_on_stick() = 0
  * i.e. pushing DOWN read as UP, because (176 < 0x2e) is false. The same fault
  * makes is_holding_..._left_on_stick() (`x < -0x2d`) unreachable for any stick
- * value at all. That is the owner's "vertical menu navigation does nothing,
+ * value at all. That is the reported "vertical menu navigation does nothing,
  * horizontal works": both vertical directions became UP and both horizontal
  * directions became RIGHT, so only one axis appeared to respond.
  *
@@ -94,7 +94,7 @@ extern void        sl_fov_step(int delta);
  * calls the front end's CONTROL tab makes (src/platform/sl_input.c). */
 extern int         sl_mouse_sens_get(int scoped);
 extern void        sl_mouse_sens_step(int scoped, int dir);
-/* The SLIDER rows (#50 owner request, 2026-09-19): the three value rows'
+/* The SLIDER rows (#50 requirement, 2026-09-19): the three value rows'
  * fill fractions and their set-from-a-fraction, the platform layer's own
  * (sl_input.c / sl_display.c: the same grid and clamps as the steps), and
  * the face z under a framebuffer y through the page's projection
@@ -141,6 +141,15 @@ extern void        sl_window_size_text(int w, int h, char *buf, int n);
 extern int         sl_window_state(int *mode, int *w, int *h, int *vsync);
 extern void        sl_window_request_vsync(int on);
 extern int         sl_window_request_pending(void);
+/* #87: the DISPLAY child's FRAME RATE, the same three calls the front end's
+ * DISPLAY tab makes (src/platform/sl_window.c): the value in force (the
+ * store, or SL_RENDER_FPS until the row is changed), its name, the step. */
+extern int         sl_render_fps(void);
+extern const char *sl_render_fps_name(int v);
+extern void        sl_render_fps_step(int dir);
+/* #87: the DISPLAY child's SHOW FPS, the front end's DISPLAY tab's two calls. */
+extern int         sl_show_fps(void);
+extern void        sl_show_fps_set(int on);
 /* #43 (2026-09-21): the GRAPHICS child's WORLD DETAIL, through the same
  * accessor pair the front end's DISPLAY tab uses (sl_settings_apply.c: the
  * profile id, its name from the store, the step to the other profile). The
@@ -148,12 +157,14 @@ extern int         sl_window_request_pending(void);
 extern int         sl_world_detail(void);
 extern const char *sl_world_detail_name(int detail);
 extern void        sl_world_detail_step(int dir);
-/* #47 (2026-09-21): the GRAPHICS child's TEXTURES, the same shape: the set
- * id, its name from the store, the step through the three sets. The
- * renderer's provider reads the store itself; no copy here. */
-extern int         sl_textures(void);
-extern const char *sl_textures_name(int set);
-extern void        sl_textures_step(int dir);
+/* #47's TEXTURES row, retargeted by #68 (2026-09-23): the GRAPHICS child's
+ * PRESENTATION, the same shape - the id, its name, the step through the three.
+ * The value is the presentation policy's (src/platform/sl_presentation.c) and
+ * the two renderer providers ask that policy themselves; no copy here, which
+ * is what keeps this row, the front end's row and F5 showing one state. */
+extern int         sl_presentation(void);
+extern const char *sl_presentation_name(int presentation);
+extern void        sl_presentation_step(int dir);
 #endif
 
 #define WATCH_BACKGROUND_VERTEX_COUNT 30
@@ -1111,13 +1122,17 @@ static const struct sl_watch_view sl_watch_views[SL_WVIEW_COUNT] = {
                        { "back\n",           SL_WROW_BACK, 0 } }, 4 },
     /* #52 (2026-09-20): the three output rows before the two content rows,
      * as the front end's DISPLAY tab - six rows with one bar, well inside
-     * the face (CONTROLS holds nine with two). */
+     * the face (CONTROLS holds nine with two). #87: FRAME RATE after VSYNC,
+     * the two pacing controls together, then SHOW FPS, which reads what they
+     * produce - eight rows with one bar. */
     { "display\n",   { { "window mode\n",    SL_WROW_VALUE_WMODE, 0 },     /* #52: windowed / borderless / fullscreen */
                        { "resolution\n",     SL_WROW_VALUE_RES, 0 },       /* #52: the list; informational in borderless */
                        { "vsync\n",          SL_WROW_TOGGLE_VSYNC, 0 },    /* #52: off / on */
+                       { "frame rate\n",     SL_WROW_VALUE_FPS, 0 },       /* #87: original .. unlimited */
+                       { "show fps\n",       SL_WROW_TOGGLE_SHOWFPS, 0 },  /* #87: off / on */
                        { "aspect ratio\n",   SL_WROW_VALUE_ASPECT, 0 },
                        { "field of view\n",  SL_WROW_VALUE_FOV, 0 },
-                       { "back\n",           SL_WROW_BACK, 0 } }, 6 },
+                       { "back\n",           SL_WROW_BACK, 0 } }, 8 },
     { "controls\n",  { { "button layout\n",  SL_WROW_VALUE_BLAYOUT, 0 },   /* #63: the pad's preset */
                        { "stick layout\n",   SL_WROW_VALUE_SLAYOUT, 0 },   /* #63: which thumb looks */
                        { "stick tuning\n",   SL_WROW_SUBMENU, SL_WVIEW_STICK }, /* #51: the second-level child */
@@ -1138,9 +1153,9 @@ static const struct sl_watch_view sl_watch_views[SL_WVIEW_COUNT] = {
                           { "back\n",             SL_WROW_BACK, 0 } }, 4 },
     /* #43 (2026-09-21): the render-visibility profile, the front end's
      * DISPLAY tab's WORLD DETAIL row - here under GRAPHICS, the child the
-     * owner's structure reserved for it. */
+     * specified menu structure reserved for it. */
     { "graphics\n",  { { "world detail\n",   SL_WROW_VALUE_WDETAIL, 0 },   /* #43: original / enhanced */
-                       { "textures\n",       SL_WROW_VALUE_TEXTURES, 0 },  /* #47: original / community hd / xbla */
+                       { "presentation\n",   SL_WROW_VALUE_PRESENTATION, 0 },  /* #68: original / community hd / xbla */
                        { "back\n",           SL_WROW_BACK, 0 } }, 3 },
 };
 
@@ -4246,6 +4261,8 @@ static u32 sl_sightline_toggle_get(s32 kind)
         sl_window_state(NULL, NULL, NULL, &vs);
         return vs ? 1 : 0;
     }
+    if (kind == SL_WROW_TOGGLE_SHOWFPS)        /* #87: the value in force */
+        return sl_show_fps() ? 1 : 0;
     return sl_mouse_invert_y_get() ? 1 : 0;
 }
 
@@ -4257,6 +4274,8 @@ static void sl_sightline_toggle_set(s32 kind, u32 on)
         sl_action_mode_set(kind == SL_WROW_TOGGLE_SMODE ? 1 : 0, on != 0);
     else if (kind == SL_WROW_TOGGLE_VSYNC)
         sl_window_request_vsync(on != 0);      /* #52: a request; the backend commits what it read back */
+    else if (kind == SL_WROW_TOGGLE_SHOWFPS)
+        sl_show_fps_set(on != 0);              /* #87: shown from the next present */
     else
         sl_mouse_invert_y_set(on != 0);
     /* The one diagnostic for the toggle rows (#56): what a cell set, beside
@@ -4265,9 +4284,9 @@ static void sl_sightline_toggle_set(s32 kind, u32 on)
     {
         int vs = 0;
         sl_window_state(NULL, NULL, NULL, &vs);
-        fprintf(stderr, "sightline watch: toggle kind=%d <- %u -> minv=%d sprint=%d smode=%d cmode=%d vsync=%d req=%d\n",
+        fprintf(stderr, "sightline watch: toggle kind=%d <- %u -> minv=%d sprint=%d smode=%d cmode=%d vsync=%d req=%d showfps=%d\n",
                 (int) kind, on, sl_mouse_invert_y_get(), sl_sprint_enabled(),
-                sl_action_mode(1), sl_action_mode(0), vs, sl_window_request_pending());
+                sl_action_mode(1), sl_action_mode(0), vs, sl_window_request_pending(), sl_show_fps());
     }
 }
 
@@ -4333,15 +4352,26 @@ static void sl_sightline_value_step(s32 kind, s32 dir)
             fprintf(stderr, "sightline watch: world detail step dir=%d -> %d(%s)\n",
                     (int) dir, sl_world_detail(), sl_world_detail_name(sl_world_detail()));
     }
-    else if (kind == SL_WROW_VALUE_TEXTURES)
+    else if (kind == SL_WROW_VALUE_PRESENTATION)
     {
-        /* #47: the next set, wrapping; the renderer's provider reads the
-         * store at each texture's next resolve, so the world behind the
-         * watch changes when it closes. */
-        sl_textures_step(dir > 0 ? 1 : -1);
+        /* #68: the next presentation, wrapping. Both renderer providers ask
+         * the policy at their own next seam - the texture provider at each
+         * texture's next resolve, the world-asset provider at the next
+         * frame - so the whole picture behind the watch changes together
+         * when it closes. */
+        sl_presentation_step(dir > 0 ? 1 : -1);
         if (getenv("SL_INPUT_DEBUG") != NULL)
-            fprintf(stderr, "sightline watch: textures step dir=%d -> %d(%s)\n",
-                    (int) dir, sl_textures(), sl_textures_name(sl_textures()));
+            fprintf(stderr, "sightline watch: presentation step dir=%d -> %d(%s)\n",
+                    (int) dir, sl_presentation(), sl_presentation_name(sl_presentation()));
+    }
+    else if (kind == SL_WROW_VALUE_FPS)
+    {
+        /* #87: the next frame rate, wrapping; the frame pump reads it on
+         * the next frame (the watch's own frames included). */
+        sl_render_fps_step(dir > 0 ? 1 : -1);
+        if (getenv("SL_INPUT_DEBUG") != NULL)
+            fprintf(stderr, "sightline watch: frame rate step dir=%d -> %d(%s)\n",
+                    (int) dir, sl_render_fps(), sl_render_fps_name(sl_render_fps()));
     }
     else if (SL_WROW_IS_NAMED(kind))
     {
@@ -4389,6 +4419,7 @@ void sl_sightline_click(s32 row, s32 value)
     case SL_WROW_TOGGLE_SMODE:
     case SL_WROW_TOGGLE_CMODE:
     case SL_WROW_TOGGLE_VSYNC:
+    case SL_WROW_TOGGLE_SHOWFPS:
         if (value < 0) { watch_play_beep_sound(); break; }
         if (value <= 1 && (s32) sl_sightline_toggle_get(kind) != value)
         {
@@ -4409,7 +4440,8 @@ void sl_sightline_click(s32 row, s32 value)
     case SL_WROW_VALUE_WMODE:
     case SL_WROW_VALUE_RES:
     case SL_WROW_VALUE_WDETAIL:
-    case SL_WROW_VALUE_TEXTURES:
+    case SL_WROW_VALUE_PRESENTATION:
+    case SL_WROW_VALUE_FPS:
         if (value < 0) { watch_play_beep_sound(); break; }
         sl_sightline_value_step(kind, value == 0 ? -1 : +1);
         break;
@@ -4534,7 +4566,7 @@ static Gfx *sl_draw_sightline_toggle(Gfx *gdl, s32 row, s32 y, char *label)
 }
 
 /* A value row (#45): label, then `-` value `+`. ASPECT RATIO (four discrete
- * shapes) - the range rows are sliders since the #50 owner request. */
+ * shapes) - the range rows are sliders since the #50 requirement. */
 static Gfx *sl_draw_sightline_value(Gfx *gdl, s32 row, s32 y, char *label)
 {
     static char minus[] = "-\n";
@@ -4573,8 +4605,10 @@ const char *sl_sightline_row_value_name(s32 row)
         return sl_window_mode_name(sl_window_mode_shown());
     if (kind == SL_WROW_VALUE_WDETAIL)         /* #43: ORIGINAL / ENHANCED */
         return sl_world_detail_name(sl_world_detail());
-    if (kind == SL_WROW_VALUE_TEXTURES)        /* #47: ORIGINAL / COMMUNITY HD / XBLA */
-        return sl_textures_name(sl_textures());
+    if (kind == SL_WROW_VALUE_PRESENTATION)    /* #68: ORIGINAL / COMMUNITY HD / XBLA */
+        return sl_presentation_name(sl_presentation());
+    if (kind == SL_WROW_VALUE_FPS)             /* #87: ORIGINAL / 30 .. 240 / UNLIMITED */
+        return sl_render_fps_name(sl_render_fps());
     if (kind == SL_WROW_VALUE_RES || kind == SL_WROW_INFO_RES)
     {
         int w = 0, h = 0;
@@ -4620,7 +4654,7 @@ static Gfx *sl_draw_sightline_info(Gfx *gdl, s32 y, char *label, const char *n)
     return gdl;
 }
 
-/* A slider row's TEXT (#50 owner request): the label under the bar, the
+/* A slider row's TEXT (#50 requirement): the label under the bar, the
  * value right-aligned to the bar's right edge on the same line (FIELD OF
  * VIEW its degrees, the sensitivities their percent) - the MUSIC / FX rows'
  * label, plus the number (the bar alone would not say 40% from 50%). No
@@ -4746,6 +4780,7 @@ Gfx *sl_draw_watch_sightline_page(Gfx *gdl, Mtx *param_2)
             case SL_WROW_TOGGLE_SMODE:
             case SL_WROW_TOGGLE_CMODE:
             case SL_WROW_TOGGLE_VSYNC:
+            case SL_WROW_TOGGLE_SHOWFPS:
                 gdl = sl_draw_sightline_toggle(gdl, i, y, label);
                 break;
             case SL_WROW_VALUE_FOV:
@@ -4764,7 +4799,8 @@ Gfx *sl_draw_watch_sightline_page(Gfx *gdl, Mtx *param_2)
             case SL_WROW_VALUE_WMODE:
             case SL_WROW_VALUE_RES:
             case SL_WROW_VALUE_WDETAIL:
-            case SL_WROW_VALUE_TEXTURES:
+            case SL_WROW_VALUE_PRESENTATION:
+            case SL_WROW_VALUE_FPS:
                 gdl = sl_draw_sightline_named(gdl, i, y, label);
                 break;
             case SL_WROW_INFO_PAD:

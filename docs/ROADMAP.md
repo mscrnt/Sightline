@@ -100,7 +100,7 @@ matching build. Traces are committed as build artifacts and versioned.
 
 ### Why this is non-negotiable
 
-Agent-parallelized work multiplies the surface area of subtle behavioral
+Parallelized work multiplies the surface area of subtle behavioral
 regressions. Speed of authoring is not the bottleneck; speed of *diagnosis* is.
 The harness is the only thing that turns "something feels wrong in Silo" into
 "tick 4,412, guard 7's pathfinding state diverged."

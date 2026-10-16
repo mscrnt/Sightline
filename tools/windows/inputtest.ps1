@@ -21,7 +21,7 @@
     (7936cbd0, B-071) and the removal of the mouse-becomes-the-stick aim
     routing (911603cc). 14 of 80 checks fail for those two reasons, all of them
     in the gameplay mouse-look sections. Making them match the binary's current
-    output would be a re-baseline of an owner-validated hand measurement, which
+    output would be a re-baseline of a playtest-validated hand measurement, which
     project rule 1 says is its own commit touching nothing else.
     Recorded as B-096 in docs/backlog.md. 2026-09-17 (#38): the harness links
     again (two link stubs it had rotted past) and gained the native action
@@ -29,7 +29,7 @@
     in kind (22 of 117 now: the 14 above plus the 8 watch-stick checks that
     predate SL_WATCH_STICK = 70, 76e9404e). 2026-09-18 (#42): the SPRINT
     section, 8 checks, all passing; 22 of 125 pre-existing. 2026-09-18 (#46
-    owner replay): the INVERT MOUSE Y precedence cases - SL_MOUSE_INVERT
+    playtest): the INVERT MOUSE Y precedence cases - SL_MOUSE_INVERT
     against an ACTIVE store (the config governs, the env is ignored, the
     setter writes, the consumer's sign follows the state) and an INACTIVE
     one (the env seeds) - run as two extra PROCESSES before the main run,

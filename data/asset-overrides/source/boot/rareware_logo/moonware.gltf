@@ -288,42 +288,42 @@
    "uri": "textures/field_authored.png",
    "extras": {
     "sl_authored": true,
-    "sl_authored_provenance": "64x64 recessed-panel environment map authored by the project owner from colour stops with the owner's own tooling. Not resampled from, traced from, or derived from any ROM texture."
+    "sl_authored_provenance": "64x64 recessed-panel environment map authored for Sightline from colour stops with first-party tooling. Not resampled from, traced from, or derived from any ROM texture."
    }
   },
   {
    "uri": "textures/env_gold_custom.png",
    "extras": {
     "sl_authored": true,
-    "sl_authored_provenance": "64x64 gold environment matcap authored by the project owner with the owner's own tooling: a lit sphere rendered from a procedural studio environment - neutral sky, warm floor, hard horizon and three area lights - with the view vector reflected off a per-texel sphere normal, and a gold Fresnel response held tinted at grazing angles rather than rising to white. Not resampled from, traced from, or derived from any ROM texture."
+    "sl_authored_provenance": "64x64 gold environment matcap authored for Sightline with first-party tooling: a lit sphere rendered from a procedural studio environment - neutral sky, warm floor, hard horizon and three area lights - with the view vector reflected off a per-texel sphere normal, and a gold Fresnel response held tinted at grazing angles rather than rising to white. Not resampled from, traced from, or derived from any ROM texture."
    }
   },
   {
    "uri": "textures/moonware_text_0.png",
    "extras": {
     "sl_authored": true,
-    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored by the project owner and rendered to an RGBA bitmap with the owner's own tooling. Not resampled from, traced from, or derived from any ROM texture."
+    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored for Sightline and rendered to an RGBA bitmap with first-party tooling. Not resampled from, traced from, or derived from any ROM texture."
    }
   },
   {
    "uri": "textures/moonware_text_1.png",
    "extras": {
     "sl_authored": true,
-    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored by the project owner and rendered to an RGBA bitmap with the owner's own tooling. Not resampled from, traced from, or derived from any ROM texture."
+    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored for Sightline and rendered to an RGBA bitmap with first-party tooling. Not resampled from, traced from, or derived from any ROM texture."
    }
   },
   {
    "uri": "textures/moonware_text_2.png",
    "extras": {
     "sl_authored": true,
-    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored by the project owner and rendered to an RGBA bitmap with the owner's own tooling. Not resampled from, traced from, or derived from any ROM texture."
+    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored for Sightline and rendered to an RGBA bitmap with first-party tooling. Not resampled from, traced from, or derived from any ROM texture."
    }
   },
   {
    "uri": "textures/moonware_text_3.png",
    "extras": {
     "sl_authored": true,
-    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored by the project owner and rendered to an RGBA bitmap with the owner's own tooling. Not resampled from, traced from, or derived from any ROM texture."
+    "sl_authored_provenance": "256x256 wordmark tile, one of four equal tiles across the strip. Letterforms authored for Sightline and rendered to an RGBA bitmap with first-party tooling. Not resampled from, traced from, or derived from any ROM texture."
    }
   }
  ],

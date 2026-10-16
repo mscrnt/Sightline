@@ -4605,7 +4605,7 @@ GlobalVisCommand *parse_global_vis_command_list(GlobalVisCommand *cmd, s32 execu
                     }
 #else
                     /* B-112. NATIVE CONSERVATIVE PORTAL POLICY - shipped as a
-                     * presentation improvement over the cartridge, owner-ruled
+                     * presentation improvement over the cartridge, ruled in
                      * on 2026-09-10; OFF by default since B-143 (2026-09-17),
                      * when the RDP scissor it had been compensating for was
                      * applied and its own cost was paired against the
@@ -4616,7 +4616,7 @@ GlobalVisCommand *parse_global_vis_command_list(GlobalVisCommand *cmd, s32 execu
                      * HEURISTIC: it is only correct while everything in the
                      * rooms beyond is seen strictly THROUGH the opening. Tall
                      * background geometry seen OVER the structure that carries
-                     * the portal breaks it - measured at the owner's Dam marks
+                     * the portal breaks it - measured at the playtest Dam marks
                      * (run 20260910-215653): a nearly edge-on aperture projects
                      * to a sliver, the far rooms fail the restricted
                      * room-on-screen test, and a mountain that is plainly on

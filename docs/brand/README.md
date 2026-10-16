@@ -55,9 +55,9 @@ resource table for the icon).
 ## Licensing
 
 Every file under `docs/brand/` — the logo, the wordmark, the crosshair
-mark, the icon, the banner and the tile — is the project owner's own
-artwork and is included in the repository on that basis (owner statement,
-2026-09-19). These files identify the Sightline project. They are not
+mark, the icon, the banner and the tile — is first-party Sightline
+artwork and is included in the repository on that basis (recorded licensing
+statement, 2026-09-19). These files identify the Sightline project. They are not
 covered by the Sightline code (0BSD) or artwork (CC0) grants — see
 [LICENSES/README.md](../../LICENSES/README.md) — and are not offered for
 reuse in other projects. The wordmark's glyph outlines derive from a

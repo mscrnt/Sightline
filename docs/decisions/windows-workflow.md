@@ -1,6 +1,6 @@
 # Windows: a PowerShell developer workflow, not a Bash-shaped one
 
-**Decided:** 2026-09-02, following the owner's platform pivot to Windows-only
+**Decided:** 2026-09-02, following the project's platform pivot to Windows-only
 development.
 **Status:** in force. `tools/windows/build.sh` is retired.
 

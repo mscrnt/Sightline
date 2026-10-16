@@ -18,6 +18,7 @@
 #include <GL/gl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static SDL_Window *win;
 static SDL_GLContext ctx;
@@ -36,12 +37,12 @@ static SDL_GLContext ctx;
  *
  * B-124 read that as "the RDP's coarse z quantizes the two skins to the same
  * value" and built this 16-bit offscreen depth attachment to make the tie
- * real. MEASURED WRONG at owner mark 20260912-230216-001: the two skins'
+ * real. MEASURED WRONG at playtest mark 20260912-230216-001: the two skins'
  * depths differ by +1.8, +3.0 and +1.8 sixteen-bit buckets at three of the
  * four quad centres around the crosshair (the quads are not planar and the
  * passes triangulate them on opposite diagonals), so no storage precision
  * makes them ties. 16 bits turned the 24-bit gores into a lattice of dark
- * dashes along the bucket contours - the residual hash the owner rejected -
+ * dashes along the bucket contours - the residual hash rejected in playtest -
  * and an offline rasterization of the mark's own vertex data reproduces
  * that lattice at 84% pixel agreement (24-bit: 45%). What resolves the
  * skins on hardware is the RDP compare's slope-proportional TOLERANCE, not
@@ -193,7 +194,7 @@ static int sdl_init(int w, int h, const char *title)
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     /* B-124 (correcting B-123). SDL_GL_DEPTH_SIZE is a MINIMUM: B-123's
      * request for 16 bits was measured INERT - the driver handed back a
-     * 24-bit window buffer regardless (the stored centre depth at owner mark
+     * 24-bit window buffer regardless (the stored centre depth at playtest mark
      * 20260912-222555-001 reads back as an exact multiple of 1/2^24-1, not
      * of 1/2^16-1). B-125 renders the scene here again, at that native
      * depth, and needs a stencil plane beside it: the authored-redraw path
@@ -330,7 +331,7 @@ void *sl_gl_proc(const char *name)
 
 /* #45 / #52. THE WINDOW'S STATE: MODE, SIZE, VSYNC - and the aspect's width.
  *
- * Owner contract (#45, 2026-09-18): the selected aspect is the SHAPE of the
+ * Contract (#45, 2026-09-18): the selected aspect is the SHAPE of the
  * presentation at the CURRENT VERTICAL SIZE - widescreen means a WIDER
  * window at the same height, never a strip inside the old one. So in
  * windowed mode the window's client height is kept and its width becomes
@@ -367,7 +368,7 @@ void *sl_gl_proc(const char *name)
  *   FULLSCREEN  a real display mode: the chosen pair when the display
  *               offers it, else the desktop's, at the DESKTOP'S refresh rate
  *               (SDL_GetClosestDisplayMode with refresh 0 takes the
- *               display's highest - measured 240 Hz on the owner's panel -
+ *               display's highest - measured 240 Hz on the reference panel -
  *               which is not what a 60 Hz sim wants driving its swap) -
  *               SDL_SetWindowDisplayMode, then
  *               SDL_SetWindowFullscreen(SDL_WINDOW_FULLSCREEN).
@@ -837,10 +838,16 @@ static void sdl_shot(void)
         {
             extern unsigned sl_frames_completed(void);
             extern unsigned sl_record_index(void);
+            /* D-023: the game's cloud phase at this moment, so a capture of
+             * a moving sky says which phase it shows (sl_world_assets.c). */
+            extern int sl_wa_sky_cloud(float *, float *, float *, unsigned *, unsigned *);
+            float ph = 0.0f, hh, ee[3];
+            unsigned iw, ih;
+            int cl = sl_wa_sky_cloud(&ph, &hh, ee, &iw, &ih);
             fprintf(stderr, "sl_shot: %s (%dx%d) at read=%u frame=%u"
-                            " (window=%s)\n",
+                            " (window=%s) cloud phase %s%.3f\n",
                     path, w, h, sl_record_index(), sl_frames_completed(),
-                    by_read ? "read" : "frame");
+                    by_read ? "read" : "frame", cl ? "" : "(no layer) ", (double) ph);
         }
     } else {
         fprintf(stderr, "sl_shot: cannot open %s\n", path);
@@ -849,7 +856,7 @@ static void sdl_shot(void)
 }
 
 
-/* ---- LIVE OWNER BUG MARK: the framebuffer of the marked frame ------------
+/* ---- LIVE BUG MARK: the framebuffer of the marked frame ------------------
  *
  * The back buffer, straight out of GL, into a 24-bit BMP at a caller-supplied
  * path. Same read-back sdl_shot uses and for the same reason recorded there:
@@ -858,7 +865,7 @@ static void sdl_shot(void)
  * PNGs across frames whose content demonstrably changed). Whatever
  * glReadPixels returns is what GL actually rasterised.
  *
- * BMP, not PPM: the owner has to be able to double-click it. The format is
+ * BMP, not PPM: a mark capture has to open with a double-click. The format is
  * bottom-up by definition, which is GL's own row order, so unlike the PPM path
  * there is no flip - only the BGR channel order, which BMP also shares with
  * nothing else here. GL_BGR is not in every <GL/gl.h> this builds against, so
@@ -941,7 +948,7 @@ static int sl_mark_shot_bmp(const char *path)
     return ok;
 }
 
-/* ---- LIVE OWNER BUG MARK: what is actually AT the centre pixel -----------
+/* ---- LIVE BUG MARK: what is actually AT the centre pixel -----------------
  *
  * The provenance list says which draws could have painted the centre. This
  * says what the centre pixel IS - and those are different diagnoses that a
@@ -1084,8 +1091,169 @@ static int sl_mark_centre_probe(char *out, int n)
     return at;
 }
 
+/* sl_gfx_hold_present: the next sdl_end skips the colour blit and the swap. */
+static int s_hold_present;
+void sl_gfx_sdl_hold_present(void);
+void sl_gfx_sdl_hold_present(void)
+{
+    s_hold_present = 1;
+}
+
+/* ---- SHOW FPS (#87): the presented-frame counter -------------------------
+ *
+ * WHAT IS COUNTED. Swaps: sdl_swap below is the only SDL_GL_SwapWindow in
+ * the backend, and both presents go through it - the regular one (sdl_end)
+ * and every extra presentation frame (sl_gfx_sdl_pres_end). A regular frame
+ * held by a cap below the VI rate never reaches it, and neither does
+ * anything that is not shown. So the number is what reached the screen,
+ * whatever the FRAME RATE row, the VSYNC row or the display allow - not the
+ * simulation's frames and not the cap. The time is the swap's return on
+ * the performance counter (SDL_GetPerformanceCounter: QueryPerformanceCounter
+ * on Windows), and the value is swaps per second over a 0.5 s window
+ * (sl_window.c, sl_fps_meter_note), so it changes about twice a second.
+ *
+ * WHERE IT IS DRAWN. In the window's back buffer just before the swap -
+ * after the bug mark's and SL_SHOT's read-backs in sdl_end and after the
+ * SL_PRES_LOG hash of an extra frame, and after the B-124 arm's blit to the
+ * window - so no capture, hash or trace carries it, and the kept regular
+ * frame (copied before the first extra frame) never contains it. Small, in
+ * the upper-right corner of the content rect (the selected aspect fitted in
+ * the window, sl_gfx_content_rect), scaled by its height (sl_fps_place):
+ * clear of the HUD's ammo (lower right), health (left) and the crosshair
+ * (centre) at every aspect, and in the side band at a wide one.
+ *
+ * HOW. Scissored clears of the colour buffer - an opaque dark box, then one
+ * clear per run of lit pixels of a 5x7 font - with the scissor, the colour
+ * mask and the clear colour pushed and popped around them: no draw call, no
+ * program, texture, matrix or blend state, and no glGet (a query can wait
+ * on the driver). The display-list interpreter's state caches stay true. No
+ * game state, nothing the pump paces by. Off (the default) = one store read
+ * per swap and nothing else.
+ *
+ * SL_FPS_LOG=1 (diagnostic) prints each new value with the window it came
+ * from and the draw's CPU time over that window (mean and max per swap). */
+/* 5x7 glyphs, one byte per row top to bottom, bit 4 the left column. */
+static const unsigned char s_fps_font[][7] = {
+    { 0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E },   /* 0 */
+    { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E },   /* 1 */
+    { 0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F },   /* 2 */
+    { 0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E },   /* 3 */
+    { 0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02 },   /* 4 */
+    { 0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E },   /* 5 */
+    { 0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E },   /* 6 */
+    { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 },   /* 7 */
+    { 0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E },   /* 8 */
+    { 0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C },   /* 9 */
+    { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10 },   /* F (10) */
+    { 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 },   /* P (11) */
+    { 0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E },   /* S (12) */
+    { 0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00 },   /* - (13) */
+};
+
+static struct sl_fps_meter s_fps;
+static int  s_fps_on;                    /* the row was on at the last swap */
+static char s_fps_text[12] = "-- FPS";   /* rebuilt when the value changes */
+
+static void sdl_fps_text(int v)
+{
+    char d[8];
+    int n = 0, i = 0;
+    if (v < 0) { memcpy(s_fps_text, "-- FPS", 7); return; }
+    if (v > 9999) v = 9999;
+    do { d[n++] = (char) ('0' + v % 10); v /= 10; } while (v > 0);
+    while (n > 0) s_fps_text[i++] = d[--n];
+    memcpy(s_fps_text + i, " FPS", 5);
+}
+
+static int sdl_fps_glyph(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    return c == 'F' ? 10 : c == 'P' ? 11 : c == 'S' ? 12 : c == '-' ? 13 : -1;
+}
+
+static void sdl_fps_draw(void)
+{
+    int w = 0, h = 0, cx = 0, cy = 0, cw = 0, ch = 0, bx, by, sc, cols, i, r, c;
+
+    SDL_GetWindowSize(win, &w, &h);
+    if (w <= 0 || h <= 0) return;
+    if (!sl_gfx_content_rect(h, &cx, &cy, &cw, &ch) || cw <= 0 || ch <= 0) {
+        cx = 0; cy = 0; cw = w; ch = h;
+    }
+    cols = (int) strlen(s_fps_text);
+    sl_fps_place(cx, cy, cw, ch, cols, 1, &bx, &by, &sc);
+
+    /* Scissored clears of the colour buffer: the box, then one per run of
+     * lit glyph pixels in a row. A clear reads only the scissor, the colour
+     * mask and the clear colour, so those are all that is set and put back
+     * (GL's y runs up from the bottom). */
+    glPushAttrib(GL_SCISSOR_BIT | GL_COLOR_BUFFER_BIT);
+    glEnable(GL_SCISSOR_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glScissor(bx, h - (by + 9 * sc), (cols * SL_FPS_CELL_W + 1) * sc, 9 * sc);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glClearColor(1.0f, 0.92f, 0.45f, 1.0f);
+    for (i = 0; i < cols; i++) {
+        int g = sdl_fps_glyph(s_fps_text[i]);
+        int gx = bx + (1 + i * SL_FPS_CELL_W) * sc;
+        if (g < 0) continue;
+        for (r = 0; r < 7; r++) {
+            unsigned bits = s_fps_font[g][r];
+            int y0 = by + (1 + r) * sc;
+            for (c = 0; c < 5; ) {
+                int run;
+                if (!(bits & (0x10u >> c))) { c++; continue; }
+                for (run = c; run < 5 && (bits & (0x10u >> run)); run++) { }
+                glScissor(gx + c * sc, h - (y0 + sc), (run - c) * sc, sc);
+                glClear(GL_COLOR_BUFFER_BIT);
+                c = run;
+            }
+        }
+    }
+    glPopAttrib();
+}
+
+/* Every present: the counter drawn when the row is on, the swap, and the
+ * swap's time noted. */
+static void sdl_swap(void)
+{
+    static int log = -1;
+    static double draw_s, draw_max;       /* SL_FPS_LOG: the draw's CPU time over the window */
+    int on = sl_show_fps();
+    if (log < 0) { const char *e = getenv("SL_FPS_LOG"); log = (e != NULL && *e == '1'); }
+    if (on && !s_fps_on) {                /* turned on: a fresh window, "--" until it closes */
+        sl_fps_meter_reset(&s_fps);
+        sdl_fps_text(-1);
+        draw_s = draw_max = 0.0;
+    }
+    s_fps_on = on;
+    if (on) {
+        Uint64 c0 = log ? SDL_GetPerformanceCounter() : 0;
+        sdl_fps_draw();
+        if (log) {
+            double d = (double) (SDL_GetPerformanceCounter() - c0) / (double) SDL_GetPerformanceFrequency();
+            draw_s += d;
+            if (d > draw_max) draw_max = d;
+        }
+    }
+    SDL_GL_SwapWindow(win);
+    if (on && sl_fps_meter_note(&s_fps, (double) SDL_GetPerformanceCounter()
+                                        / (double) SDL_GetPerformanceFrequency())) {
+        sdl_fps_text(s_fps.value);
+        if (log) {
+            fprintf(stderr, "sightline fps: %d presented/s (%u swaps in %.1f ms) draw mean %.4f max %.4f ms\n",
+                    s_fps.value, s_fps.count, s_fps.span * 1000.0,
+                    s_fps.count ? draw_s * 1000.0 / s_fps.count : 0.0, draw_max * 1000.0);
+            draw_s = draw_max = 0.0;
+        }
+    }
+}
+
 static void sdl_end(void)
 {
+    int hold = s_hold_present;
+    s_hold_present = 0;
     /* The MARK, before the swap and before sdl_shot, so the framebuffer it
      * reads back is the one the display-list walk just filled - the same
      * frame the provenance was collected from. A no-op unless F8 armed a
@@ -1096,6 +1264,8 @@ static void sdl_end(void)
         sl_run_mark_full(sl_mark_shot_bmp, sl_mark_centre_probe);
     }
     sdl_shot();                       /* before the swap: back buffer is live */
+    if (hold)                         /* a cap below the VI rate: not shown */
+        return;
     /* B-124: present the FBO's colour. Blit AFTER every readback above, so
      * the mark/shot instruments read the same rasterization the player sees;
      * bind back to the window so the swap presents it, and sdl_begin re-binds
@@ -1107,7 +1277,184 @@ static void sdl_end(void)
                            GL_COLOR_BUFFER_BIT, GL_NEAREST);
         sl_BindFramebuffer(SL_GL_FRAMEBUFFER, 0);
     }
-    SDL_GL_SwapWindow(win);
+    sdl_swap();
+}
+
+/* ---- High-refresh presentation: an extra frame's begin and present ------
+ *
+ * sdl_begin and sdl_end minus everything that belongs to the REGULAR frame:
+ * no display-mode apply (a mode change is taken at the next regular frame),
+ * no mark, no shot. The framebuffer, viewport and clear are sdl_begin's, so a
+ * re-walk starts from the state the original walk started from. */
+int sl_gfx_sdl_presentable(void);
+int sl_gfx_sdl_presentable(void)
+{
+    if (win == NULL) return 0;
+    return (SDL_GetWindowFlags(win) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) == 0;
+}
+
+void sl_gfx_sdl_pres_begin(void);
+void sl_gfx_sdl_pres_begin(void)
+{
+    int w, h;
+    SDL_GetWindowSize(win, &w, &h);
+    if (sl_BindFramebuffer != NULL && sl_fbo != 0)
+        sl_BindFramebuffer(SL_GL_FRAMEBUFFER, sl_fbo);
+    glViewport(0, 0, w, h);
+    glClearColor(0.05f, 0.06f, 0.09f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
+/* The frame, kept. Before the first extra frame overwrites the back buffer,
+ * the regular frame (colour, depth and stencil) is copied to an offscreen
+ * framebuffer, and the copy is blitted back for the regular present - a GPU
+ * copy in place of a second re-walk of the list. Any failure (entry points
+ * missing, an incomplete framebuffer, a GL error on the first copy, the
+ * SL_Z_QUANT arm's own FBO in use) turns it off for the run, said once, and
+ * the caller re-walks instead, which produces the same image. */
+#define SL_GL_DEPTH24_STENCIL8        0x88F0u
+#define SL_GL_DEPTH_STENCIL_ATTACHMENT 0x821Au
+static GLuint s_keep_fbo, s_keep_rb[2];
+static int    s_keep_w, s_keep_h, s_keep_state;   /* 0 untried, 1 working, -1 off */
+static sl_pfn_BindFramebuffer s_keep_bind;
+static sl_pfn_BlitFramebuffer s_keep_blit;
+
+static int sdl_keep_fail(const char *why)
+{
+    fprintf(stderr, "sightline pres: kept-frame copy unavailable (%s) - the regular frame is re-walked instead\n", why);
+    s_keep_state = -1;
+    if (s_keep_bind != NULL) s_keep_bind(SL_GL_FRAMEBUFFER, 0);
+    return 0;
+}
+
+static int sdl_keep_setup(int w, int h)
+{
+    static sl_pfn_GenFramebuffers         GenFramebuffers;
+    static sl_pfn_GenRenderbuffers        GenRenderbuffers;
+    static sl_pfn_BindRenderbuffer        BindRenderbuffer;
+    static sl_pfn_RenderbufferStorage     RenderbufferStorage;
+    static sl_pfn_FramebufferRenderbuffer FramebufferRenderbuffer;
+    static sl_pfn_CheckFramebufferStatus  CheckFramebufferStatus;
+    if (GenFramebuffers == NULL) {
+        GenFramebuffers         = (sl_pfn_GenFramebuffers)         SDL_GL_GetProcAddress("glGenFramebuffers");
+        s_keep_bind             = (sl_pfn_BindFramebuffer)         SDL_GL_GetProcAddress("glBindFramebuffer");
+        GenRenderbuffers        = (sl_pfn_GenRenderbuffers)        SDL_GL_GetProcAddress("glGenRenderbuffers");
+        BindRenderbuffer        = (sl_pfn_BindRenderbuffer)        SDL_GL_GetProcAddress("glBindRenderbuffer");
+        RenderbufferStorage     = (sl_pfn_RenderbufferStorage)     SDL_GL_GetProcAddress("glRenderbufferStorage");
+        FramebufferRenderbuffer = (sl_pfn_FramebufferRenderbuffer) SDL_GL_GetProcAddress("glFramebufferRenderbuffer");
+        CheckFramebufferStatus  = (sl_pfn_CheckFramebufferStatus)  SDL_GL_GetProcAddress("glCheckFramebufferStatus");
+        s_keep_blit             = (sl_pfn_BlitFramebuffer)         SDL_GL_GetProcAddress("glBlitFramebuffer");
+        if (!GenFramebuffers || !s_keep_bind || !GenRenderbuffers || !BindRenderbuffer
+            || !RenderbufferStorage || !FramebufferRenderbuffer || !CheckFramebufferStatus || !s_keep_blit)
+            return sdl_keep_fail("FBO entry points unresolved");
+        GenFramebuffers(1, &s_keep_fbo);
+        GenRenderbuffers(2, s_keep_rb);
+    }
+    BindRenderbuffer(SL_GL_RENDERBUFFER, s_keep_rb[0]);
+    RenderbufferStorage(SL_GL_RENDERBUFFER, SL_GL_RGBA8, w, h);
+    BindRenderbuffer(SL_GL_RENDERBUFFER, s_keep_rb[1]);
+    RenderbufferStorage(SL_GL_RENDERBUFFER, SL_GL_DEPTH24_STENCIL8, w, h);
+    BindRenderbuffer(SL_GL_RENDERBUFFER, 0);
+    s_keep_bind(SL_GL_FRAMEBUFFER, s_keep_fbo);
+    FramebufferRenderbuffer(SL_GL_FRAMEBUFFER, SL_GL_COLOR_ATTACHMENT0, SL_GL_RENDERBUFFER, s_keep_rb[0]);
+    FramebufferRenderbuffer(SL_GL_FRAMEBUFFER, SL_GL_DEPTH_STENCIL_ATTACHMENT, SL_GL_RENDERBUFFER, s_keep_rb[1]);
+    if (CheckFramebufferStatus(SL_GL_FRAMEBUFFER) != SL_GL_FRAMEBUFFER_COMPLETE)
+        return sdl_keep_fail("framebuffer incomplete");
+    s_keep_bind(SL_GL_FRAMEBUFFER, 0);
+    s_keep_w = w; s_keep_h = h;
+    return 1;
+}
+
+/* Copy the back buffer into the keep framebuffer (src 0) or back (src 1). */
+static int sdl_keep_blit(int back)
+{
+    GLenum e;
+    while (glGetError() != GL_NO_ERROR) { }
+    glDisable(GL_SCISSOR_TEST);
+    s_keep_bind(SL_GL_READ_FRAMEBUFFER, back ? s_keep_fbo : 0);
+    s_keep_bind(SL_GL_DRAW_FRAMEBUFFER, back ? 0 : s_keep_fbo);
+    s_keep_blit(0, 0, s_keep_w, s_keep_h, 0, 0, s_keep_w, s_keep_h,
+                GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+    s_keep_bind(SL_GL_FRAMEBUFFER, 0);
+    e = glGetError();
+    if (e != GL_NO_ERROR) {
+        char why[64];
+        snprintf(why, sizeof why, "glBlitFramebuffer error 0x%04x", (unsigned) e);
+        return sdl_keep_fail(why);
+    }
+    if (s_keep_state == 0) {
+        s_keep_state = 1;
+        fprintf(stderr, "sightline pres: kept-frame copy in use (%dx%d colour+depth+stencil)\n", s_keep_w, s_keep_h);
+    }
+    return 1;
+}
+
+int sl_gfx_sdl_keep_frame(void);
+int sl_gfx_sdl_keep_frame(void)
+{
+    int w, h;
+    if (s_keep_state < 0 || win == NULL) return 0;
+    if (sl_BindFramebuffer != NULL && sl_fbo != 0) return 0;     /* the SL_Z_QUANT arm */
+    SDL_GetWindowSize(win, &w, &h);
+    if (w <= 0 || h <= 0) return 0;
+    if ((w != s_keep_w || h != s_keep_h || s_keep_fbo == 0) && !sdl_keep_setup(w, h)) return 0;
+    return sdl_keep_blit(0);
+}
+
+int sl_gfx_sdl_restore_frame(void);
+int sl_gfx_sdl_restore_frame(void)
+{
+    if (s_keep_state <= 0) return 0;
+    return sdl_keep_blit(1);
+}
+
+/* Working, or untried where sl_gfx_sdl_keep_frame would try it (not the
+ * SL_Z_QUANT arm's own framebuffer). See sl_gfx_restore_is_copy. */
+int sl_gfx_sdl_keep_works(void);
+int sl_gfx_sdl_keep_works(void)
+{
+    if (s_keep_state != 0) return s_keep_state > 0;
+    return win != NULL && !(sl_BindFramebuffer != NULL && sl_fbo != 0);
+}
+
+/* Diagnostic only (SL_PRES_LOG hash mode, sl_ultra_shim.c): an FNV-1a hash
+ * of the back buffer as it is about to be presented, so a log can show that
+ * consecutive presented frames differ. A full read-back - it costs
+ * milliseconds and is never on an ordinary path. */
+unsigned sl_gfx_sdl_backbuffer_hash(void);
+unsigned sl_gfx_sdl_backbuffer_hash(void)
+{
+    static unsigned char *px;
+    static size_t cap;
+    unsigned h = 2166136261u;
+    size_t i, n;
+    int w, hh;
+    if (win == NULL) return 0;
+    SDL_GetWindowSize(win, &w, &hh);
+    if (w <= 0 || hh <= 0) return 0;
+    n = (size_t) w * (size_t) hh * 3u;
+    if (n > cap) {
+        unsigned char *p = (unsigned char *) realloc(px, n);
+        if (p == NULL) return 0;
+        px = p; cap = n;
+    }
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, hh, GL_RGB, GL_UNSIGNED_BYTE, px);
+    for (i = 0; i < n; i++) { h ^= px[i]; h *= 16777619u; }
+    return h;
+}
+
+void sl_gfx_sdl_pres_end(void);
+void sl_gfx_sdl_pres_end(void)
+{
+    if (sl_BindFramebuffer != NULL && sl_fbo != 0) {
+        sl_BindFramebuffer(SL_GL_READ_FRAMEBUFFER, sl_fbo);
+        sl_BindFramebuffer(SL_GL_DRAW_FRAMEBUFFER, 0);
+        sl_BlitFramebuffer(0, 0, sl_fbo_w, sl_fbo_h, 0, 0, sl_fbo_w, sl_fbo_h,
+                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        sl_BindFramebuffer(SL_GL_FRAMEBUFFER, 0);
+    }
+    sdl_swap();
 }
 
 static int sdl_poll(void)

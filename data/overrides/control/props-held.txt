@@ -1,0 +1,3 @@
+# Control's props held back from the stage derivation (#95). A held item is
+# not prepared by `prepare-xbla-assets.ps1 -Level control -Props`, and the
+# model draws as the game's. Remove a line to take the item.

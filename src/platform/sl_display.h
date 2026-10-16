@@ -4,7 +4,7 @@
  *
  * WHAT IT DECIDES. The player picks a SHAPE - 4:3, 16:9 or 32:9 - at the
  * CURRENT VERTICAL SIZE: widescreen means a WIDER view at the same height,
- * never a strip inside the old window (owner contract, 2026-09-18). In
+ * never a strip inside the old window (contract, 2026-09-18). In
  * windowed mode the SDL backend (src/gfx/sl_gfx_sdl.c sdl_apply_aspect)
  * therefore keeps the window's height and sets its width to height x
  * aspect - 960x720 -> 1280x720 -> 2560x720 - live on a change and at the
@@ -55,8 +55,8 @@
 #ifndef SL_DISPLAY_H
 #define SL_DISPLAY_H
 
-/* The persisted ids are APPEND-ONLY: 2 = 32:9 was already in the owner's
- * config.ini when 21:9 was added on 2026-09-18, so 21:9 took the next id
+/* The persisted ids are APPEND-ONLY: 2 = 32:9 was already in an existing
+ * user config.ini when 21:9 was added on 2026-09-18, so 21:9 took the next id
  * rather than the slot between. The DISPLAY row orders them by width
  * (sl_aspect_by_order); nothing else cares about the numbering. */
 enum sl_aspect_ratio {
@@ -135,7 +135,7 @@ int  sl_display_pointer_logical(const int safe[4], const int content[4],
  * native query (sl_game_query.c). */
 int sl_aspect_active(void);
 
-/* ---- FIELD OF VIEW (#45, owner scope addition 2026-09-18) ----------------
+/* ---- FIELD OF VIEW (#45, scope addition 2026-09-18) ----------------------
  *
  * STORED: the VERTICAL field of view - the engine's own invariant, the fovy
  * fr.c:709 hands guPerspectiveF - as `fov_vertical` in HUNDREDTHS of a

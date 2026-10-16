@@ -1,7 +1,7 @@
 # Native keyboard/mouse: the four channel sign conventions, measured
 
 Status: SETTLED by measurement, 2026-09-01. **RE-MEASURED and CONFIRMED the
-same day** after an owner report of mirrored mouse look — see "Re-measurement"
+same day** after a playtest report of mirrored mouse look — see "Re-measurement"
 at the end. Nothing in the table below changed; the conclusions here are not the
 cause of that report.
 
@@ -95,8 +95,8 @@ D gave a consistent dx of -1 to -2 (content moving left, i.e. strafing right),
 but the residual was no better than the unshifted difference because the motion
 down a corridor is an expansion rather than a pure shift. It is corroborated
 rather than proven: the game's own default is `analogStrafe = controlStickXSafe`
-(`bondview2.c:4832`), and the existing gamepad path — which the owner has played
-and validated — already maps its `move_strafe` (+ = right) straight onto
+(`bondview2.c:4832`), and the existing gamepad path — which has been played
+and validated in playtest — already maps its `move_strafe` (+ = right) straight onto
 `stick_x`. The channel uses the identical convention.
 
 ## What reading the code said, and why it was wrong
@@ -150,7 +150,7 @@ the mouse.
 
 ## Re-measurement, 2026-09-01
 
-The owner reported mouse look FULLY MIRRORED on both axes. Because a single
+A playtest reported mouse look FULLY MIRRORED on both axes. Because a single
 wrong sign mirrors one axis and only a wrong *convention* mirrors both, the
 suspicion was that the shift measurement above had its sign convention
 backwards. It did not. Everything below is a fresh measurement, not a re-read.
@@ -200,7 +200,7 @@ frame; holding mouse-up raises the view toward the top of the door.
 `read_mouse` or `map_kbm` was changed, and none should be — inverting a
 measured-correct mapping would break it.
 
-### What this means for the owner's report
+### What this means for the playtest report
 
 The mirroring is therefore not in the arithmetic. The remaining candidate, and
 it is inference rather than measurement, is the pointer capture: SDL relative
@@ -250,7 +250,7 @@ under which the block does NOT run.
 
 Every earlier measurement in this file was taken on a direct boot with a fresh
 save, i.e. with the option at REVERSE and the block dormant. That is why they
-all measured correct and the owner still saw inverted pitch: the owner's session
+all measured correct and the playtest still showed inverted pitch: its session
 had Look set to UPRIGHT. Measured, mouse UP, Honey, injected at the SDL
 boundary:
 
@@ -269,7 +269,7 @@ it was taken in.** Every run here used the default option and none of them said
 so. The 8-cell matrix that replaced them varies control style, the Look Up/Down
 setting and normal-versus-aim, and states which cell each number came from.
 
-Owner decision, the same day: the Look Up/Down option is a CONTROLLER setting.
+Design decision, the same day: the Look Up/Down option is a CONTROLLER setting.
 The mouse now has conventional PC direction unconditionally, implemented by
 pre-negating the mouse's own pitch in `map_kbm` so the block above cancels
 exactly. The pad path is untouched and still obeys the option.
@@ -288,7 +288,7 @@ declaration of `g_dx_sign`/`g_dy_sign`:
 | host | default | evidence |
 |---|---|---|
 | `_WIN32` | `+1 / +1` | stock SDL2's nominal convention (+dx right, +dy down), which is the convention the "whole mouse chain, end to end" table above was screen-measured correct against |
-| everything else | `-1 / -1` | owner hand-test under WSLg/XWayland at commit `fbcc3a48`: LEFT->LEFT, RIGHT->RIGHT, UP->UP, DOWN->DOWN |
+| everything else | `-1 / -1` | manual hand-test under WSLg/XWayland at commit `fbcc3a48`: LEFT->LEFT, RIGHT->RIGHT, UP->UP, DOWN->DOWN |
 
 ### Why a single global default was wrong
 
@@ -303,7 +303,7 @@ One commit, and only one. `git show fbcc3a48^:src/platform/sl_input.c` shows
 `read_mouse` applying NO sign at all before it — SDL's raw dx/dy went straight
 into `look_yaw`/`look_pitch`. So `fbcc3a48` did two things at once: it
 introduced the knobs, and it introduced a NEGATION ON BOTH AXES, defaulting to
-the value the owner had just accepted under WSLg.
+the value just accepted by a manual test under WSLg.
 
 The re-measurement table above was taken on the pre-`fbcc3a48` code, i.e. at an
 effective `+1 / +1`, and it found all four directions correct on the rendered
@@ -316,7 +316,7 @@ Windows immediately after, onto stock `mingw-w64-i686-SDL2` with no Sightline
 transport in between (`tools/windows/setup.ps1` provisions it; the build links
 `-lSDL2` and stages the DLL). A transport that negates nothing, plus a default
 that negates both axes, is mirrored look on both axes — which is exactly what
-the owner reported as B-071.
+was reported in playtest as B-071.
 
 ### What was NOT the cause
 

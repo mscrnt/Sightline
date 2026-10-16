@@ -340,7 +340,7 @@ class Emulator:
             # Write the savestate periodically, not at exit. There is no way to
             # quit the harness from inside the game, so the window gets closed -
             # and anything deferred to shutdown never happens. Same bug class as
-            # the input stream and trace, in the one place I had not fixed it.
+            # the input stream and trace, in the one place it had not been fixed.
             if self.save_state and state["ticks"] and state["ticks"] % 600 == 0:
                 self._core.CoreDoCommand(
                     self.cmd["M64CMD_STATE_SAVE"], 1,

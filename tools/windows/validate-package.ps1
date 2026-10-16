@@ -171,7 +171,7 @@ $forbidden = @(
 $forbiddenRx = $forbidden | ForEach-Object { New-Object System.Text.RegularExpressions.Regex($_, 'IgnoreCase') }
 # Binaries are scanned too: a -g build writes every source path and the
 # compile directory into the executable's DWARF strings, which is exactly
-# where an owner's absolute path or user name ends up without anyone typing it.
+# where a developer's absolute path or user name ends up without anyone typing it.
 
 foreach ($f in $files) {
     $p = $rel[$f.FullName]

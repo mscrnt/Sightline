@@ -15,8 +15,8 @@
  *   - The controller's PAD slots are ALWAYS live (since 2026-09-20 the pad
  *     is only ever the modern dual-stick controller, #63: no BUTTON MODE, no
  *     ORIGINAL profile). Their compiled default IS the DEFAULT button layout
- *     (g_layouts below, the owner's Halo-shaped table; round 6 of the same
- *     day, amended 2026-09-21 by the owner's bumper decision): RT and RB
+ *     (g_layouts below, the specified Halo-shaped table; round 6 of the same
+ *     day, amended 2026-09-21 by the bumper decision): RT and RB
  *     fire, LT and LB aim, the d-pad up / down zoom in / out and left /
  *     right previous / next weapon, A interact, X reload, B crouch, L3
  *     sprint; Y and R3 unbound; movement has no pad default (the sticks
@@ -49,11 +49,11 @@
  * Escape (cancels a capture; closes menus), Tab (opens the watch), Return /
  * keypad Enter (menu confirm), Space (the fixed classic N64 B, sl_input.c
  * read_keyboard), Backspace and Delete (clear a slot during capture), F8 / F9
- * (the owner's mark keys), and the pad's Start and Guide (pause). The pad's
- * BACK left that list in #47: it used to mark, the owner asked for the mark
+ * (the playtest mark keys), and the pad's Start and Guide (pause). The pad's
+ * BACK left that list in #47: it used to mark, a requirement moved the mark
  * off the pad, and it is now an ordinary source every preset binds to
- * TEXTURE SET. The d-pad's four directions ARE bindable since round 6 (#63 / #64,
- * 2026-09-20, the owner: "D pad isn't used at all, and it should be"): in
+ * PRESENTATION. The d-pad's four directions ARE bindable since round 6 (#63 / #64,
+ * 2026-09-20, playtest: "D pad isn't used at all, and it should be"): in
  * PLAY they are registry sources like any button (pad:DPAD_UP etc., DEFAULT
  * zoom in / out on up / down and the weapon cycle on left / right); in a
  * MENU sl_input.c still hands them to the game as the N64 d-pad, the menus'
@@ -120,9 +120,20 @@ static const struct action_meta g_actions[SL_ACT_COUNT] = {
     { "strafe_right",    "STRAFE RIGHT",    "RIGHT",    SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
     { "fire",            "FIRE",            "FIRE",     SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
     { "aim",             "AIM",             "AIM",      SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
-    /* #47: step the TEXTURES setting. Not a gameplay semantic and not half
-     * of a pair, so its rows carry no wheel context and fire in every one. */
-    { "texture_cycle",   "TEXTURE SET",     "TEX SET",  SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
+    /* #47, retargeted by #68: step the PRESENTATION (ORIGINAL / COMMUNITY HD
+     * / XBLA), which resolves every visual provider. Not a gameplay semantic
+     * and not half of a pair, so its rows carry no wheel context and fire in
+     * every one.
+     *
+     * THE PERSISTED KEY STAYS `texture_cycle`, and that is deliberate. The
+     * first column is the identity written into the config as
+     * bind.texture_cycle.<device>.<slot>; renaming it would leave a player's
+     * own rebinding of this action orphaned in their file and silently
+     * restore F5. The two columns the player actually reads - the editors'
+     * long and short labels - are what changed. This is the only
+     * compatibility alias in the round, and it exists because the settings
+     * store's keys are identities rather than names. */
+    { "texture_cycle",   "PRESENTATION",    "PRESENT",  SL_WHEEL_CTX_PLAY,   SL_PAIR_NONE    },
 };
 
 /* ------------------------------------------------------------ sources -- */
@@ -227,11 +238,11 @@ static const struct source_meta g_pad[] = {
     PADB(SDL_CONTROLLER_BUTTON_DPAD_LEFT,     "DPAD_LEFT",  "PAD D-PAD LEFT"),
     PADB(SDL_CONTROLLER_BUTTON_DPAD_RIGHT,    "DPAD_RIGHT", "PAD D-PAD RIGHT"),
     /* #47: BACK - "View" on an Xbox pad, "Create" on a DualSense, "Select"
-     * on the pad the owner learned it as. It used to be excluded from this
+     * on older pads. It used to be excluded from this
      * table on purpose (the file header's reserved list) because it marked;
-     * the mark moved off the pad at the owner's request ("We wont need to
-     * mark with controller"), so the button is an ordinary bindable source
-     * now and the texture cycle is what the presets put on it. Appended
+     * the mark moved off the pad by requirement (#47: no marking from the
+     * controller), so the button is an ordinary bindable source
+     * now and the presentation cycle is what the presets put on it. Appended
      * last: the indices above are shared with the family name tables and
      * the capture masks and must not move. */
     PADB(SDL_CONTROLLER_BUTTON_BACK,          "BACK",       "PAD BACK"),
@@ -292,21 +303,21 @@ void sl_bind_copy(char *dst, int n, const char *src)
  * cannot drift). The names are what both UIs print; the ids are the store's
  * SL_BUTTON_LAYOUT_* (CUSTOM has no row: it is the state "none of these").
  *
- * ROUND 6 (#63 / #64, 2026-09-20, the owner's replay with both pads: "D pad
- * isn't used at all, and it should be ... To zoom in, we should probably use
- * lb and rb. So it zooms when scoping for sniper rifle, and cycles weapons
- * when not"). The d-pad is bound in every preset - up / down ZOOM IN / OUT,
+ * ROUND 6 (#63 / #64, 2026-09-20, the playtest with both pads: the d-pad
+ * was unused, and LB / RB were to zoom while scoped with the sniper rifle
+ * and cycle weapons otherwise).
+ * The d-pad is bound in every preset - up / down ZOOM IN / OUT,
  * left / right PREVIOUS / NEXT WEAPON - and the bumpers are the scope-aware
  * cycle (contextual sources, see the file header): each holds a weapon-cycle
  * row AND the matching zoom row. Two slots per action is the whole editor,
  * so with the bumper and the d-pad direction in them Y has no NEXT WEAPON
- * slot left and is unbound in every preset (the owner's call which of the
+ * slot left and is unbound in every preset (a design call which of the
  * three it should be); R3's ZOOM IN went with the zoom to the bumpers and
- * the d-pad (the owner read the R3 label as the stick's own function).
+ * the d-pad (in playtest the R3 label read as the stick's own function).
  *
- * THE BUMPERS MIRROR THE TRIGGERS (owner, 2026-09-21: "I also don't like RB
- * and LB and L1 and R1 cycling the weapons. They should just mirror the
- * triggers for aim and shoot. Dpad handles weapons fine."). So RB is a
+ * THE BUMPERS MIRROR THE TRIGGERS (design decision, 2026-09-21: the bumpers
+ * (RB / LB, R1 / L1) no longer cycle weapons; they mirror the triggers for
+ * aim and shoot, and the d-pad handles weapons). So RB is a
  * second FIRE and LB a second AIM in every live preset, the weapon cycle and
  * the zoom are the D-PAD's alone, and no preset puts a cycle action on a
  * bumper any more. The scope-aware mechanism itself is UNCHANGED - the `ctx`
@@ -367,11 +378,11 @@ static const struct sl_pad_layout g_layouts[SL_BUTTON_LAYOUT_PRESETS] = {
         /* FIRE            */ { P_LT, P_LB },
         /* AIM             */ { P_RT, P_RB },
         /* TEXTURE_CYCLE   */ { P_BK, S0   } } },
-    /* RETIRED (owner, 2026-09-21). BUMPER's whole point was fire and aim on
+    /* RETIRED (decision, 2026-09-21). BUMPER's whole point was fire and aim on
      * the bumpers with the TRIGGERS cycling weapons, and the triggers
      * cycling is exactly what the decision above removes; with the bumpers
      * now mirroring the triggers in DEFAULT it would differ only in what
-     * the owner asked to be rid of. The ID stays occupied because
+     * the decision removed. The ID stays occupied because
      * pad_button_layout is persisted and its ids are append-only: the row
      * is never offered (sl_bindings_layout_selectable), never applied
      * (sl_bindings_layout_apply refuses it) and never matched

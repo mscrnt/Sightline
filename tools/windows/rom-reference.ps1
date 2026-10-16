@@ -16,7 +16,7 @@
 
     WHY THIS EXISTS. The front-end timing has been "corrected" three times by
     reasoning from threshold constants in front.c and title.c, and three times
-    the owner re-tested and found it still wrong. "How long is the Legal screen
+    a manual playtest found it still wrong. "How long is the Legal screen
     on screen" is not answerable from a constant: the visible span includes
     screen switches and loading that no counter in the source describes. So
     this measures the original rather than deriving it.

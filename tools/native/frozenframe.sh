@@ -3,7 +3,7 @@
 # capture to be byte-identical.
 #
 # The flicker in B-045 was only ever visible to a human playing the game, so
-# every candidate fix cost the owner a playthrough and nine of them were
+# every candidate fix cost a manual playthrough and nine of them were
 # refuted that way. Replay is deterministic: same input, same frame, same
 # state. If two runs of one binary disagree on one frame, that is a renderer
 # state leak, and it is a test failure rather than something someone has to

@@ -27,7 +27,7 @@
  *   LEFT/RIGHT_SHOULDER        rock 10 degrees about the pivot while held
  *   LEFT/RIGHT_TRIGGER         swing about the pivot with the analog pull
  *
- * THE LABELS (2026-09-20, the owner: "they are missing the button actions
+ * THE LABELS (2026-09-20, playtest report: "they are missing the button actions
  * along the side of it"). The original page prints, in two columns beside
  * the N64 pad (x 0x32 left-aligned, x 0x10e right-aligned, sub_GAME_7F0A9AB8),
  * the control style's action name per button - AIM, LOOK, FIRE, WEAPON... -
@@ -165,8 +165,8 @@ extern void game_option_select_value(u32 *param_1, u32 param_2);
 #define SL_WC_ZNEAR 1000.0f
 #define SL_WC_ZFAR  3000.0f
 
-/* THE LABEL COLUMNS AND THE ICONS (2026-09-20, #63 / #64 round 5, the
- * owner: "the button icons on the side are missing. Maybe we need to pull
+/* THE LABEL COLUMNS AND THE ICONS (2026-09-20, #63 / #64 round 5, playtest
+ * report: "the button icons on the side are missing. Maybe we need to pull
  * the buttons out of the controller model to show on the side too"). The
  * original page's shape exactly: its text columns sit at x 0x32
  * (left-aligned) and 0x10e (right-aligned) and its button ICONS OUTSIDE
@@ -383,8 +383,8 @@ Gfx *sl_watch_layout_rows_draw(Gfx *gdl)
  *   STICK    two rows, never omitted: the stick's ANALOG role from the STICK
  *            LAYOUT (MOVE / LOOK; LEGACY: MOVE/TURN, LOOK/STRAFE) over its
  *            CLICK's action(s) as "CLICK <action>" - so a reader can never
- *            take the click's binding for the stick's motion (the owner read
- *            R3's "ZOOM IN" as the right stick's function)
+ *            take the click's binding for the stick's motion (in playtest,
+ *            R3's "ZOOM IN" read as the right stick's function)
  *   FIXED    what the control does outside the registry: Start PAUSE. (View
  *            / Create used to be FIXED too, printing MARK; #47 moved it to
  *            the registry - see the table below.) */
@@ -518,7 +518,7 @@ static int sl_wc_label_text(const struct sl_wc_control *c, int family, struct sl
     i = 0;
     switch (c->kind) {
     case SL_WC_BUTTON:
-        /* A PHYSICAL CONTROL IS ALWAYS SHOWN, bound or not (owner-observed
+        /* A PHYSICAL CONTROL IS ALWAYS SHOWN, bound or not (observed in play
          * 2026-09-20: "the modern controller page omits the north face
          * button"). This branch used to `return 0` when the resolver found
          * no action, which dropped the row AND its icon - and since no
@@ -1088,10 +1088,10 @@ void sl_watch_controller_probe(Mtxf *finalmtx)
  * pitches whatever it draws 45 degrees from face-on (options.c:3688, the
  * N64 pad's own presentation, kept for the N64 pad). Round 5 established
  * that the modern models FACE exactly as the N64 pad does under that
- * matrix (the probe below: within 2 degrees) and that what the owner saw
+ * matrix (the probe below: within 2 degrees) and that what the playtest reported
  * as "still not facing the camera correctly" was the 45-degree pitch
  * itself on a modern pad's shape - and offered previews at 45 / 20 / 0.
- * The owner's replay: "Xbox still needs to be pitched more too ... Looks
+ * The playtest verdict: "Xbox still needs to be pitched more too ... Looks
  * like ps5 can be tilted better too" - so the modern pad now draws at
  * SL_WC_MODERN_TILT, the middle preview, for BOTH families; the labels and
  * the icons follow (the columns are placed from the projected pivots and
@@ -1163,7 +1163,7 @@ Gfx *sl_watch_controller_draw(Gfx *gdl, Mtxf *finalmtx, s32 green)
      * README), so every visible polygon was lit by the ambient term alone:
      * the DualSense's "white" first draw was 4x on a model at 0.27
      * brightness, and at 1x that same model drew as a dark silhouette (RGB
-     * 69), which is what the owner saw as nothing drawn. With the importer
+     * 69), which is what read in play as nothing drawn. With the importer
      * re-basing the normals the shell reads 221 at 1x and the Xbox shell
      * 108..126 at 4x, both with shading. The knob values stand. */
     sl_asset_override_exposure_set(id, id == SL_ASSET_CONTROLLER_XBOX ? SL_WC_EXPOSURE_DARK : 1.0f);

@@ -141,7 +141,7 @@
  * OR a REFERENCE to a game texture by identifier, and the slot grew from 16
  * to 32 bytes to say which. The magic stays "SLM1" - it names the family, and
  * the version field is what a reader is required to check. A version-1 file
- * is rejected with a message telling the owner to re-import, exactly as a
+ * is rejected with a message telling the user to re-import, exactly as a
  * version-2 file would be by an older build.
  *
  * WHY REFERENCES EXIST. A model whose textures came out of the game cannot be
@@ -442,7 +442,7 @@ int sl_texref_is_generated(const char *name);
  * pixels it REFUSED to embed and stores it in the reference slot; the loader
  * recomputes it over what it resolved and rejects a mismatch. That turns "the
  * player has a different ROM" from a wrong-looking logo into a clean fallback
- * to the original, and it is what proves - at runtime, on the owner's machine
+ * to the original, and it is what proves - at runtime, on the player's machine
  * - that a reference resolved to exactly the texture the author saw.
  *
  * Four bytes, one-way, and no more able to reconstruct a texture than a

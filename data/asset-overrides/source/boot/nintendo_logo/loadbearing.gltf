@@ -102,7 +102,7 @@
    "uri": "textures/chrome_authored.png",
    "extras": {
     "sl_authored": true,
-    "sl_authored_provenance": "64x64 chrome environment ramp authored by the project owner from colour stops with the owner's own tooling. Not resampled from, traced from, or derived from any ROM texture."
+    "sl_authored_provenance": "64x64 chrome environment ramp authored for Sightline from colour stops with first-party tooling. Not resampled from, traced from, or derived from any ROM texture."
    }
   }
  ],

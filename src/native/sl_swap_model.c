@@ -143,8 +143,6 @@ void sl_model_node_swap(ModelNode *node)
     SW32(node->Child);
 }
 
-/* Collision vertex: coord16 xyz + index, then LinkedTo as a 32-bit offset
- * (the s/t interpretation applies to render vertices only). */
 /* One s16 per vertex - see the citation at the call site. A NULL table is
  * normal: only the 18-display-list models merge points at all. */
 void sl_model_pointusage_swap(s16 *usage, s32 nvertices)
@@ -157,6 +155,30 @@ void sl_model_pointusage_swap(s16 *usage, s32 nvertices)
         SW16(usage[i]);
 }
 
+/* Collision point, 16 bytes ("Display Lists and Object Generation/Objects/
+ * Point Merging.txt", its Collision Point Table):
+ *
+ *     FFF7 0030 FFFC 0005 05000190 000D 0000
+ *     x    y    z    id   link     related  reserved
+ *
+ * coord16 xyz and the point's id (Vertex.index), then the 32-bit offset of
+ * the 18 command whose points this one merges with (LinkedTo /
+ * CollisionRelatedNode, promoted by the caller), then the s16 number of the
+ * point in THAT command's collision table (CollisionRelatedIndex, FFFF when
+ * there is no link) and an s16 of zero. The s/t and colour readings of the
+ * union apply to render vertices only.
+ *
+ * The related number was once left in wire order. chrCreateBloodStain
+ * (chr.c) is its only reader: it takes the merged point from the related
+ * table and paints Vertices[index].a of the related piece, so a byte-reversed
+ * 0x000D read as 0x0D00 indexed 53 KB past the table and painted one byte
+ * (the blood value, 20..169) wherever the garbage chain pointed - the top
+ * byte of a Model's attachedto_objinst or render_pos, a model file's node
+ * pointer. MEASURED on Bunker 2 (crash1): 203 of 210 merged points of body 16
+ * and 164 of 170 of body 38 out of range as stored, 0 of either once swapped;
+ * a guard hunt painted 11 of 109 blood bytes outside the vertex copy, one of
+ * them a door Model's render_pos top byte (0x20 -> 0x43, the paint value 67).
+ * sl_model_links_check below fails loudly if any link is out of range. */
 void sl_model_collision_vertices_swap(Vertex *v, s32 n)
 {
     s32 i;
@@ -167,6 +189,8 @@ void sl_model_collision_vertices_swap(Vertex *v, s32 n)
         SW16(v[i].coord.z);
         SW16(v[i].index);
         SW32(v[i].LinkedTo);
+        SW16(v[i].CollisionRelatedIndex);
+        SW16(v[i].CollisionReserved);
     }
 }
 
@@ -443,6 +467,58 @@ static void sl_model_vertices_swap(Vertex *v, s32 n)
  * array its DL records point at.  Called after the promote pass (nodes are
  * native and walkable); DL values remain segment offsets, resolved against
  * the file base as the parsers do, while Vertices pointers were promoted. */
+/* THE MERGED POINTS' LINKS, checked once the file is native and promoted:
+ * every collision point that names a related node must name an 18 command
+ * and a point inside that command's collision table, which is the range
+ * chrCreateBloodStain indexes. Returns the number of links out of range and
+ * says so on stderr; 0 on every file of a correct swap. */
+extern int   fprintf(void *, const char *, ...);
+extern void *stderr;
+static unsigned long g_links_checked, g_links_bad;
+
+s32 sl_model_links_check(ModelFileHeader *header)
+{
+    ModelNode *node = header->RootNode;
+    s32 checked = 0, bad = 0, first = -1;
+
+    while (node != NULL) {
+        if ((node->Opcode & 0xff) == MODELNODE_OPCODE_DLCOLLISION && node->Data != NULL) {
+            ModelRoData_DisplayList_CollisionRecord *ro = &node->Data->DisplayListCollisions;
+            s32 i;
+            for (i = 0; ro->CollisionVertices != NULL && i < ro->numCollisionVertices; i++) {
+                ModelNode *rn = (ModelNode *) ro->CollisionVertices[i].CollisionRelatedNode;
+                s32 k = ro->CollisionVertices[i].CollisionRelatedIndex;
+                if (rn == NULL)
+                    continue;
+                checked++;
+                if ((rn->Opcode & 0xff) != MODELNODE_OPCODE_DLCOLLISION || rn->Data == NULL
+                    || k < 0 || k >= rn->Data->DisplayListCollisions.numCollisionVertices) {
+                    if (bad++ == 0) first = k;
+                }
+            }
+        }
+        if (node->Child != NULL) {
+            node = node->Child;
+        } else {
+            while (node != NULL) {
+                if (node->Next != NULL) {
+                    node = node->Next;
+                    break;
+                }
+                node = node->Parent;
+            }
+        }
+    }
+    g_links_checked += (unsigned long) checked;
+    g_links_bad += (unsigned long) bad;
+    if (bad > 0)
+        fprintf(stderr, "sightline native: model file %p - %d of %d merged collision points "
+                        "link outside the related point table (first: point %d); a blood "
+                        "stain there would paint outside its vertex copy\n",
+                (void *) header, (int) bad, (int) checked, (int) first);
+    return bad;
+}
+
 void sl_model_dls_swap(ModelFileHeader *header)
 {
     ModelNode *node = NULL;
@@ -525,6 +601,83 @@ void sl_model_dls_swap(ModelFileHeader *header)
             }
         }
     }
+
+    (void) sl_model_links_check(header);
 }
+
+#ifdef SL_SWAP_SELFTEST
+/* tools/windows/modeltest.ps1: the collision-point swap on the two rows of
+ * Point Merging.txt's own table, in wire order, and the link check on a
+ * synthetic two-piece file. No ROM, no game. */
+#define SL_SWAP_SKELETON_STUB(n) struct ModelSkeleton SKELETON(n);
+SL_SWAP_SKELETON_STUB(cctv) SL_SWAP_SKELETON_STUB(console_one_screen)
+SL_SWAP_SKELETON_STUB(console_four_screen) SL_SWAP_SKELETON_STUB(tv_holder)
+SL_SWAP_SKELETON_STUB(rotating_stuff) SL_SWAP_SKELETON_STUB(eyelid_door)
+SL_SWAP_SKELETON_STUB(iris_door) SL_SWAP_SKELETON_STUB(walletbond)
+SL_SWAP_SKELETON_STUB(car) SL_SWAP_SKELETON_STUB(flying) SL_SWAP_SKELETON_STUB(door)
+SL_SWAP_SKELETON_STUB(tank) SL_SWAP_SKELETON_STUB(hat) SL_SWAP_SKELETON_STUB(standard_object)
+SL_SWAP_SKELETON_STUB(prop_weapon) SL_SWAP_SKELETON_STUB(player_gait_object)
+SL_SWAP_SKELETON_STUB(suit_lf_hand) SL_SWAP_SKELETON_STUB(standard_gun)
+SL_SWAP_SKELETON_STUB(gun_unassigned) SL_SWAP_SKELETON_STUB(gun_revolver)
+SL_SWAP_SKELETON_STUB(gun_kf7) SL_SWAP_SKELETON_STUB(g_weapon) SL_SWAP_SKELETON_STUB(guard)
+void sl_fatalf(const char *fmt, unsigned v) { (void) fmt; (void) v; }
+void modelIterateDisplayLists(ModelFileHeader *h, ModelNode **n, Gfx **g) { (void) h; (void) n; *g = NULL; }
+extern void *memset(void *, int, unsigned);
+extern void *memcpy(void *, const void *, unsigned);
+
+static int g_pass, g_fail;
+static void ck(int ok, const char *what)
+{
+    if (ok) g_pass++; else { g_fail++; fprintf(stderr, "FAIL: %s\n", what); }
+}
+
+int main(void)
+{
+    /* Point Merging.txt, Collision Point Table rows 0 and 5, wire order */
+    static const unsigned char wire[2][16] = {
+        { 0xFF,0x9B, 0x00,0x1E, 0xFF,0xB2, 0x00,0x00, 0x00,0x00,0x00,0x00, 0xFF,0xFF, 0x00,0x00 },
+        { 0xFF,0xF7, 0x00,0x30, 0xFF,0xFC, 0x00,0x05, 0x05,0x00,0x01,0x90, 0x00,0x0D, 0x00,0x00 },
+    };
+    Vertex v[2], pa[1], pb[16];
+    union ModelRoData da, db;
+    ModelNode na, nb;
+    ModelFileHeader h;
+
+    memcpy(v, wire, sizeof v);
+    sl_model_collision_vertices_swap(v, 2);
+    ck(v[0].coord.x == -101 && v[0].coord.y == 30 && v[0].coord.z == -78 && v[0].index == 0,
+       "row 0: coordinates and id");
+    ck(v[0].LinkedTo == NULL && v[0].CollisionRelatedIndex == -1, "row 0: no link, related FFFF = -1");
+    ck(v[1].coord.x == -9 && v[1].coord.y == 48 && v[1].coord.z == -4 && v[1].index == 5,
+       "row 5: coordinates and id");
+    ck((u32) v[1].LinkedTo == 0x05000190u, "row 5: the link offset 05000190");
+    ck(v[1].CollisionRelatedIndex == 13 && v[1].CollisionReserved == 0,
+       "row 5: merges with related point 0x000D (13), not 0x0D00");
+
+    /* two pieces: A's one point merges with B's point 13 of 16 */
+    memset(&da, 0, sizeof da); memset(&db, 0, sizeof db);
+    memset(&na, 0, sizeof na); memset(&nb, 0, sizeof nb); memset(&h, 0, sizeof h);
+    memset(pa, 0, sizeof pa); memset(pb, 0, sizeof pb);
+    na.Opcode = MODELNODE_OPCODE_DLCOLLISION; na.Data = &da; na.Next = &nb;
+    nb.Opcode = MODELNODE_OPCODE_DLCOLLISION; nb.Data = &db; nb.Prev = &na;
+    da.DisplayListCollisions.CollisionVertices = pa;
+    da.DisplayListCollisions.numCollisionVertices = 1;
+    db.DisplayListCollisions.CollisionVertices = pb;
+    db.DisplayListCollisions.numCollisionVertices = 16;
+    h.RootNode = &na;
+    pa[0].CollisionRelatedNode = &nb;
+    pa[0].CollisionRelatedIndex = 13;
+    ck(sl_model_links_check(&h) == 0, "a link to point 13 of 16 is in range");
+    pa[0].CollisionRelatedIndex = 0x0D00;
+    ck(sl_model_links_check(&h) == 1, "the byte-reversed 0x0D00 is reported out of range");
+    pa[0].CollisionRelatedIndex = 16;
+    ck(sl_model_links_check(&h) == 1, "point 16 of 16 is out of range");
+    pa[0].CollisionRelatedNode = NULL;
+    ck(sl_model_links_check(&h) == 0, "a point with no link is not checked");
+
+    fprintf(stderr, "modeltest: %d passed, %d failed\n", g_pass, g_fail);
+    return g_fail != 0;
+}
+#endif /* SL_SWAP_SELFTEST */
 
 #endif /* !__sgi */

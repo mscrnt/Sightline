@@ -3,7 +3,7 @@
  "asset_id": "boot.goldeneye_logo",
  "scale": 1.0,
  "provenance": "AUTHORED, NOT EXTRACTED.",
- "provenance_detail": "Letterforms authored by the project owner from the owner's OWN custom font; outlines extracted from that font with fontTools. The font is the owner's own work - not Nintendo's, not Rare's, not a third party's, and not ROM-derived. Crosshair generated procedurally. Colour ramp authored from seven colour stops, NOT resampled from any ROM texture. No ROM vertex, pixel or display-list data is present. Metrics below were MEASURED from the original prop; they are proportions, not asset data.",
+ "provenance_detail": "Letterforms authored for Sightline from Sightline's OWN custom font; outlines extracted from that font with fontTools. The font is first-party Sightline work - not Nintendo's, not Rare's, not a third party's, and not ROM-derived. Crosshair generated procedurally. Colour ramp authored from seven colour stops, NOT resampled from any ROM texture. No ROM vertex, pixel or display-list data is present. Metrics below were MEASURED from the original prop; they are proportions, not asset data.",
  "metrics_measured_from_original": {
   "baseline": -119,
   "cap_height": 172,

@@ -289,7 +289,7 @@ if ($assetN -eq 0) {
 
 # A space in any of these would break the manifest's one-space field split,
 # and the bootstrap would read a truncated path. Refuse loudly here rather
-# than ship something that fails on the owner's machine.
+# than ship something that fails on the target machine.
 foreach ($it in $items) {
     if ($it.Rel -match '\s') { throw "package-demo.ps1: '$($it.Rel)' contains whitespace." }
 }
@@ -332,7 +332,7 @@ $payloadId = $idFull.Substring(0, 32)
 #                          ladder. Pointing it at the extracted assets is what
 #                          stops the demo depending on, or being changed by,
 #                          %LOCALAPPDATA%\sightline\assets - the directory the
-#                          owner's own imports live in.
+#                          user's own imports live in.
 #   SL_WINDOW / _SIZE      a window, at play.ps1's default size.
 #
 # DELIBERATELY ABSENT, each for a measured reason:

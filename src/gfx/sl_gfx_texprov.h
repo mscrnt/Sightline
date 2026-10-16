@@ -22,7 +22,7 @@
  *
  * THE PACK ROOT. Never a compiled-in path:
  *
- *   1. $SL_TEXPACK_ROOT, if set and non-empty (tests, owner-local runs)
+ *   1. $SL_TEXPACK_ROOT, if set and non-empty (tests, local developer runs)
  *   2. <asset override dir>\texpacks - the player-data ladder every other
  *      native asset already uses (%LOCALAPPDATA%\sightline\assets\texpacks)
  *
@@ -40,7 +40,7 @@
  *
  * THE RUNTIME IMAGE FORMAT ("SLTX"). The tree links no PNG decoder and none
  * is added (project rules: no dependency without asking). The converter in
- * the owner's private texture workspace writes each pack image once into
+ * the private texture workspace writes each pack image once into
  * this trivially parsed, deterministic form; the runtime reads only this.
  * Little-endian, 28-byte header, tightly packed RGBA8 rows top row first -
  * the orientation sl_tex_decode produces and glTexImage2D takes:
@@ -77,7 +77,7 @@
 #define SL_TEXPROV_HEADER  28u
 /* The largest replacement accepted on a side. Equal to the renderer's own
  * decode cap (TEX_MAX_DIM, sl_gfx_dl.c) because the B-119 mip pyramid
- * buffers are sized to it; the owner's pack tops out at 1024. */
+ * buffers are sized to it; the reference pack tops out at 1024. */
 #define SL_TEXPROV_MAX_DIM 1024u
 /* The largest N64 image the pool can hold on a side (struct tex's width and
  * height are u8). */
@@ -135,11 +135,16 @@ void sl_texprov_note_pool(const void *start, unsigned bytes);
 
 /* ---- the policy ----------------------------------------------------------
  *
- * THE ONE OWNER OF THE DECISION. Reads the settings store's TEXTURES row
- * (ORIGINAL when the store is inactive, missing, malformed or out of range)
- * and answers SL_TEXTURES_*. A change from the last answer bumps the
- * generation the renderer keys its GL cache on, so the switch takes effect at
- * each texture's next resolve. */
+ * THE ONE OWNER OF THE DECISION, for this provider. Since #68 it asks the
+ * PRESENTATION POLICY (src/platform/sl_presentation.h) which of the sets above
+ * the player's one visual selection resolves to, rather than reading a
+ * TEXTURES setting of its own - ORIGINAL when the store is inactive, the key
+ * missing, malformed or out of range - and answers SL_TEXTURES_*. A change
+ * from the last answer bumps the generation the renderer keys its GL cache on,
+ * so the switch takes effect at each texture's next resolve, the next frame,
+ * with no reload. Everything else about this provider is unchanged: its sets,
+ * its root, its format, its cache and its per-texture fallback are its own,
+ * and the fallback still never crosses into another set. */
 int      sl_texprov_active(void);
 unsigned sl_texprov_generation(void);
 
@@ -160,6 +165,23 @@ const char *sl_texprov_root(void);
  * decode. Reads the same side table the resolve path reads and changes
  * nothing. Used by the renderer's id-keyed decode dump (SL_TEX_DUMP_IDS). */
 int sl_texprov_id_of(const void *src, unsigned *w, unsigned *h);
+
+/* #77 THE CARRIED COORDINATES. A set may carry, per stage, the remaster's own
+ * texture coordinates for room triangles whose cartridge coordinates bend
+ * under a structured replacement (tools/texpack/uvcarry.py; the table is
+ * <root>\<set>\uv\<LEVELID>.sluv). Given the stage, the room, the three
+ * point-table entries a room triangle's corners were loaded from (in the
+ * triangle's own corner order) and the image id it draws, fills st[6] with
+ * (s, t) per corner in that same order and returns 1; 0 when the active set
+ * is ORIGINAL, carries no table for the stage, or has no row for the
+ * triangle and id. The caller decides whether the id is drawn replaced. */
+int sl_texprov_uv(int stage, int room, const unsigned idx[3], unsigned id,
+                  short st[6]);
+
+/* The table parser, exposed for the self-test: validates a whole SLUV image
+ * for `stage`; on SL_TEXPROV_OK *rows is a malloc'd array of *n rows. */
+int sl_texprov_uv_parse(const unsigned char *blob, unsigned long len,
+                        unsigned stage, void **rows, unsigned *n);
 
 /* The census line: provider, root, loaded / missing / invalid / resident,
  * the lookup counters. */

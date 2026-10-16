@@ -239,12 +239,22 @@ if ($Xbla) {
         $stampFile = Join-Path $stampDir 'xbla.stamp'
         $xblaHash = (Get-FileHash -LiteralPath $XblaArchive -Algorithm SHA256).Hash.ToLowerInvariant()
         $mapHash = (Get-FileHash -LiteralPath $mappingFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        # The converter itself decides the pixels, so a repair to it must make
+        # a pack stale exactly as a new source would (#68).
+        $cvtHash = ''
+        foreach ($t in @('tools\texpack\prepare.py', 'tools\texpack\caff.py',
+                         'tools\texpack\xdecode.py', 'tools\texpack\sltx.py',
+                         'tools\texpack\nativeuv.py', 'tools\texpack\uvcarry.py')) {
+            $cvtHash += (Get-FileHash -LiteralPath (Join-Path $repo $t) -Algorithm SHA256).Hash
+        }
+        $cvtHash = (Get-FileHash -InputStream ([IO.MemoryStream]::new(
+                       [Text.Encoding]::ASCII.GetBytes($cvtHash))) -Algorithm SHA256).Hash.ToLowerInvariant()
         $outDir = Join-Path $Out 'xbla'
         $outCount = 0
         if (Test-Path -LiteralPath $outDir) {
             $outCount = @(Get-ChildItem -LiteralPath $outDir -Filter '*.sltx' -File).Count
         }
-        $stampNow = "1 $xblaHash $mapHash $outCount"
+        $stampNow = "1 $xblaHash $mapHash $cvtHash $outCount"
         $current = $false
         if (-not $Force -and $outCount -gt 0 -and (Test-Path -LiteralPath $stampFile)) {
             $current = ((Get-Content -Raw -LiteralPath $stampFile).Trim() -eq $stampNow)

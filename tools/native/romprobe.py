@@ -49,7 +49,7 @@ def main() -> int:
 
     # The eeprom is NOT optional. trace-verify restores it, and without it the
     # same input answers a different saved game and diverges - measured: the
-    # gas timer read 0.000 for a whole run the owner had blown the tanks in.
+    # gas timer read 0.000 for a whole recorded run in which the tanks were blown.
     eep = ROOT / "tools/trace/inputs" / (args.input + ".eeprom")
     emu = LibretroEmulator(rom, input_stream=str(inp),
                            eeprom=str(eep) if eep.is_file() else None)

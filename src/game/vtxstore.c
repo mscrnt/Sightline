@@ -106,6 +106,30 @@ void sub_GAME_7F09B820(void)
     dword_CODE_bss_8007A0E0 = mempAllocBytesInBank(dword_CODE_bss_8007A0D0 * 0x10, MEMPOOL_STAGE);
     dword_CODE_bss_8007A0EC = mempAllocBytesInBank(dword_CODE_bss_8007A0DC * tmp, MEMPOOL_STAGE);
     dword_CODE_bss_8007A0E4 = mempAllocBytesInBank(dword_CODE_bss_8007A0D8 * 0x10, MEMPOOL_STAGE);
+#ifndef __sgi
+    /* D-028 (SL_DESTROYED_KEEP, default on; 0 = the cartridge's store).
+     * A destroyed object keeps its deformed vertices here, and while less
+     * than a quarter of the store is free vtxstore_tick frees permanently
+     * the first such object that is off screen - it vanishes. Natively the
+     * destroyed-object store is eight times the cartridge's (12000 vertices,
+     * 320 blocks on a one-player stage), so the free is not reached in
+     * play. The stage pool allocations above are unchanged, so nothing
+     * else in the pool moves; the larger store is the native buffer. */
+    {
+        extern long sl_env_s32(const char *name, long dflt);
+        static Vertex sl_keep_vtx[0x5DC * 8];
+        static struct unk_09B7A0_struct_parent sl_keep_blk[0x28 * 8];
+
+        if (sl_env_s32("SL_DESTROYED_KEEP", 1) != 0
+            && dword_CODE_bss_8007A0D8 <= 0x5DC && dword_CODE_bss_8007A0DC <= 0x28)
+        {
+            dword_CODE_bss_8007A0D8 *= 8;
+            dword_CODE_bss_8007A0DC *= 8;
+            dword_CODE_bss_8007A0E4 = sl_keep_vtx;
+            dword_CODE_bss_8007A0EC = sl_keep_blk;
+        }
+    }
+#endif
 
     word_CODE_bss_8007A0F0 = (s16) dword_CODE_bss_8007A0D0;
     dword_CODE_bss_8007A0E8->unk00 = dword_CODE_bss_8007A0E0;
@@ -282,12 +306,28 @@ s32 vtxstore_allocate(s32 arg0, s32 type, s32 arg2, s32 arg3)
         case 0xCCCC:
             var_t0 = dword_CODE_bss_8007A0E8;
             var_t3 = &word_CODE_bss_8007A0F0;
+#ifndef __sgi
+            /* The block limit is the low half of the count word, read
+             * through a halfword pun: index [1] is the low half on the
+             * big-endian cartridge, the HIGH half (zero) on a little-
+             * endian host. Read as zero, the split below never ran and
+             * every request took a whole free block: a destroyed
+             * object's deform copy (0x0b0b) emptied the store, and
+             * vtxstore_tick freed the object once it left the view.
+             * Natively the same halfword is read by value. */
+            var_a2 = (s16) dword_CODE_bss_8007A0D4;
+#else
             var_a2 = ((s16 *)&dword_CODE_bss_8007A0D4)[1];
+#endif
             break;
         case 0xB0B:
             var_t0 = dword_CODE_bss_8007A0EC;
             var_t3 = &word_CODE_bss_8007A0F2;
+#ifndef __sgi
+            var_a2 = (s16) dword_CODE_bss_8007A0DC;
+#else
             var_a2 = ((s16 *)&dword_CODE_bss_8007A0DC)[1];
+#endif
             break;
         default:
             return 0;

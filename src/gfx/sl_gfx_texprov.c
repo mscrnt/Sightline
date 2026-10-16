@@ -32,6 +32,7 @@
 
 #include "sl_gfx_texprov.h"
 #include "../platform/sl_settings.h"
+#include "../platform/sl_presentation.h"   /* #68: which set the presentation selects */
 
 /* The player-data ladder's directory (src/native/sl_asset_override.c). The
  * self-test links this file alone and supplies its own definition. */
@@ -135,11 +136,18 @@ static int      g_last_set = -1;
 static unsigned g_gen;                 /* 0 until the first non-ORIGINAL ask */
 static unsigned g_switches;
 
+/* #68: the provider no longer reads a setting. It asks the PRESENTATION
+ * POLICY (src/platform/sl_presentation.h) which of ITS OWN sets the player's
+ * one visual selection resolves to - so the same press that moves the
+ * world-asset provider moves this one, and neither provider inspects the
+ * other's state or the player's setting directly. Everything below this line
+ * is unchanged: the set ids, the per-set roots, the cache, and the per-texture
+ * fallback to ORIGINAL that never crosses into another set. */
 #ifdef SL_TEXPROV_SELFTEST
 static int g_test_setting;
 static int store_setting(void) { return g_test_setting; }
 #else
-static int store_setting(void) { return sl_settings_get(SL_SET_TEXTURES); }
+static int store_setting(void) { return sl_presentation_textures(sl_presentation()); }
 #endif
 
 int sl_texprov_active(void)
@@ -649,10 +657,165 @@ const struct sl_texprov_image *sl_texprov_lookup(const void *src,
     return img;
 }
 
+/* ------------------------------------------- #77 the carried coordinates --
+ *
+ * A direct entry replaces an image with the remaster's image of the same
+ * surface, and the room triangles go on sampling it with the cartridge's
+ * coordinates. Where those bend from one triangle to the next, a structured
+ * image bends with them. The table carries the remaster's own coordinates
+ * for exactly those triangles (tools/texpack/uvcarry.py derives it from the
+ * level's two backgrounds; docs/texture-packs.md, "Carried coordinates").
+ *
+ * One table per (set, stage): <root>\<set>\uv\<LEVELID>.sluv, loaded at the
+ * first ask and remembered - absent or invalid included - until the set or
+ * the stage changes. Under ORIGINAL nothing is opened, and a set with no
+ * table answers 0 for every triangle. */
+struct uv_row {
+    unsigned short room, id, p[3];
+    short st[6];
+};
+
+static struct uv_row *g_uv;
+static unsigned g_uv_n;
+static int g_uv_set = -1, g_uv_stage = -1;
+static unsigned g_uv_loads, g_uv_invalid, g_uv_hits;
+
+static int uv_key_cmp(const struct uv_row *r, unsigned room, const unsigned p[3])
+{
+    if (r->room != room) return r->room < room ? -1 : 1;
+    if (r->p[0] != p[0]) return r->p[0] < p[0] ? -1 : 1;
+    if (r->p[1] != p[1]) return r->p[1] < p[1] ? -1 : 1;
+    if (r->p[2] != p[2]) return r->p[2] < p[2] ? -1 : 1;
+    return 0;
+}
+
+/* Validate a whole table image. Every field is checked before a row is
+ * kept: the magic, version 1, the stage the caller expects, a row count
+ * bounded and equal to what the size holds, corners strictly increasing
+ * within a row, the pad word zero, and the rows sorted by (room, corners).
+ * -> SL_TEXPROV_OK and a malloc'd array (caller frees), or an error. */
+int sl_texprov_uv_parse(const unsigned char *b, unsigned long len,
+                        unsigned stage, void **rows_out, unsigned *n_out)
+{
+    unsigned n, i;
+    struct uv_row *rows;
+    *rows_out = NULL; *n_out = 0;
+    if (b == NULL || len < 16u) return SL_TEXPROV_E_IO;
+    if (b[0] != 'S' || b[1] != 'L' || b[2] != 'U' || b[3] != 'V') return SL_TEXPROV_E_MAGIC;
+    if (rd32(b + 4) != 1u) return SL_TEXPROV_E_VERSION;
+    if (rd32(b + 8) != stage) return SL_TEXPROV_E_ID;
+    n = rd32(b + 12);
+    if (n == 0u || n > (1u << 20) || len != 16ul + 24ul * (unsigned long) n)
+        return SL_TEXPROV_E_PAYLOAD;
+    rows = (struct uv_row *) malloc(sizeof *rows * n);
+    if (rows == NULL) return SL_TEXPROV_E_MEM;
+    for (i = 0; i < n; i++) {
+        const unsigned char *q = b + 16 + 24u * i;
+        struct uv_row *r = &rows[i];
+        int k;
+        unsigned key[3];
+        r->room = (unsigned short) rd16(q);
+        r->id   = (unsigned short) rd16(q + 2);
+        r->p[0] = (unsigned short) rd16(q + 4);
+        r->p[1] = (unsigned short) rd16(q + 6);
+        r->p[2] = (unsigned short) rd16(q + 8);
+        for (k = 0; k < 6; k++) r->st[k] = (short) rd16(q + 12 + 2 * k);
+        key[0] = r->p[0]; key[1] = r->p[1]; key[2] = r->p[2];
+        if (!(r->p[0] < r->p[1] && r->p[1] < r->p[2]) || rd16(q + 10) != 0u
+            || r->id >= SL_TEXPROV_MAX_ID
+            || (i > 0 && uv_key_cmp(&rows[i - 1], r->room, key) > 0)) {
+            free(rows);
+            return SL_TEXPROV_E_FLAGS;
+        }
+    }
+    *rows_out = rows; *n_out = n;
+    return SL_TEXPROV_OK;
+}
+
+static void uv_load(int set, int stage)
+{
+    char dir[600], path[700], name[32];
+    const char *sd = set_dirname(set);
+    FILE *f;
+    long len;
+    unsigned char *blob;
+    void *rows = NULL;
+    unsigned n = 0;
+    int rc;
+
+    free(g_uv); g_uv = NULL; g_uv_n = 0;
+    g_uv_set = set; g_uv_stage = stage;
+    if (sd == NULL || stage < 0) return;
+    path_join(dir, sizeof dir, sl_texprov_root(), sd);
+    sprintf(name, "uv\\%d.sluv", stage);
+    path_join(path, sizeof path, dir, name);
+    if (path[0] == '\0' || (f = fopen(path, "rb")) == NULL) return;
+    g_uv_loads++;
+    len = (fseek(f, 0, SEEK_END) == 0) ? ftell(f) : -1;
+    if (len < 16 || len > 16L + 24L * (1L << 20) || fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f); g_uv_invalid++;
+        fprintf(stderr, "sl_texprov: %s INVALID (size) - cartridge coordinates kept\n", path);
+        return;
+    }
+    blob = (unsigned char *) malloc((size_t) len);
+    if (blob == NULL || fread(blob, 1, (size_t) len, f) != (size_t) len) {
+        fclose(f); free(blob); g_uv_invalid++;
+        fprintf(stderr, "sl_texprov: %s unreadable - cartridge coordinates kept\n", path);
+        return;
+    }
+    fclose(f);
+    rc = sl_texprov_uv_parse(blob, (unsigned long) len, (unsigned) stage, &rows, &n);
+    free(blob);
+    if (rc != SL_TEXPROV_OK) {
+        g_uv_invalid++;
+        fprintf(stderr, "sl_texprov: %s INVALID (%s) - cartridge coordinates kept\n",
+                path, sl_texprov_strerror(rc));
+        return;
+    }
+    g_uv = (struct uv_row *) rows; g_uv_n = n;
+    fprintf(stderr, "sl_texprov: %s - %u carried triangles\n", path, n);
+}
+
+int sl_texprov_uv(int stage, int room, const unsigned idx[3], unsigned id,
+                  short st[6])
+{
+    int set = sl_texprov_active();
+    unsigned p[3], perm[3], lo, hi, i, k;
+    if (set == SL_TEXTURES_ORIGINAL || room < 0) return 0;
+    if (set != g_uv_set || stage != g_uv_stage) uv_load(set, stage);
+    if (g_uv_n == 0u) return 0;
+    /* the corners in increasing order, remembering where each came from */
+    for (i = 0; i < 3; i++) perm[i] = i;
+    for (i = 0; i < 3; i++)
+        for (k = i + 1; k < 3; k++)
+            if (idx[perm[k]] < idx[perm[i]]) { unsigned t = perm[i]; perm[i] = perm[k]; perm[k] = t; }
+    for (i = 0; i < 3; i++) p[i] = idx[perm[i]];
+    if (p[0] == p[1] || p[1] == p[2]) return 0;
+    lo = 0; hi = g_uv_n;
+    while (lo < hi) {
+        unsigned mid = (lo + hi) / 2u;
+        if (uv_key_cmp(&g_uv[mid], (unsigned) room, p) < 0) lo = mid + 1u; else hi = mid;
+    }
+    for (; lo < g_uv_n && uv_key_cmp(&g_uv[lo], (unsigned) room, p) == 0; lo++) {
+        if (g_uv[lo].id != id) continue;
+        for (i = 0; i < 3; i++) {
+            st[2 * perm[i]]     = g_uv[lo].st[2 * i];
+            st[2 * perm[i] + 1] = g_uv[lo].st[2 * i + 1];
+        }
+        g_uv_hits++;
+        return 1;
+    }
+    return 0;
+}
+
 void sl_texprov_report(FILE *f)
 {
     int set = (g_last_set >= 0) ? g_last_set : SL_TEXTURES_ORIGINAL;
     if (f == NULL) return;
+    if (g_uv_loads)
+        fprintf(f, "sl_texprov: carried coordinates: stage %d, %u rows, %u"
+                   " table loads (%u invalid), %u triangles drawn carried\n",
+                g_uv_stage, g_uv_n, g_uv_loads, g_uv_invalid, g_uv_hits);
     fprintf(f, "sl_texprov: TEXTURES=%s gen=%u switches=%u  registry=%u"
                " (replaced=%u dropped=%u full=%u)  lookups=%u unregistered=%u"
                " shape-miss=%u hits=%u miss-hits=%u  files loaded=%u"
@@ -887,6 +1050,66 @@ int main(void)
     img = sl_texprov_lookup(pool_c + 32, 4, 2);
     ck(img != NULL && memcmp(img->rgba, big, 128) == 0 && img->rgba[3] == 0 && img->rgba[7] == 255,
        "8x4 cutout: bytes identical, column 0 alpha 0, column 1 alpha 255");
+
+    /* 10. #77 the carried coordinates: a synthetic two-row table for stage
+     *     34, its lookup in any corner order, and every rejection. */
+    {
+        unsigned char t[16 + 24 * 2], bad[16 + 24 * 2];
+        char dir_u[460];
+        unsigned idx[3];
+        short st[6];
+        void *rows; unsigned n;
+        FILE *f;
+        int k;
+        memcpy(t, "SLUV", 4); wr32(t + 4, 1); wr32(t + 8, 34); wr32(t + 12, 2);
+        /* row 0: room 5, id 0x137, corners 10 < 11 < 40, (s,t) 100..600 */
+        wr16(t + 16, 5); wr16(t + 18, 0x137); wr16(t + 20, 10); wr16(t + 22, 11); wr16(t + 24, 40); wr16(t + 26, 0);
+        for (k = 0; k < 6; k++) wr16(t + 28 + 2 * k, (unsigned) (100 * (k + 1)));
+        /* row 1: room 7, id 0x2b9, corners 1 < 2 < 3, negative coordinates */
+        wr16(t + 40, 7); wr16(t + 42, 0x2b9); wr16(t + 44, 1); wr16(t + 46, 2); wr16(t + 48, 3); wr16(t + 50, 0);
+        for (k = 0; k < 6; k++) wr16(t + 52 + 2 * k, (unsigned) (unsigned short) (short) (-1000 - k));
+        ck(sl_texprov_uv_parse(t, sizeof t, 34, &rows, &n) == SL_TEXPROV_OK && n == 2u, "SLUV: a valid two-row table parses");
+        free(rows);
+        ck(sl_texprov_uv_parse(t, sizeof t, 35, &rows, &n) == SL_TEXPROV_E_ID, "SLUV: another stage's table -> E_ID");
+        memcpy(bad, t, sizeof t); bad[3] = 'X';
+        ck(sl_texprov_uv_parse(bad, sizeof t, 34, &rows, &n) == SL_TEXPROV_E_MAGIC, "SLUV: wrong magic -> E_MAGIC");
+        memcpy(bad, t, sizeof t); wr32(bad + 4, 2);
+        ck(sl_texprov_uv_parse(bad, sizeof t, 34, &rows, &n) == SL_TEXPROV_E_VERSION, "SLUV: version 2 -> E_VERSION");
+        ck(sl_texprov_uv_parse(t, sizeof t - 1, 34, &rows, &n) == SL_TEXPROV_E_PAYLOAD, "SLUV: one byte short -> E_PAYLOAD");
+        memcpy(bad, t, sizeof t); wr32(bad + 12, 3);
+        ck(sl_texprov_uv_parse(bad, sizeof t, 34, &rows, &n) == SL_TEXPROV_E_PAYLOAD, "SLUV: a count the size does not hold -> E_PAYLOAD");
+        memcpy(bad, t, sizeof t); wr16(bad + 22, 10);
+        ck(sl_texprov_uv_parse(bad, sizeof t, 34, &rows, &n) == SL_TEXPROV_E_FLAGS, "SLUV: corners not increasing -> refused");
+        memcpy(bad, t, sizeof t); wr16(bad + 26, 1);
+        ck(sl_texprov_uv_parse(bad, sizeof t, 34, &rows, &n) == SL_TEXPROV_E_FLAGS, "SLUV: a non-zero pad word -> refused");
+        memcpy(bad, t, sizeof t); wr16(bad + 40, 4);
+        ck(sl_texprov_uv_parse(bad, sizeof t, 34, &rows, &n) == SL_TEXPROV_E_FLAGS, "SLUV: rows out of order -> refused");
+
+        sprintf(dir_u, "%s\\uv", dir_x); _mkdir(dir_u);
+        sprintf(path, "%s\\34.sluv", dir_u);
+        f = fopen(path, "wb"); ck(f != NULL, "write xbla uv\\34.sluv");
+        if (f) { fwrite(t, 1, sizeof t, f); fclose(f); }
+
+        idx[0] = 40; idx[1] = 10; idx[2] = 11;          /* the row's corners, rotated */
+        g_test_setting = SL_TEXTURES_COMMUNITY;
+        ck(sl_texprov_uv(34, 5, idx, 0x137, st) == 0, "COMMUNITY (no table): cartridge coordinates");
+        g_test_setting = SL_TEXTURES_XBLA;
+        ck(sl_texprov_uv(34, 5, idx, 0x137, st) == 1
+           && st[0] == 500 && st[1] == 600 && st[2] == 100 && st[3] == 200 && st[4] == 300 && st[5] == 400,
+           "XBLA: the row is found in any corner order and comes back in the caller's order");
+        idx[0] = 3; idx[1] = 1; idx[2] = 2;
+        ck(sl_texprov_uv(34, 7, idx, 0x2b9, st) == 1 && st[0] == -1004 && st[1] == -1005 && st[2] == -1000,
+           "XBLA: negative coordinates survive");
+        ck(sl_texprov_uv(34, 7, idx, 0x137, st) == 0, "XBLA: the same triangle under another id -> 0");
+        ck(sl_texprov_uv(34, 6, idx, 0x2b9, st) == 0, "XBLA: another room -> 0");
+        ck(sl_texprov_uv(35, 7, idx, 0x2b9, st) == 0, "XBLA: another stage (no table) -> 0");
+        g_test_setting = SL_TEXTURES_ORIGINAL;
+        ck(sl_texprov_uv(34, 7, idx, 0x2b9, st) == 0, "ORIGINAL: never carried");
+        g_test_setting = SL_TEXTURES_XBLA;
+        ck(sl_texprov_uv(34, 7, idx, 0x2b9, st) == 1, "XBLA again: carried again");
+        remove(path); _rmdir(dir_u);
+        g_test_setting = SL_TEXTURES_COMMUNITY;
+    }
 
     sl_texprov_report(stdout);
     sprintf(path, "%s\\0012.sltx", dir_c); remove(path);

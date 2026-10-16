@@ -545,6 +545,16 @@ void solo_char_load(void)
         }
 
         g_CurrentPlayer->bodyModel = makeonebody(body, head, bodyheader, headheader, 0, model);
+#ifndef __sgi
+        /* #70: which of the game's model files the player's external body is
+         * - its headers here are private copies, and this build records no
+         * body or head number on the player's character - for the
+         * character-asset seam (src/sl_chr_asset.h). Read-only. */
+        {
+            extern void sl_chr_player_model(const void *model, const void *hdr, int body, int head);
+            sl_chr_player_model(g_CurrentPlayer->bodyModel, bodyheader, body, head);
+        }
+#endif
         modelSetScale(g_CurrentPlayer->bodyModel, g_CurrentPlayer->bodyModel->scale * 0.97f);
         init_GUARDdata_with_set_values(g_CurrentPlayer->prop, g_CurrentPlayer->bodyModel, &g_CurrentPlayer->prop->pos, yaw, g_CurrentPlayer->prop->stan, NULL);
         pp = &g_CurrentPlayer;
@@ -4756,7 +4766,7 @@ extern int sl_move_channels_get(s32 *walk, s32 *strafe, s32 *turn, s32 *pitch);
  * displacement was DISTRIBUTED ACROSS FRAMES, not on its sum, so equal-and-
  * opposite mouse motion delivered at different speeds does not return to the
  * starting angle - MEASURED at -52.5 degrees per cycle for 300 counts left
- * over 5 frames against 300 right over 20. That is the owner's reported
+ * over 5 frames against 300 right over 20. That is the playtest-reported
  * symptom. A stick reports a POSITION and the curve is right for it; a mouse
  * reports a DISPLACEMENT that has already happened. Returns 0 for the pad, for
  * every headless run and for every recorded replay, and the cartridge curve
@@ -4824,7 +4834,7 @@ extern int sl_sprint_enabled(void);
 static s32 g_sl_sprint_held = 0;
 static s32 g_sl_sprint_applied = 0;
 
-/* WHAT SPRINT IS, and why it is a vector-magnitude rule (owner spec, #42).
+/* WHAT SPRINT IS, and why it is a vector-magnitude rule (spec, #42).
  *
  * The keyboard's walk and strafe channels arrive at +/-70 each and are
  * consumed PER AXIS (:6011 strafe/70 and :6030 walk/70, each clamped to
@@ -5608,7 +5618,7 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
      *   lvlGetControlsLockedFlag / disablePlayerActionsWhenPausedOrInMpMenu
      *                          the two gates the 1.x branch uses at :5131-5133
      *                          and the 2.x branch at :4932.
-     *   g_PlayerIsInTank       NOT a gate any more (2026-09-11, owner-reported:
+     *   g_PlayerIsInTank       NOT a gate any more (2026-09-11, playtest report:
      *                          in the Runway tank "looking around works but the
      *                          tank does not move with WASD"). The exclusion
      *                          was a deferral ("not this milestone's"), not a
@@ -5635,7 +5645,7 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
      *                          selects WHICH channels apply, not whether any
      *                          do.
      *
-     * AIM MODE (changed 2026-09-03, owner-reported: right-click aiming
+     * AIM MODE (changed 2026-09-03, playtest report: right-click aiming
      * "behaves like a mouse being converted into digital/stick input").
      *
      * Aim mode was a gate here, and the platform layer routed the mouse onto
@@ -5890,7 +5900,7 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
      * above took neither tank branch - the press is an on-foot use. Carry it
      * to lvlRender under its own name and clear field_D0, so the contextual
      * use-or-reload line at lv.c:756 sees no press: E interacts, and when
-     * nothing is there it does NOTHING, which is the owner's boundary. A B
+     * nothing is there it does NOTHING, which is the specified boundary. A B
      * press on the same tick is folded in as an interact-only press; that
      * costs the B press its reload fallback for that one tick and nothing
      * else. See g_sl_interact_only. */
@@ -6309,8 +6319,8 @@ void bondviewProcessInput(s8 stick_x, s8 stick_y, u16 buttons, u16 oldbuttons)
                  * and the block at :5965 then dragged vv_verta back toward
                  * targetPitch (about -4 degrees) - overriding the analog pitch
                  * branch entirely, because that branch is the ELSE of
-                 * `if (docentreupdown)`. Owner: pitch "doesn't fully move up or
-                 * down" and "fights to move away from centre of screen".
+                 * `if (docentreupdown)`. Playtest: pitch "doesn't fully move
+                 * up or down" and "fights to move away from centre of screen".
                  *
                  * Extending the CONDITION is the faithful repair. Writing the
                  * pitch channel into speedVertaUp/Down would be wrong twice over:
@@ -8793,6 +8803,19 @@ void bondviewUpdateCameraMatrices(coord3d* cam_pos, coord3d* cam_look_dir, coord
         extern void sl_gfx_note_world_projection2(unsigned int addr);
         sl_gfx_note_world_projection2((unsigned int) osVirtualToPhysical((void *) temp_s0));
     }
+    /* High-refresh presentation (src/gfx/sl_gfx_present.c): the camera this
+     * frame's world matrices were built from - eye, look, up, the render
+     * origin and its scale, the camera mode - copied out so a presentation
+     * frame can place the view between two simulation frames. Read only:
+     * nothing here is written back, and nothing in the simulation reads the
+     * copy. */
+    {
+        extern void sl_gfx_note_camera(const float *eye, const float *look, const float *up,
+                                       const float *origin, float scale, int mode);
+        sl_gfx_note_camera(cam_pos->f, cam_look_dir->f, cam_up->f,
+                           g_CurrentPlayer->current_model_pos.f, D_800364CC,
+                           (int) g_CurrentPlayer->cameramode);
+    }
 #endif
 
     scale = bgGetLevelVisibilityScale();
@@ -9172,7 +9195,23 @@ Gfx *bondviewRenderWatch(Gfx *gdl)
             renderdata.envcolour.word = g_CurrentPlayer->tileColor.a | (((g_CurrentPlayer->tileColor.r << 24) | (g_CurrentPlayer->tileColor.g << 16)) | (g_CurrentPlayer->tileColor.b << 8));
         }
     
+#ifndef __sgi
+        /* #70: a presentation's replacement for the arm the watch is worn on,
+         * drawn in place of the model's own lists with the costume's sleeve
+         * (src/sl_chr_asset.h, THE WATCH HAND). Render-only; the walk below
+         * is unchanged. */
+        {
+            extern void sl_vm_watch_begin(void *model, ModelRenderData *mr);
+            sl_vm_watch_begin(&g_CurrentPlayer->something_with_watch_object_instance, &renderdata);
+        }
+#endif
         subdraw(&renderdata, (Model *) (&g_CurrentPlayer->something_with_watch_object_instance));
+#ifndef __sgi
+        {
+            extern void sl_vm_asset_end(void);
+            sl_vm_asset_end();
+        }
+#endif
         gdl = renderdata.gdl;
         nodepos2 = (f32 *) objheader->Switches[2]->Data;
         finalmtx = dynAllocateMatrix();

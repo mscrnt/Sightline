@@ -19,8 +19,8 @@
  * the keyboard's W/A/S/D / arrows and the pad's left stick deflect it (the
  * menus navigate on stick thresholds), A / Enter confirm, B / Escape back.
  *
- * WHAT LEFT ON 2026-09-20 (#63, owner decision: "Sightline will never get an
- * N64 controller hooked up and we aren't using emulation"): the ORIGINAL
+ * WHAT LEFT ON 2026-09-20 (#63, design decision: Sightline never has an
+ * N64 controller attached and does not use emulation): the ORIGINAL
  * controller profile - the pad as a virtual N64 pad interpreted by the
  * game's eight control styles (map_pad, map_pad_dual, the SL_CONTROLS=retro
  * knob, the style-dependent stick pair), BUTTON MODE (the pad's four fixed
@@ -151,7 +151,7 @@
  *   SL_MOUSE=0            never capture the pointer; keyboard still works
  *   SL_MOUSE_WARP=1       warp-based relative mode instead of raw input. A
  *                         DIAGNOSTIC, off everywhere by default - it was tried
- *                         as the x11 default and failed the owner's hand test
+ *                         as the x11 default and failed the hand test
  *                         on both confinement and feel (see read_env)
  *   SL_MOUSE_DX_SIGN=1    physical-to-SDL dx sign; see read_mouse
  *   SL_MOUSE_DY_SIGN=1    physical-to-SDL dy sign; see read_mouse
@@ -310,10 +310,10 @@ extern int sl_game_action_witness(char *out, int n);
  * cursor_v_pos, and every one of the screens this layer calls a pointer menu
  * calls it (front.c:2903 file select, :3167 mode select, :3544 mission select,
  * :3867 difficulty, :7027 briefing). Leaving the host cursor up there drew two
- * pointers on top of each other - owner-reported on file select, 2026-09-07 -
+ * pointers on top of each other - playtest report on file select, 2026-09-07 -
  * so on those screens the host's goes away and the game's crosshair IS the
- * pointer. Owner's words: "i want the crosshairs in the select file and beyond.
- * Regular mouse cursor is fine for the legal, and other logos."
+ * pointer. Requirement: the crosshair in file select and beyond; the
+ * regular mouse cursor is fine for the legal screen and the other logos.
  *
  * Nothing new is drawn for this. crosshairimage is the game's own asset
  * (image_bank.c:66, :245), and the same one the gameplay crosshair uses
@@ -452,8 +452,8 @@ static int   g_grab_wanted;
  * ALTERNATE PRODUCERS of the one logical pad the game is driven by; the
  * second virtual N64 pad the shim presents is neutral and is nobody's.
  *
- * Why a list at all, when only one is read: the owner has both attached, and
- * "unplug one to use the other" is not an acceptable answer. See
+ * Why a list at all, when only one is read: the reference machine has both
+ * attached, and "unplug one to use the other" is not an acceptable answer. See
  * sl_input_live_device_change in sl_input.h for the measured device churn
  * that made the previous single, once-probed slot fail outright. */
 #define SL_MAX_PADS 8
@@ -491,7 +491,7 @@ static float g_sens;
  *            docs/decisions/native-input-signs.md, taken when no sign was
  *            applied here at all, i.e. at +1/+1.
  *
- *   else     -1 / -1. Owner-validated by hand under WSLg/XWayland at commit
+ *   else     -1 / -1. Validated by hand under WSLg/XWayland at commit
  *            fbcc3a48, where the raw relative stream did NOT follow SDL's
  *            nominal convention. That acceptance is real and is kept, but it
  *            is evidence about THAT transport only.
@@ -500,7 +500,7 @@ static float g_sens;
  * defaults on the WSLg acceptance alone, days before the checkout moved to
  * Windows, and the platform move carried the WSLg value onto a transport that
  * negates nothing. Two negations, both axes, which is exactly the mirroring
- * the owner reported. Nothing downstream of this line changed. */
+ * reported in playtest. Nothing downstream of this line changed. */
 #ifdef _WIN32
 static int   g_dx_sign = 1;
 static int   g_dy_sign = 1;
@@ -625,7 +625,7 @@ static unsigned short g_esc_button;    /* chosen when the hold started */
 /* TAB, on the same countdown and for the same reason, but with none of
  * Escape's context-sensitivity: Tab is always START. Tab and Escape are now the
  * ONLY PC keys that open the watch - Enter used to synthesise START and that is
- * exactly the owner-reported defect this replaces. */
+ * exactly the playtest-reported defect this replaces. */
 static int            g_start_polls;
 
 /* MOUSE WHEEL -> one discrete vertical menu step per notch, menus only.
@@ -827,7 +827,7 @@ static void read_env(void)
      *
      * It was briefly the DEFAULT on x11 here, on the strength of a synthetic
      * XTEST probe in which the pointer never left the window. That probe passed
-     * and the owner's hand test FAILED: warp-relative delivered neither
+     * and the hand test FAILED: warp-relative delivered neither
      * reliable confinement nor acceptable feel, and mouse look was noticeably
      * jerkier than a normal FPS mouse. Warping is synthetic motion - SDL moves
      * the pointer to recentre it and must then subtract its own warp from the
@@ -880,8 +880,8 @@ static void read_env(void)
      * this poll (sl_mouse_invert_y_seed) stands, and a variable left in the
      * shell is reported and ignored. Absent, nothing is assigned either way.
      *
-     * MEASURED 2026-09-18 (#46 owner replay): SL_MOUSE_INVERT=1, left in the
-     * owner's shell from the #39 steps, displaced the config's 0 at every
+     * MEASURED 2026-09-18 (#46 playtest): SL_MOUSE_INVERT=1, left in the
+     * playtest shell from the #39 steps, displaced the config's 0 at every
      * launch (loaded mouse_invert_y=0 -> minv=1 at the first poll). The
      * watch's OFF then wrote nothing - the store already held 0 while the
      * live state was 1 - and the next launch re-applied the env, so INVERT
@@ -959,16 +959,16 @@ static void read_keyboard(sl_intent *in, int menu)
     /* ENTER IS CONFIRM AND NOTHING ELSE. It used to raise `pause`, which
      * map_kbm turned into START outside a menu, which is bondviewProcessInput's
      * own trigger for the watch (:4839) - so pressing Enter in play opened the
-     * watch. Owner-reported, and the cause was that one line. Enter is now its
-     * own intent and only ever reaches N64 A. Tab and Escape are the watch
-     * keys; see g_start_polls and sl_input_live_escape. */
+     * watch. Reported in playtest, and the cause was that one line. Enter
+     * is now its own intent and only ever reaches N64 A. Tab and Escape
+     * are the watch keys; see g_start_polls and sl_input_live_escape. */
     if (k[SDL_SCANCODE_RETURN] || k[SDL_SCANCODE_KP_ENTER])
         in->confirm = 1;
 
     /* Arrows are the D-pad. The game ORs D-pad with C throughout the move
      * code (`L_JPAD | L_CBUTTONS`), so they double as movement, and they are
      * what makes the front-end menus navigable. */
-    /* F9 = "I am looking at the bug right now." Not a game binding, so it
+    /* F9 = "the bug is on screen right now." Not a game binding, so it
      * never reaches the pad and never enters the recorded stream. */
     {
         extern void sl_run_mark(unsigned);
@@ -982,7 +982,7 @@ static void read_keyboard(sl_intent *in, int menu)
     /* F8 = the SAME statement, answered rather than deferred. F9 records the
      * moment and leaves the diagnosis to a replay; the measured divergence
      * between a native recording and its replay reaches 202 world units by
-     * sample 4201, so what the replay shows is not what the owner marked. F8
+     * sample 4201, so what the replay shows is not what was marked live. F8
      * therefore captures the answer in the live run: the frame that is on
      * screen, the camera and rooms behind it, and the draws that project onto
      * the centre of it. See sl_mark_request in src/gfx/sl_gfx_dl.c.
@@ -1028,8 +1028,8 @@ static void read_keyboard(sl_intent *in, int menu)
  * One window pixel per mouse count, under the same per-platform dx/dy sign
  * the look path applies (see read_mouse) and NEVER the Invert Mouse Y state -
  * a pointer is not a pitch. Starts at the window centre the first time and
- * keeps its place across watch open/close after that (the owner's "keep the
- * last mouse position", 2026-09-07, applies here as it does to the front
+ * keeps its place across watch open/close after that (the "keep the last
+ * mouse position" requirement, 2026-09-07, applies here as it does to the front
  * end's cursor). */
 static float g_wptr_x, g_wptr_y;
 static int   g_wptr_init;
@@ -1635,7 +1635,7 @@ static void read_pad(sl_intent *in, int layout)
     /* WHICH PHYSICAL PAD DRIVES THE GAME: the last one touched, decided here
      * and nowhere else. It needs no menu, no launch flag and no unplugging -
      * pick either controller up and it is the one playing, which is the only
-     * arbitration the owner should have to perform.
+     * arbitration a player should have to perform.
      *
      * This is the SAME rule the file already applies one level up between the
      * keyboard/mouse and the pad ("LAST DEVICE WINS" in the header); it is now
@@ -1759,11 +1759,11 @@ static void read_pad(sl_intent *in, int layout)
         in->action = 1;
 
     /* BACK ("Select" / "View" / "Create") USED TO MARK HERE, the same as F9.
-     * It does not any more (#47, the owner: "the 'Select' button (the button
-     * that currently marks) on controller? We wont need to mark with
-     * controller"), so the button left this hard-wired block and became an
+     * It does not any more (#47 requirement: the controller's 'Select'
+     * button, which used to mark, is no longer needed for marking on the
+     * controller), so the button left this hard-wired block and became an
      * ordinary REGISTRY source (sl_bindings.c g_pad), which every preset
-     * binds to TEXTURE SET. Two consequences worth stating: the pad can no
+     * binds to PRESENTATION. Two consequences worth stating: the pad can no
      * longer mark at all - F9 and F8 are unchanged and are still the way to
      * mark - and the button is now re-bindable like any other, so a player
      * who wants something else there changes it in the bindings editor.
@@ -1830,9 +1830,9 @@ int sl_input_pad_visual(sl_pad_visual *out)
  * map_pad_dual for the 2.x two-controller styles) and the GAME's chosen
  * style decided what each button did - authentic, and digital-looking
  * under 1.1. From #63 (2026-09-19) a MODERN profile put the pad on the
- * native channels instead, and on 2026-09-20 the owner retired the N64
- * profile, the eight styles and BUTTON MODE outright ("Sightline will never
- * get an N64 controller hooked up and we aren't using emulation"). What is
+ * native channels instead, and on 2026-09-20 a design decision retired the N64
+ * profile, the eight styles and BUTTON MODE outright (Sightline never has
+ * an N64 controller attached and does not use emulation). What is
  * left is the one function below.
  * ------------------------------------------------------------------------- */
 
@@ -1980,7 +1980,7 @@ static void map_pad_modern(const sl_intent *in, int menu, int menu_stick,
  * logged grab=1: the OS pointer was sitting at (2086,426) while the window
  * occupied (2124,446)-(3084,1166), and an XTEST warp to (5,5) moved it into a
  * different application and left it there. The internal boolean said captured;
- * the pointer was not. That is the owner's report, reproduced.
+ * the pointer was not. That is the playtest report, reproduced.
  *
  * Two further measurements shaped the fix:
  *
@@ -2000,7 +2000,7 @@ static void map_pad_modern(const sl_intent *in, int menu, int menu_stick,
  * first call returned 0". It is still not a claim about the X server.
  *
  * ONE MODE PER SCREEN CLASS, 2026-09-06/07. This used to be a boolean, and the
- * boolean was the bug the owner reported next: the front end released
+ * boolean was the bug reported next in playtest: the front end released
  * EVERYTHING for a menu, so the pointer wandered onto the desktop while the
  * player was navigating. The fix is not to grab harder in menus, it is to
  * notice that grab, relative mode and cursor visibility are three separate
@@ -2069,7 +2069,7 @@ static void set_pointer_mode(int mode)
          * mouse-specific call is the narrower one and is what is meant here.
          *
          * NOT claimed: that the two behave differently on this backend. That
-         * would need an A/B with a real pointer, which is the owner's, so it
+         * would need an A/B with a real pointer under manual play, so it
          * was not run. This is the correct API to be calling either way. */
         if (w != NULL && !have_grab)
             SDL_SetWindowMouseGrab(w, SDL_TRUE);
@@ -2089,7 +2089,7 @@ static void set_pointer_mode(int mode)
          * The return code is checked and reported ONCE, because it is the one
          * thing that distinguishes "this backend supports the barrier" from
          * "it does not", and that fork decides whether anything further is a
-         * production change or an owner architecture decision. */
+         * production change or a project architecture decision. */
         want_rect.x = 0;
         want_rect.y = 0;
         want_rect.w = ww;
@@ -2432,7 +2432,7 @@ static void map_kbm(const sl_intent *in, int menu, int menu_stick, int aim,
      * and the mouse has exactly one switch, upstream. The only negation left
      * below is the cancellation of the game's own block. */
 
-    /* THE MOUSE OWNS ITS OWN PITCH - owner decision, 2026-09-01, replacing the
+    /* THE MOUSE OWNS ITS OWN PITCH - design decision, 2026-09-01, replacing the
      * previous requirement that GoldenEye's Look Up/Down option govern it.
      *
      * That option is a CONTROLLER setting. It reaches pitch inside
@@ -2440,8 +2440,8 @@ static void map_kbm(const sl_intent *in, int menu, int menu_stick, int aim,
      * and swaps speedVertaDown/Up when the player has selected UPRIGHT
      * (:4849 sets invertPitch to the NEGATION of the setting, :5579 acts on
      * invertPitch == 0). Everything the mouse produces passes through that
-     * block, so selecting UPRIGHT reversed mouse pitch - the owner's "mouse UP
-     * looks DOWN", and their "pitch still tracks the Look Up/Down setting".
+     * block, so selecting UPRIGHT reversed mouse pitch - the reported "mouse UP
+     * looks DOWN", and "pitch still tracks the Look Up/Down setting".
      *
      * Pre-negating here cancels that block exactly, because this function's
      * ONE look output is derived from `pitch`:
@@ -2497,14 +2497,14 @@ static void map_kbm(const sl_intent *in, int menu, int menu_stick, int aim,
         return;
     }
 
-    /* LOOK IS ONE PATH, AIMING OR NOT - owner decision, 2026-09-03.
+    /* LOOK IS ONE PATH, AIMING OR NOT - design decision, 2026-09-03.
      *
      * These two lines used to be reached only when aim mode was OFF; while it
      * was on, an earlier branch here wrote the mouse into the N64 STICK and
      * returned, and sl_input_live_poll withheld the channels. That is the
      * defect: a stick reports a POSITION and a mouse reports a RATE, and the
      * game's aim mode consumes stick POSITION. The consequences were all
-     * visible in the owner's hands:
+     * visible in manual play:
      *
      *   - the crosshair FLOATS, because bondview2.c:6256 offsets it from
      *     controlStickXRaw/YRaw, so one frame of mouse motion displaced the
@@ -2596,7 +2596,7 @@ void sl_input_live_poll(void)
      * first menu would be a pointless ceremony. All three are released the
      * moment focus goes, so alt-tab is not a trap in any of them.
      *
-     * THE WATCH KEEPS THE CAPTURE (#40, owner request 2026-09-17: the OS
+     * THE WATCH KEEPS THE CAPTURE (#40, requirement 2026-09-17: the OS
      * cursor stays hidden and captured as in gameplay, and a small copy of
      * the game's own crosshair is the pointer). Relative mode therefore stays
      * on across open and close - no re-grab, no bogus delta, no second click
@@ -2737,18 +2737,23 @@ void sl_input_live_poll(void)
             if (act[i].pressed)
                 sl_action_channels_pulse(i, act[i].pressed);
 
-        /* #47. THE TEXTURE CYCLE is consumed HERE and published to the game
-         * nowhere: the setting is the renderer's, not the simulation's, and
-         * sl_action_channels_pulse drops it at its own SL_ACTCH_COUNT bound.
-         * It takes `act_on` - the same "live input and no menu is up"
-         * predicate the publish takes - so a press cannot land while the
-         * watch, the front end or a binding capture owns input; and because
-         * the edge comes from the evaluator's raw level memory rather than a
-         * private `static int held`, a button still down as a menu closes
-         * produces no edge on the frame it closes. */
-        if (act_on && act[SL_ACT_TEXTURE_CYCLE].pressed) {
-            extern void sl_textures_cycle(void);
-            sl_textures_cycle();
+        /* #47, retargeted by #68. THE PRESENTATION CYCLE is consumed HERE and
+         * published to the game nowhere: the setting is the renderer's, not
+         * the simulation's, and sl_action_channels_pulse drops it at its own
+         * SL_ACTCH_COUNT bound. It takes `act_on` - the same "live input and
+         * no menu is up" predicate the publish takes - so a press cannot land
+         * while the watch, the front end or a binding capture owns input; and
+         * because the edge comes from the evaluator's raw level memory rather
+         * than a private `static int held`, a button still down as a menu
+         * closes produces no edge on the frame it closes.
+         *
+         * ONE HOTKEY, MORE REACH. The press used to step the texture set
+         * alone; it now steps the PRESENTATION, which resolves every visual
+         * provider - so the same F5 that changes the artwork also brings the
+         * Dam's XBLA skydome in and out. No second binding was added. */
+        if (act_on && act[SL_ACT_PRESENTATION_CYCLE].pressed) {
+            extern void sl_presentation_cycle(void);
+            sl_presentation_cycle();
         }
     }
 

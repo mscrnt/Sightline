@@ -87,7 +87,7 @@
  * row's text y, every highlight box, every hit-test threshold and the cursor
  * return position (setCursorPOSforMode), so the group moves as one and its
  * spacing (0x20 per row, thresholds 9 above each row's text) is untouched.
- * Half a row pitch: "moved up a little" (owner, 2026-09-17), an owner visual
+ * Half a row pitch: "moved up a little" (playtest, 2026-09-17), a visual
  * gate rather than a fidelity question. The third row is always drawn and
  * always selectable - it opens the Options screen (src/native/
  * sl_front_options.c), and the cheat menu now lives under it, so the original
@@ -98,7 +98,7 @@
 /* The same value, readable from src/native/sl_front_options.c so the Options
  * screen's rows sit at exactly this height too - one constant, one place. */
 const s32 sl_modesel_dy = SL_MODESEL_DY;
-/* The fourth row, QUIT GAME (native only; owner-observed 2026-09-20: with
+/* The fourth row, QUIT GAME (native only; observed in play 2026-09-20: with
  * no such entry there was no normal way to close the game at a large
  * resolution or fullscreen). Its highlight value in
  * mission_difficulty_highlighted - the value after Rare's three rows; on this
@@ -3128,7 +3128,7 @@ void interface_menu06_modesel(void)
         }
     }
 #ifndef __sgi
-    /* The fourth row is QUIT GAME (native only; owner-observed 2026-09-20:
+    /* The fourth row is QUIT GAME (native only; observed in play 2026-09-20:
      * no normal way to close at a large resolution or fullscreen). The next
      * band down by the menu's own rule - a row every 0x20, its band from 9
      * above its text (the 243 / 275 compares) - so 0x13C - 9 = 307, plus the
@@ -7164,6 +7164,14 @@ void init_menu0A_briefing(void)
     set_briefing_page(0);
     load_walletbond();
     load_briefing_text_for_stage();
+#ifndef __sgi
+    /* NATIVE ONLY - Egyptian's Q Branch attachment starts closed on every
+     * briefing (src/native/sl_brief_plan.c). */
+    {
+        extern void sl_brief_plan_reset(void);
+        sl_brief_plan_reset();
+    }
+#endif
 }
 
 
@@ -7178,6 +7186,9 @@ void update_menu0A_briefing(void)
 
 void interface_menu0A_briefing(void)
 {
+#ifndef __sgi
+    s32 sl_plan;
+#endif
     viSetFovY(FOV_Y_F);
     viSetAspect(ASPECT_RATIO_SD);
     viSetZRange(100.0f, 10000.0f);
@@ -7205,6 +7216,23 @@ void interface_menu0A_briefing(void)
     {
         tab_start_highlight = TRUE;
     }
+#ifndef __sgi
+    /* NATIVE ONLY - Egyptian's Q Branch attachment (src/native/sl_brief_plan.c)
+     * takes this frame's A/Z while the cursor is on its line or its sheet is
+     * open, and B while the sheet is open. No tab is highlighted then, so the
+     * A/Z arm below acts on nothing but its click, and the B arm is skipped
+     * for the press that closed the sheet. START is never taken. */
+    {
+        extern s32 sl_brief_plan_interface(s32 stage_id, s32 page);
+        sl_plan = sl_brief_plan_interface(mission_folder_setup_entries[briefingpage].stage_id, current_menu_briefing_page);
+        if (sl_plan != 0)
+        {
+            tab_prev_highlight = FALSE;
+            tab_next_highlight = FALSE;
+            tab_start_highlight = FALSE;
+        }
+    }
+#endif
     if (joyGetButtonsPressedThisFrame(PLAYER_1, START_BUTTON))
     {
         tab_next_selected = TRUE;
@@ -7235,6 +7263,12 @@ void interface_menu0A_briefing(void)
     }
     else if (joyGetButtonsPressedThisFrame(PLAYER_1, B_BUTTON) != 0)
     {
+#ifndef __sgi
+        if (sl_plan == 2)   /* SL_BRIEF_PLAN_OPEN: this B closed the attachment */
+        {
+        }
+        else
+#endif
         if (current_menu_briefing_page > BRIEFING_TITLE)
         {
             set_briefing_page(current_menu_briefing_page - 1);
@@ -7437,6 +7471,14 @@ Gfx *constructor_menu0A_briefing(Gfx *DL)
         setTextOverlapCorrection(8);
         DL = frontPrintText(DL, &spC08, &spC04, (s8*)&sp4C, ptrFontZurichBoldChars, ptrFontZurichBold, 0xFF, viGetX(), viGetY(), 0, 0);
         setTextOverlapCorrection(-1);
+#ifndef __sgi
+        /* NATIVE ONLY - Egyptian's Q Branch attachment: its line under the
+         * page text, or its sheet over the page body (src/native/sl_brief_plan.c). */
+        {
+            extern Gfx *sl_brief_plan_draw(Gfx *DL, s32 stage_id, s32 page, s32 text_y);
+            DL = sl_brief_plan_draw(DL, mission_folder_setup_entries[briefingpage].stage_id, current_menu_briefing_page, spC04);
+        }
+#endif
     }
 
     DL = frontAddStartTabText(DL);

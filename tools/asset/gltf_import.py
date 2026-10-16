@@ -17,7 +17,7 @@ Usage is normally through the PowerShell wrapper:
     .\\tools\\windows\\asset-import.ps1 -Help
 
 Standard library only, by design: the converter must run on a bare Python with
-no wheels installed, because it is the one step between the owner's Blender
+no wheels installed, because it is the one step between an author's Blender
 export and a working override.
 """
 
@@ -99,7 +99,7 @@ PART_F_AUTHORED = 1         # part flag: geometry authored for Sightline, not
 
 # --------------------------------------------------------------------------
 # Limits. THESE ARE THE SAME NUMBERS THE RUNTIME ENFORCES
-# (src/sl_asset_override.h, SL_AMDL_MAX_*). Checking here means the owner gets
+# (src/sl_asset_override.h, SL_AMDL_MAX_*). Checking here means the author gets
 # a useful message at import time instead of a rejection at boot; checking
 # there means a hand-edited or corrupt file still cannot make the game
 # allocate a gigabyte.
@@ -210,9 +210,9 @@ ALLOWED_EXTENSIONS = {"KHR_materials_unlit"}
 #   re-running the tool.
 #
 # What this does NOT decide is whether the author had the RIGHT to make those
-# pixels - font licensing, third-party artwork, and the like. That is an
-# owner's judgement about a specific asset and no check here can stand in for
-# it; the provenance string is what puts the question in front of them.
+# pixels - font licensing, third-party artwork, and the like. That is a
+# judgement about a specific asset and no check here can stand in for it; the
+# provenance string is what puts the question on record for review.
 # ==========================================================================
 
 AUTHORED_KEY = "sl_authored"
@@ -400,7 +400,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # two with gDPLoadTextureBlock(..., G_IM_FMT_RGBA, G_IM_SIZ_16b, 32, 32, ...).
 RAREWARE_LOGO_C = "assets/rarewarelogo.c"
 
-# MEASURED from the owner's own export of the ROM prop, decoded to RGBA the way
+# MEASURED from a local export of the ROM prop, decoded to RGBA the way
 # this importer decodes any greyscale PNG. See the note above on why a digest
 # is here and pixels are not.
 NINTENDO_LOGO_SHA256 = (
@@ -633,7 +633,7 @@ def report_fit(asset, lo, hi, scale):
 
 
 class ImportError_(Exception):
-    """A rejection with an explanation the owner can act on."""
+    """A rejection with an explanation the author can act on."""
 
 
 # ==========================================================================
@@ -1033,7 +1033,7 @@ def xform_normal(b, n):
 # (x, -z, y) - so every polygon the watch camera looks at carried a normal
 # pointing sideways or away from the rig's light, took the ambient term
 # alone (0.30) and drew as a dark silhouette: the white DualSense at RGB 69
-# on the dark green face, read by the owner as nothing drawn at all. The
+# on the dark green face, read in playtest as nothing drawn at all. The
 # earlier witness had been captured at 4x exposure, which hid it.
 #
 # The importer cannot know a source's intended frame, but it can MEASURE
@@ -1182,7 +1182,7 @@ def rebase_normals(positions, normals, indices):
 # re-based positions into the frame's box but not its orientation: drawn on
 # the page (which already tilts the frame 45 degrees away from the camera)
 # the Xbox face lay 62 degrees from the eye, foreshortened, its top edge
-# toward the viewer - the owner's "it doesn't face the right way".
+# toward the viewer - the playtest report's "it doesn't face the right way".
 #
 # The importer cannot know a source's intended orientation, but it can
 # MEASURE the face: the canonical face-level parts (FACE_*, DPAD, MENU,
@@ -1597,7 +1597,7 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
     # A uniform pre-scale, baked in exactly the way a node transform is. It
     # lives here rather than in the renderer deliberately: the runtime contract
     # stays 1 glTF unit == 1 N64 model unit for every asset, with no per-logo
-    # number anywhere in the game, and the owner's choice is recorded in the
+    # number anywhere in the game, and the author's choice is recorded in the
     # file they installed.
     root_xform = (scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, 1.0)
 
@@ -1644,7 +1644,7 @@ def convert(g: Gltf, verbose: bool = True, scale: float = 1.0,
             raise ImportError_("more than %d parts" % MAX_PARTS)
         ex = node.get("extras") or {}
         flags = 0
-        # The owner's replacement geometry (the de-branded Guide / PS
+        # The Sightline-authored replacement geometry (the de-branded Guide / PS
         # buttons) is flagged on the node so the file, and the provenance
         # record derived from it, say which parts are Sightline-authored
         # and which are the third party's. Preserved, never inferred.

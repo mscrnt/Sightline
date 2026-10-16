@@ -39,7 +39,7 @@
  *     fullscreen_height=0
  *     vsync=0
  *     world_detail=0
- *     textures=0
+ *     presentation=0
  *
  * Unknown keys are ignored and preserved nowhere (the file is rewritten from
  * the table), a malformed or out-of-range value falls back to that setting's
@@ -47,7 +47,7 @@
  * file is rewritten only when a value actually changes, through a temp file
  * and an atomic replace.
  *
- * RETIRED KEYS (#63, 2026-09-20 - owner decision: no ORIGINAL / MODERN
+ * RETIRED KEYS (#63, 2026-09-20 - design decision: no ORIGINAL / MODERN
  * profile, no N64 control styles, no BUTTON MODE): control_style (the game
  * side is pinned to 1.1 Honey by sl_settings_apply.c), pad_button_mode (the
  * registry's PAD slots are always live) and controller_profile (the pad is
@@ -65,6 +65,12 @@
  * binding line means is the registry's business. Same version; a file
  * without any is the #42 file.
  *
+ * NOTE for #68: the fifteenth action's persisted binding key stayed
+ * `bind.texture_cycle.*` when the action became PRESENTATION. The key is a
+ * STORED identity, and renaming it would silently discard whatever the player
+ * had bound; the label the player reads comes from the registry's display
+ * columns, which did change. See sl_bindings.c.
+ *
  *     bind.move_forward.kbm.1=key:UP
  *
  * LOCATION: the project's established player-data root - the same ladder the
@@ -75,7 +81,7 @@
  *     %LOCALAPPDATA%\sightline\demo\config.ini       -Demo build (beside the
  *                                                     demo's own save, so the
  *                                                     demo never touches the
- *                                                     owner's settings)
+ *                                                     player's settings)
  *
  * SL_CONFIG=<file> is the ONE developer override, the same shape as
  * SL_EEPROM_RW for the save: it names the file outright so a test can run
@@ -229,24 +235,66 @@ enum sl_setting {
      * store (replay, headless) answers ORIGINAL. Missing / malformed /
      * out-of-range -> ORIGINAL. */
     SL_SET_WORLD_DETAIL,
-    /* TEXTURES (#47, 2026-09-21): which texture SET the native renderer
-     * draws with. SL_TEXTURES_ORIGINAL (0, the default = the game's own
-     * artwork decoded from the player's ROM exactly as the accepted build
-     * renders it, the #15 enhancement layer included - no pack is read),
-     * SL_TEXTURES_COMMUNITY (1: the Community HD pack, converted locally
-     * into the pack root's community\ folder) or SL_TEXTURES_XBLA (2: the
-     * user-supplied XBLA set, likewise under xbla\). A texture the selected
-     * set does not carry falls back to ORIGINAL - never to the other set.
-     * Read by the renderer through the one provider seam
-     * (src/gfx/sl_gfx_texprov.c, sl_texprov_active) only; nothing in the
-     * simulation reads it, and an INACTIVE store (replay, headless) answers
-     * ORIGINAL. Missing / malformed / out-of-range -> ORIGINAL. */
-    SL_SET_TEXTURES,
+    /* PRESENTATION (#68, 2026-09-23): the ONE player-facing visual selection,
+     * SL_PRESENTATION_ORIGINAL (0, the default) / _COMMUNITY (1) / _XBLA (2) -
+     * see sl_presentation.h, which owns the meaning and RESOLVES this row into
+     * a selection for each visual provider (today the texture provider and the
+     * world-asset provider; later model / material / lighting). Nothing
+     * inspects this row directly except sl_presentation.c: a provider asks the
+     * policy. Nothing in the simulation reads it, and an INACTIVE store
+     * (replay, headless) answers ORIGINAL. Missing / malformed /
+     * out-of-range -> ORIGINAL.
+     *
+     * THIS ROW REPLACED #47's `textures` ROW, and the two hold the same three
+     * ids, which is what makes the migration a straight copy: a config written
+     * before 2026-09-23 carries `textures=0/1/2` and no `presentation`, and the
+     * loader seeds this row from it (sl_settings.c). If a file somehow carries
+     * BOTH, the new key wins whatever the line order, and the legacy key is
+     * simply not written back - the store emits its table, `textures` is no
+     * longer in it, and the stale line goes on the next write like any other
+     * unknown key. There is deliberately only ONE authoritative stored value:
+     * writing both would let them disagree, and a disagreement between two
+     * stored copies of one choice is precisely the incoherence this round
+     * removed from the runtime. */
+    SL_SET_PRESENTATION,
+    /* RENDER FPS (2026-10-07): presentation frames between simulation frames
+     * (src/platform/sl_ultra_shim.c, sl_pres_between; the camera blend is
+     * src/gfx/sl_gfx_present.c). 0 (the default) = the accepted pacing: one
+     * presented frame per paced VI, nothing extra. -1 = uncapped: extra
+     * frames as often as they fit before the next VI. N > 0 = at most N
+     * presented frames per second (60 adds no frame at the NTSC VI rate;
+     * below the VI rate the regular presents are held - 30 shows every
+     * second frame - with the frames still built, paced and traced as
+     * before). The FRAME RATE row of both menus steps ORIGINAL (0) / 30 /
+     * 60 / 120 / 144 / 165 / 240 / UNLIMITED (-1). Any value but 0 also waits for each VI with a precise timer
+     * instead of nanosleep (src/platform/sl_precise_wait.c): the same VI
+     * schedule, released on time. The simulation never reads it: the VI cadence, the game step and
+     * every timer are the same at every value, and an INACTIVE store (replay,
+     * headless) answers 0. SL_RENDER_FPS overrides it for one launch
+     * (sl_window.c, sl_render_fps). Missing / malformed / out-of-range -> 0. */
+    SL_SET_RENDER_FPS,
+    /* SHOW FPS (#87): 0 (the default) = nothing drawn; 1 = the frames
+     * actually presented per second, counted at the swap over a 0.5 s
+     * window and drawn small in the game image's upper-right corner on
+     * every presented frame (src/gfx/sl_gfx_sdl.c). Drawn after the bug
+     * mark's and SL_SHOT's read-backs, so neither capture carries it. The
+     * simulation never reads it, and an INACTIVE store (replay, headless)
+     * answers 0. SL_SHOW_FPS=0 / 1 overrides it for one launch until the
+     * row is changed (sl_window.c, sl_show_fps). Missing / malformed /
+     * out-of-range -> 0. */
+    SL_SET_SHOW_FPS,
     SL_SET_COUNT
 };
 
-/* The #47 texture sets' persisted ids (append-only), and their display
- * names, "ORIGINAL" / "COMMUNITY HD" / "XBLA"; "?" out of range. */
+/* THE TEXTURE PROVIDER'S OWN SET IDS (#47, append-only), and their display
+ * names, "ORIGINAL" / "COMMUNITY HD" / "XBLA"; "?" out of range. These are the
+ * LOW-LEVEL provider's vocabulary, not the player's: a caller obtains one by
+ * asking sl_presentation_textures() what the presentation selects, never by
+ * reading a setting. They remain distinct from SL_PRESENTATION_* on purpose -
+ * the two enumerations agree today because the bundles were built from the
+ * same three sources, and a future presentation that selected, say, the
+ * community textures with its own world assets would move one and not the
+ * other. */
 #define SL_TEXTURES_ORIGINAL   0
 #define SL_TEXTURES_COMMUNITY  1
 #define SL_TEXTURES_XBLA       2

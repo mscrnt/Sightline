@@ -9,6 +9,7 @@
 <p align="center">
   <a href="#play-a-release-windows">Play</a> ·
   <a href="#windows-quick-start">Build</a> ·
+  <a href="#presentation-original-community-hd-xbla">Presentation</a> ·
   <a href="#current-status">Status</a> ·
   <a href="docs/ROADMAP.md">Roadmap</a> ·
   <a href="https://github.com/mscrnt/Sightline/wiki">Wiki</a> ·
@@ -30,6 +31,61 @@ This repository **is** a fork of the decomp, not a wrapper around it. The
 original matching build is kept permanently buildable as the correctness
 oracle, and the upstream project remains the shared vocabulary for symbols,
 formats, and structure. See [Credits](#credits-and-acknowledgements).
+
+## Presentation: ORIGINAL, COMMUNITY HD, XBLA
+
+<p align="center">
+  <img src="docs/images/dam-presentations-cycle.png" alt="The Dam's gate yard shown in turn as ORIGINAL, COMMUNITY HD and XBLA, one second each" width="800">
+</p>
+
+One setting, **PRESENTATION**, chooses how the game looks. The simulation is
+the same in all three; only the picture changes.
+
+| Presentation | What draws | Needs |
+|---|---|---|
+| **ORIGINAL** | the game's own N64 artwork, decoded from your ROM | nothing beyond the ROM |
+| **COMMUNITY HD** | the Community HD texture pack, where it covers a texture | a prepared Community HD pack |
+| **XBLA** | the XBLA remaster's textures **and** its world: backgrounds, skies and fog, characters, props and first-person weapons | a prepared XBLA pack and world assets, from your own XBLA source |
+
+Anything a selected set lacks falls back to the game's own artwork, never to
+another set. The same views cut into thirds, XBLA in the middle:
+
+<p align="center">
+  <img src="docs/images/dam-presentations.png" alt="The Dam's gate yard in three vertical slices: ORIGINAL on the left, XBLA in the middle, COMMUNITY HD on the right" width="800">
+</p>
+
+<p align="center">
+  <img src="docs/images/dam-road-presentations.png" alt="The road along the top of the dam in three vertical slices: ORIGINAL on the left, XBLA in the middle, COMMUNITY HD on the right" width="800">
+</p>
+
+**Switching.** In a level, press **F5**, or **View / Create** on a
+controller: the cycle goes ORIGINAL → COMMUNITY HD → XBLA and back, and the
+HUD names the result. In the front end the same setting is **OPTIONS →
+SETTINGS → DISPLAY → PRESENTATION**; in a level, the watch has it under
+**SIGHTLINE → GRAPHICS**. All three read and write one stored value.
+
+<p align="center">
+  <img src="docs/images/menus-cycle.png" alt="The front end in turn: the main menu, OPTIONS, then the SETTINGS tabs CONTROL, GAMEPLAY, DISPLAY (with PRESENTATION) and PAD" width="600">
+</p>
+
+**The watch.** In a level, the watch's last tab is **SIGHTLINE**: the same
+native settings - GRAPHICS (world detail and presentation), GAMEPLAY,
+DISPLAY and CONTROLS - without leaving the mission. Its controls tab draws
+the controller you are holding, with that controller's own button labels.
+
+<p align="center">
+  <img src="docs/images/watch-sightline-cycle.png" alt="The watch's SIGHTLINE tab and its GRAPHICS, GAMEPLAY, DISPLAY and CONTROLS pages in turn" width="800">
+</p>
+
+<p align="center">
+  <img src="docs/images/watch-controllers-cycle.png" alt="The watch's controls tab with an Xbox controller, then a DualSense, each with its own button labels and bindings" width="800">
+</p>
+
+COMMUNITY HD and XBLA are features of the **current source tree**: the
+downloadable v0.2.0 package predates them. To set them up, see
+[docs/xbla-setup.md](docs/xbla-setup.md). The screenshots show the game's,
+the Community HD project's and the remaster's artwork, which belong to their
+rightsholders ([docs/images/README.md](docs/images/README.md)).
 
 ## Goals
 
@@ -63,6 +119,12 @@ Honestly, and in one place:
   controls with persistent remapping, native settings pages, widescreen
   aspect ratios, FOV, resolution and window modes, and an in-game QUIT GAME;
   see [Releases](#releases).
+- The **source tree** is ahead of v0.2.0 with the
+  [PRESENTATION](#presentation-original-community-hd-xbla) setting: the
+  COMMUNITY HD texture pack, and the XBLA remaster's textures and world
+  assets, prepared from user-supplied sources, across all 20 campaign
+  missions. Open items per stage are recorded in
+  [docs/backlog.md](docs/backlog.md). None of this is in a release yet.
 - The **determinism gate** is green: all 20 campaign levels replay
   byte-identically across 10 consecutive runs of the trace harness.
 - **Phase 1** (excising the RCP / severing `src/game` from libultra) is
@@ -195,6 +257,26 @@ Mouse and keyboard work out of the box; `play.ps1` prints the controls.
 `.\tools\windows\test.ps1` runs the headless Facility acceptance and
 reports the result through its exit code.
 
+### 7. Optional: COMMUNITY HD and XBLA
+
+One command prepares both texture packs and every XBLA world asset of the
+single-player campaign, into git-ignored folders that `play.ps1` finds by
+itself:
+
+```powershell
+.\tools\windows\prepare-all.ps1
+.\tools\windows\play.ps1 -Level dam -Presentation XBLA
+```
+
+It runs the two steps it is made of, which also work on their own:
+`prepare-textures.ps1` (the COMMUNITY HD and XBLA texture packs, in
+`texpacks\`) and `prepare-xbla-assets.ps1 -All` (the XBLA backgrounds, skies,
+characters, props and first-person models of all 20 campaign missions, in
+`worldassets\`). The XBLA source is a separate, user-supplied archive at
+`texsources\xbla-source.7z` - not the N64 ROM - and needs 7-Zip to open. The
+archive's known-good checksums, the options and the per-stage details are in
+[docs/xbla-setup.md](docs/xbla-setup.md).
+
 ### Beyond the quick start
 
 `tools\windows\package-demo.ps1` bundles a build with a ROM you supply into
@@ -210,9 +292,19 @@ The matching build and the trace tooling are driven through `make`
 ## Assets and legal posture
 
 **No game assets live in this repository, ever.** No textures, audio,
-models, level data, or anything derived from them — including AI-upscaled
-textures. Assets are extracted at runtime from the user's own legally
-obtained ROM, and nothing ROM-derived is committed or distributed.
+models, level data, or anything derived from them that the game could load —
+including AI-upscaled textures, texture packs and converted world-asset
+bundles. The base game reads its assets at run time from the user's own
+legally obtained ROM; the optional COMMUNITY HD and XBLA replacements are
+prepared locally, before launch, from sources the user supplies (below), into
+git-ignored folders. None of these is committed or distributed.
+
+The one exception is a small set of **documentation screenshots** under
+[docs/images/](docs/images/), which illustrate what the game draws. They
+show the game's, the Community HD project's and the XBLA remaster's artwork,
+which keep their rightsholders' status: they are not Sightline artwork, are
+outside the Sightline licenses, and are not usable as game data
+([docs/images/README.md](docs/images/README.md)).
 
 The repository does contain **original artwork authored for Sightline**:
 the replacement boot-screen models under
@@ -231,11 +323,20 @@ The matching build also targets the JP and PAL dumps upstream supports
 (`2a5dade32f7fad6c73c659d2026994632c1b3174`,
 `167c3c433dec1f1eb921736f7d53fac8cb45ee31`).
 
+The optional COMMUNITY HD and XBLA presentations read two further sources,
+each converted locally into git-ignored folders and never committed: the
+Community HD release, which the preparation script downloads from its
+maintainers, and an XBLA source archive, which is user-supplied - Sightline
+neither provides nor locates one. That archive is a separate input from the
+N64 ROM; its known-compatible checksum is in
+[docs/xbla-setup.md](docs/xbla-setup.md).
+
 GoldenEye 007 is the property of its rightsholders. This project is
 unaffiliated with Rare, Nintendo, MGM, or Danjaq. Sightline distributes
-no ROM or ROM-derived game assets; original Sightline-authored artwork
-is included, while inherited source and third-party material retain
-their existing copyright and licensing status.
+no ROM, no XBLA source and no game asset converted from either; original
+Sightline-authored artwork is included, while inherited source,
+third-party material and the documentation screenshots retain their
+existing copyright and licensing status.
 
 ## Licensing
 
@@ -250,7 +351,8 @@ Universal
 see [data/asset-overrides/LICENSE.md](data/asset-overrides/LICENSE.md).
 Neither license requires attribution.
 
-These licenses apply only to material owned by the Sightline project owner.
+These licenses apply only to first-party Sightline material, whose rights
+the project holds.
 The GoldenEye decompilation source, the N64 SDK and toolchain material, and
 other upstream or third-party content retain their own copyright and
 licensing status; nothing in the Sightline licenses grants any rights to that

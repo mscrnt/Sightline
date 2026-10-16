@@ -3,9 +3,9 @@
  *
  * WHAT THIS IS FOR. An F8 mark records a location and a facing (see
  * src/native/sl_game_query.c and tools/windows/play.ps1 -TeleportMark). To
- * work on a bug the owner marked - Dam water, #11 - the agent must be able to
+ * work on a bug marked in playtest - Dam water, #11 - it must be possible to
  * DIRECT-BOOT the level and stand where the mark stands, WITHOUT replaying the
- * owner's input stream. The replay drifts from the live session (measured
+ * playtest's input stream. The replay drifts from the live session (measured
  * divergence by frame ~12495), so it is not a navigation tool; the mark is.
  *
  * WHY NATIVE, NOT src/game. src/platform compiles against host headers and
@@ -213,7 +213,7 @@ void sl_teleport_poll(void)
          * whole teleported run wherever a cinema row exists - Dam and Surface
          * 2 (bgfog.c fog_tables, id+900): Surface 2 played its sweeps under
          * farfog 8000 / nearfog 6000 / maxvis 8000 instead of the play row's
-         * 2000 / 2500 / 3055, so the owner's live run (events: zfar 8000 ->
+         * 2000 / 2500 / 3055, so the live playtest run (events: zfar 8000 ->
          * 2000, far-fog 40000 -> 10000 at the swirl) and every teleported
          * capture disagreed on the fog of every frame. This is the SWIRL
          * step's own call, so the teleported run consumes exactly the row a

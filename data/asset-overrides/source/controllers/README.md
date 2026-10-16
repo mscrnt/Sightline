@@ -26,8 +26,8 @@ is in each package's `ATTRIBUTION.md`; the inventory row is in
 `LICENSES/README.md`. No endorsement by the authors is implied.
 
 The one exception inside each model: the node flagged `extras.sl_authored_part`
-(`btn_guide` on the Xbox pad, `btn_ps` on the DualSense) is the project
-owner's own replacement geometry - a plain dome / oval standing in for the
+(`btn_guide` on the Xbox pad, `btn_ps` on the DualSense) is Sightline-authored
+replacement geometry - a plain dome / oval standing in for the
 manufacturer's logo-shaped button. Manufacturer logos were removed (the
 DualSense wordmark tile is painted a flat colour); button letters and
 symbols, d-pad arrows and the Create / Options glyphs are kept.
@@ -79,7 +79,7 @@ package whose normals arrive correct passes through untouched.
 the d-pad, View and Menu - lie on a plane pitched 16.5 degrees about x, the
 top edge down (the Y button's pivot at y 1.0, the d-pad's at 55), while the
 DualSense's lie within a degree of level. Drawn as shipped the Xbox face was
-tilted away from the page's camera and showed its top edge - the owner's
+tilted away from the page's camera and showed its top edge - the playtest report's
 "it doesn't face the right way". The importer fits a plane through those
 parts on every compile (`gltf_import.py`, `face_level_fit`) and turns a
 model whose plane is pitched or rolled past 3 degrees level as a whole -
@@ -140,7 +140,7 @@ left as they were - they show under MASK at their original contrast.
 
 **The tilt** (round 6): the modern pad draws pitched 20 degrees from
 face-on (`SL_WC_MODERN_TILT` in `src/native/sl_watch_controller.c`; the
-page's own 45 stays for the N64 pad), the owner's call from round 5's
+page's own 45 stays for the N64 pad), a design decision from round 5's
 previews; `SL_PAD_TILT=<degrees>` overrides it. Under that matrix the
 probe reads the Xbox face at ~20 degrees from the view axis and the
 DualSense at ~30 - the DualSense's stored normals lean 9.7 degrees toward
@@ -150,7 +150,7 @@ have.
 ## Provenance record
 
 `metadata.json` `source_oracle_sha1` holds the SHA-1 of every file as
-received from the owner's staging (2026-09-19). The `.bin` and the textures
+received from staging (2026-09-19). The `.bin` and the textures
 are committed verbatim; the `.gltf` had its `extras` rewritten (the false
 `sl_authored` claim replaced by `sl_third_party`, `sl_n64` dropped, the
 buffer renamed) and nothing else - its accessors and buffer views are the

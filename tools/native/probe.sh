@@ -1,9 +1,9 @@
 #!/bin/sh
 # probe - drive the game and photograph it, unattended.
 #
-# The owner's idea, and the right one: "create a harness that makes you
-# invincible so you can move around and take screenshots. Probably just need to
-# load in and take screenshots and measurements."
+# The requirement: a harness that makes the player invincible, so a scripted
+# run can move around and take screenshots - load in, take screenshots and
+# measurements.
 #
 # Every renderer bug in this project was found by looking at a frame, and every
 # one of them was invisible to telemetry that read perfectly healthy. This makes

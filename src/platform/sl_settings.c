@@ -18,11 +18,23 @@
  * one enum member and one table row: #42's sprint toggle landed that way
  * (sprint_enabled, the fifth row; no version bump - an older file simply
  * lacks the key and reads as 0). A #43 presentation row (presentation_mode)
- * landed the same way and was RETIRED unshipped on 2026-09-18 (owner
+ * landed the same way and was RETIRED unshipped on 2026-09-18 (design
  * decision: no filtering-only ORIGINAL / MODERN toggle) - a file still
  * carrying that key reads it as an unknown key, ignored. The #43 row that
  * DID ship is world_detail (2026-09-21, the WORLD DETAIL ORIGINAL / ENHANCED
  * render-visibility profile; sl_settings.h).
+ *
+ * TWO DIFFERENT KEYS WITH SIMILAR NAMES, so that nobody conflates them: the
+ * retired one is `presentation_mode` (#43's filtering toggle, never shipped,
+ * ignored on sight); the live one is `presentation` (#68, 2026-09-23 - the
+ * one visual selection ORIGINAL / COMMUNITY HD / XBLA that resolves every
+ * visual provider, sl_presentation.h). A file carrying the retired key is
+ * unaffected by the live one and vice versa.
+ *
+ * THE ONE LEGACY ALIAS (#68). `presentation` replaced #47's `textures` row,
+ * which held the same three ids. A config written before 2026-09-23 is
+ * migrated at load - see sl_settings_load_file - and the legacy key is never
+ * written again, so exactly one stored value is authoritative.
  *
  * WRITE POLICY. The file is rewritten when, and only when, a set() actually
  * changes a value (or the one-time .style import lands). The write goes to
@@ -55,8 +67,16 @@
 #endif
 
 #include "sl_settings.h"
+/* #68: for SL_PRESENTATION_* only - the row's range and the legacy key's.
+ * This file calls nothing in the policy (and settingstest compiles it alone),
+ * it only needs the three ids the row and the migration are expressed in. */
+#include "sl_presentation.h"
 
 #define SL_SETTINGS_VERSION 1
+
+/* #68: the RETIRED #47 key this table's `presentation` row replaced. Read at
+ * load when `presentation` is absent, never written. */
+#define SL_SETTINGS_LEGACY_TEXTURES_KEY "textures"
 
 struct sl_setting_row {
     const char *key;
@@ -95,11 +115,23 @@ static const struct sl_setting_row s_rows[SL_SET_COUNT] = {
      * the visibility seams; sl_settings.h). No version bump: an older file
      * lacks the key and reads ORIGINAL. */
     { "world_detail",      SL_WORLD_DETAIL_ORIGINAL, 0, SL_WORLD_DETAIL_COUNT - 1 },
-    /* #47 (2026-09-21): TEXTURES - 0 ORIGINAL (the ROM's own artwork, no
-     * pack read), 1 COMMUNITY HD, 2 XBLA (each falls back per texture to
-     * ORIGINAL; sl_settings.h). No version bump: an older file lacks the
-     * key and reads ORIGINAL. */
-    { "textures",          SL_TEXTURES_ORIGINAL, 0, SL_TEXTURES_COUNT - 1 }
+    /* #68 (2026-09-23): PRESENTATION - 0 ORIGINAL, 1 COMMUNITY HD, 2 XBLA.
+     * THE ONE player-facing visual selection; sl_presentation.h resolves it
+     * into a set for each visual provider. It REPLACED #47's `textures` row
+     * in this table (same three ids), and a file carrying only the legacy key
+     * is migrated by the loader below. No version bump: an older file lacks
+     * this key and is read through `textures`; a file with neither reads
+     * ORIGINAL. */
+    { "presentation",      SL_PRESENTATION_ORIGINAL, 0, SL_PRESENTATION_COUNT - 1 },
+    /* High-refresh presentation (2026-10-07): 0 = the accepted pacing (one
+     * presented frame per VI), -1 = uncapped, N > 0 = presented frames per
+     * second at most (a cap at or below the VI rate presents nothing extra).
+     * No version bump: an older file lacks the key and reads 0. */
+    { "render_fps",        0, -1, 1000 },
+    /* SHOW FPS (#87): 0 = off (the default), 1 = the presented-frame
+     * counter in the game image's upper-right corner (sl_gfx_sdl.c). No
+     * version bump: an older file lacks the key and reads 0. */
+    { "show_fps",          0, 0, 1 }
     /* RETIRED 2026-09-20 (#63): control_style, pad_button_mode and
      * controller_profile. A file still carrying them reads them as unknown
      * keys - ignored, and dropped on the next write-on-change. */
@@ -314,15 +346,30 @@ static void sl_settings_resolve_path(void)
 
 /* ---------------------------------------------------------------- load -- */
 
+/* #68: did this load migrate a legacy `textures` line into the presentation
+ * row? init reports it and writes the new key once, so the canonical key
+ * exists from the first run after the upgrade rather than waiting for the
+ * player to change something. */
+static int s_migrated_presentation;
+
 /* Parse one file into the table. Returns 1 if the file was opened. Every
  * malformed line is skipped and counted; a malformed value leaves the
- * setting at its default. */
+ * setting at its default.
+ *
+ * THE ONE MIGRATION (#68). `presentation` replaced #47's `textures`, same
+ * three ids. The rule has to be independent of LINE ORDER - a hand-edited or
+ * half-upgraded file can carry both in either order - so the legacy value is
+ * remembered rather than applied, and applied at the end only if the new key
+ * never appeared. NEW KEY WINS, always. */
 static int sl_settings_load_file(const char *path, int *bad_lines)
 {
     FILE *f = fopen(path, "r");
     char line[256];
     int bad = 0;
+    int legacy_textures = -1;       /* the legacy row's value, if it parsed */
+    int saw_presentation = 0;       /* the canonical key appeared and parsed */
 
+    s_migrated_presentation = 0;
     if (f == NULL) return 0;
     while (fgets(line, sizeof line, f) != NULL) {
         char *s = sl_trim(line);
@@ -341,22 +388,41 @@ static int sl_settings_load_file(const char *path, int *bad_lines)
         }
         for (i = 0; i < SL_SET_COUNT; i++) {
             if (strcmp(s, s_rows[i].key) != 0) continue;
-            if (sl_parse_int(eq, &v) && v >= s_rows[i].lo && v <= s_rows[i].hi)
+            if (sl_parse_int(eq, &v) && v >= s_rows[i].lo && v <= s_rows[i].hi) {
                 s_value[i] = v;
-            else
+                if (i == SL_SET_PRESENTATION) saw_presentation = 1;
+            } else {
                 bad++;              /* default stands */
+            }
             break;
         }
-        /* i == SL_SET_COUNT: not a scalar. A "bind." line is kept verbatim
-         * for the registry (#46) - an over-long or malformed one is counted
-         * and dropped; any other unknown key is ignored by design. */
-        if (i == SL_SET_COUNT && strncmp(s, SL_SETTINGS_EXT_PREFIX,
-                                         strlen(SL_SETTINGS_EXT_PREFIX)) == 0) {
+        /* i == SL_SET_COUNT: not a scalar of this build's table. */
+        if (i == SL_SET_COUNT
+            && strcmp(s, SL_SETTINGS_LEGACY_TEXTURES_KEY) == 0) {
+            /* #68: the retired #47 key. Remembered, not applied - see above.
+             * A malformed or out-of-range legacy value is counted like any
+             * other and simply does not migrate. */
+            if (sl_parse_int(eq, &v) && v >= 0 && v < SL_PRESENTATION_COUNT)
+                legacy_textures = v;
+            else
+                bad++;
+        }
+        /* A "bind." line is kept verbatim for the registry (#46) - an
+         * over-long or malformed one is counted and dropped; any other
+         * unknown key is ignored by design. */
+        else if (i == SL_SET_COUNT && strncmp(s, SL_SETTINGS_EXT_PREFIX,
+                                              strlen(SL_SETTINGS_EXT_PREFIX)) == 0) {
             if (!sl_ext_key_ok(s) || *eq == '\0' || !sl_ext_store(s, eq))
                 bad++;
         }
     }
     fclose(f);
+    /* THE MIGRATION, after the whole file: the new key wins whatever the
+     * order, and the legacy one is only consulted when it never appeared. */
+    if (!saw_presentation && legacy_textures >= 0) {
+        s_value[SL_SET_PRESENTATION] = legacy_textures;
+        s_migrated_presentation = 1;
+    }
     if (bad_lines) *bad_lines = bad;
     return 1;
 }
@@ -430,6 +496,20 @@ void sl_settings_init(void)
     for (i = 0; i < SL_SET_COUNT; i++)
         fprintf(stderr, " %s=%d", s_rows[i].key, s_value[i]);
     fprintf(stderr, " bind-lines=%d\n", s_ext_count);
+
+    /* #68: a config written before the presentation row existed carried the
+     * player's choice under `textures`. It has been read; say so, and write
+     * the canonical key NOW rather than waiting for the player to change
+     * something, so there is exactly one stored value from the first run
+     * after the upgrade. The legacy line is not in the table and therefore
+     * not emitted - it goes with this write. */
+    if (s_migrated_presentation) {
+        fprintf(stderr, "sightline settings: migrated %s=%d to presentation=%d"
+                        " - the legacy key is no longer written\n",
+                SL_SETTINGS_LEGACY_TEXTURES_KEY,
+                s_value[SL_SET_PRESENTATION], s_value[SL_SET_PRESENTATION]);
+        sl_settings_save();
+    }
 }
 
 int sl_settings_active(void)
@@ -704,7 +784,7 @@ int main(void)
     ck(sl_settings_get(SL_SET_LOOK_UPDOWN) == 1 && sl_settings_get(SL_SET_AIM_CONTROL) == 1
        && sl_settings_get(SL_SET_SPRINT_ENABLED) == 1 && sl_settings_get(SL_SET_ASPECT_RATIO) == 1
        && sl_settings_get(SL_SET_FOV_VERTICAL) == 5872 && sl_settings_ext_count() == 1,
-       "an owner-shaped #63 round-3 file: every live key and the bind line read");
+       "a user-shaped #63 round-3 file: every live key and the bind line read");
     ck(sl_settings_get(SL_SET_PAD_BUTTON_LAYOUT) == SL_BUTTON_LAYOUT_DEFAULT
        && sl_settings_get(SL_SET_PAD_STICK_LAYOUT) == SL_STICK_LAYOUT_DEFAULT,
        "... the two layout keys absent -> DEFAULT / DEFAULT");
@@ -780,7 +860,7 @@ int main(void)
     ck(sl_settings_get(SL_SET_SPRINT_ENABLED) == 1 && sl_settings_ext_count() == 0,
        "a #42 file loads unchanged: no bind lines");
 
-    /* 8. The mixed case (#46 owner replay, 2026-09-18): a scalar set, then a
+    /* 8. The mixed case (#46 playtest, 2026-09-18): a scalar set, then a
      *    bind line written and rewritten, then a reload - the scalar and the
      *    override both survive every rewrite, in both directions. */
     write_text(path, "version=1\nmouse_invert_y=0\n");
@@ -1097,7 +1177,7 @@ int main(void)
     sl_settings_init();
     ck(sl_settings_get(SL_SET_PAD_LOOK_SENSITIVITY) == 100 && sl_settings_get(SL_SET_PAD_LOOK_DEADZONE) == 15,
        "pad_look_sensitivity=5000 / pad_look_deadzone=100 above the range -> 100 / 15");
-    /* An owner-shaped #63 round-6 file (no #51 keys at all) reads the three
+    /* A user-shaped #63 round-6 file (no #51 keys at all) reads the three
      * defaults and is not rewritten by the load. */
     write_text(path,
         "version=1\nlook_updown=0\naim_control=0\nmouse_invert_y=0\nsprint_enabled=1\naspect_ratio=1\n"
@@ -1119,7 +1199,7 @@ int main(void)
     /* 14. CROUCH MODE / SPRINT MODE (#56, 2026-09-20): HOLD (0) on a missing
      *     file, written on change beside sprint_enabled and the #51 rows, 1
      *     accepted and 2 / -1 refused, reload, a malformed or out-of-range
-     *     line -> HOLD, a pre-#56 owner-shaped file read as HOLD and not
+     *     line -> HOLD, a pre-#56 user-shaped file read as HOLD and not
      *     rewritten, and the MIXED config (both modes TOGGLE, sprint on, a
      *     bind. override, a non-default pad sensitivity, invert y) preserved
      *     across a reload and an unrelated rewrite. */
@@ -1151,7 +1231,7 @@ int main(void)
     reset_store();
     sl_settings_init();
     ck(sl_settings_get(SL_SET_CROUCH_MODE) == 0 && sl_settings_get(SL_SET_SPRINT_MODE) == 0, "out-of-range crouch_mode=2 / sprint_mode=7 -> HOLD");
-    /* A pre-#56 owner-shaped file (the #51 keys, no mode keys) reads HOLD
+    /* A pre-#56 user-shaped file (the #51 keys, no mode keys) reads HOLD
      * and is not rewritten by the load. */
     write_text(path,
         "version=1\nlook_updown=0\naim_control=0\nmouse_invert_y=0\nsprint_enabled=1\naspect_ratio=0\n"
@@ -1195,7 +1275,7 @@ int main(void)
      *     launch: the launcher's window), are written on change beside the
      *     rest, refuse an out-of-range mode / size / vsync, reload, read a
      *     malformed or out-of-range line as the default, and a pre-#52
-     *     owner-shaped file reads the defaults without being rewritten. */
+     *     user-shaped file reads the defaults without being rewritten. */
     remove(path);
     reset_store();
     sl_settings_init();
@@ -1244,7 +1324,7 @@ int main(void)
     ck(sl_settings_get(SL_SET_WINDOW_MODE) == 0 && sl_settings_get(SL_SET_WINDOW_WIDTH) == 0 && sl_settings_get(SL_SET_WINDOW_HEIGHT) == 0
        && sl_settings_get(SL_SET_FULLSCREEN_WIDTH) == 0 && sl_settings_get(SL_SET_FULLSCREEN_HEIGHT) == 7777 && sl_settings_get(SL_SET_VSYNC) == 0,
        "out-of-range mode 7 / 99999 / -1 / 16385 / vsync -1 -> the defaults; 7777 is in range and is the display layer's to refuse");
-    /* A pre-#52 owner-shaped file (the #56 keys, no display keys) reads the
+    /* A pre-#52 user-shaped file (the #56 keys, no display keys) reads the
      * defaults and is not rewritten by the load. */
     write_text(path,
         "version=1\nlook_updown=0\naim_control=0\nmouse_invert_y=0\nsprint_enabled=1\naspect_ratio=0\n"
@@ -1265,7 +1345,7 @@ int main(void)
     /* 16. WORLD DETAIL (#43, 2026-09-21): default ORIGINAL on a missing file,
      *     ENHANCED written on change beside the rest, out-of-range refused,
      *     reload, malformed / out-of-range lines read ORIGINAL, the names,
-     *     and a pre-#43 owner-shaped file reads ORIGINAL without a rewrite. */
+     *     and a pre-#43 user-shaped file reads ORIGINAL without a rewrite. */
     remove(path);
     reset_store();
     sl_settings_init();
@@ -1300,7 +1380,7 @@ int main(void)
     reset_store();
     sl_settings_init();
     ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 0, "world_detail=-3 out of range -> ORIGINAL");
-    /* A pre-#43 owner-shaped file (the #52 keys, no world_detail) reads
+    /* A pre-#43 user-shaped file (the #52 keys, no world_detail) reads
      * ORIGINAL and is not rewritten by the load; the next write-on-change
      * adds the line and keeps every other line. */
     write_text(path,
@@ -1318,43 +1398,53 @@ int main(void)
        && file_has(path, "crouch_mode=1\n") && file_has(path, "mouse_invert_y=1\n") && file_has(path, "bind.aim.kbm.2=none\n"),
        "the next write-on-change (world_detail) adds the line and keeps every other line");
 
-    /* 17. TEXTURES (#47, 2026-09-21): default ORIGINAL on a missing file,
-     *     the three ids and names, COMMUNITY HD / XBLA written on change,
-     *     out-of-range refused, reload, malformed / out-of-range lines read
-     *     ORIGINAL, and a pre-#47 file reads ORIGINAL without a rewrite. */
+    /* 17. PRESENTATION (#68, 2026-09-23): default ORIGINAL on a missing file,
+     *     the three ids, COMMUNITY HD / XBLA written on change, out-of-range
+     *     refused, reload, malformed / out-of-range lines read ORIGINAL, and
+     *     a pre-#47 file (neither key) reads ORIGINAL without a rewrite. */
     remove(path);
     reset_store();
     sl_settings_init();
-    ck(sl_settings_get(SL_SET_TEXTURES) == SL_TEXTURES_ORIGINAL, "textures default ORIGINAL (0) on a missing file");
-    ck(SL_TEXTURES_ORIGINAL == 0 && SL_TEXTURES_COMMUNITY == 1 && SL_TEXTURES_XBLA == 2 && SL_TEXTURES_COUNT == 3,
+    ck(sl_settings_get(SL_SET_PRESENTATION) == SL_PRESENTATION_ORIGINAL,
+       "presentation default ORIGINAL (0) on a missing file");
+    ck(SL_PRESENTATION_ORIGINAL == 0 && SL_PRESENTATION_COMMUNITY == 1
+       && SL_PRESENTATION_XBLA == 2 && SL_PRESENTATION_COUNT == 3,
        "ORIGINAL 0, COMMUNITY 1, XBLA 2");
+    /* The texture PROVIDER's own set ids and names are unchanged by #68 - the
+     * provider keeps its vocabulary, the presentation policy chooses which of
+     * them is selected (sl_presentation.h). */
     ck(strcmp(sl_textures_name(SL_TEXTURES_ORIGINAL), "ORIGINAL") == 0
        && strcmp(sl_textures_name(SL_TEXTURES_COMMUNITY), "COMMUNITY HD") == 0
        && strcmp(sl_textures_name(SL_TEXTURES_XBLA), "XBLA") == 0
        && strcmp(sl_textures_name(3), "?") == 0 && strcmp(sl_textures_name(-1), "?") == 0,
-       "textures names: ORIGINAL / COMMUNITY HD / XBLA, ? out of range");
-    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_COMMUNITY);
-    ck(sl_settings_get(SL_SET_TEXTURES) == 1 && file_has(path, "textures=1\n") && file_has(path, "world_detail=0\n"),
-       "textures=1 (COMMUNITY HD) written on change, the #43 row beside it");
-    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_XBLA);
-    ck(sl_settings_get(SL_SET_TEXTURES) == 2 && file_has(path, "textures=2\n"), "textures=2 (XBLA) written");
-    sl_settings_set(SL_SET_TEXTURES, 3);
-    sl_settings_set(SL_SET_TEXTURES, -1);
-    ck(sl_settings_get(SL_SET_TEXTURES) == 2, "textures 3 / -1 refused (stays XBLA)");
+       "the texture provider's set names: ORIGINAL / COMMUNITY HD / XBLA, ? out of range");
+    sl_settings_set(SL_SET_PRESENTATION, SL_PRESENTATION_COMMUNITY);
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 1 && file_has(path, "presentation=1\n")
+       && file_has(path, "world_detail=0\n"),
+       "presentation=1 (COMMUNITY HD) written on change, the #43 row beside it");
+    ck(!file_has(path, "textures="),
+       "the legacy textures key is NOT written - one authoritative stored value");
+    sl_settings_set(SL_SET_PRESENTATION, SL_PRESENTATION_XBLA);
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 2 && file_has(path, "presentation=2\n"),
+       "presentation=2 (XBLA) written");
+    sl_settings_set(SL_SET_PRESENTATION, 3);
+    sl_settings_set(SL_SET_PRESENTATION, -1);
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 2, "presentation 3 / -1 refused (stays XBLA)");
     reset_store();
     sl_settings_init();
-    ck(sl_settings_get(SL_SET_TEXTURES) == 2, "reload: textures=2 read back");
-    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_ORIGINAL);
-    ck(sl_settings_get(SL_SET_TEXTURES) == 0 && file_has(path, "textures=0\n"), "textures=0 written back");
-    write_text(path, "version=1\ntextures=xbla\nworld_detail=1\n");
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 2, "reload: presentation=2 read back");
+    sl_settings_set(SL_SET_PRESENTATION, SL_PRESENTATION_ORIGINAL);
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 0 && file_has(path, "presentation=0\n"),
+       "presentation=0 written back");
+    write_text(path, "version=1\npresentation=xbla\nworld_detail=1\n");
     reset_store();
     sl_settings_init();
-    ck(sl_settings_get(SL_SET_TEXTURES) == 0 && sl_settings_get(SL_SET_WORLD_DETAIL) == 1,
-       "malformed textures=xbla -> ORIGINAL, world_detail=1 read beside it");
-    write_text(path, "version=1\ntextures=7\n");
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 0 && sl_settings_get(SL_SET_WORLD_DETAIL) == 1,
+       "malformed presentation=xbla -> ORIGINAL, world_detail=1 read beside it");
+    write_text(path, "version=1\npresentation=7\n");
     reset_store();
     sl_settings_init();
-    ck(sl_settings_get(SL_SET_TEXTURES) == 0, "textures=7 out of range -> ORIGINAL");
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 0, "presentation=7 out of range -> ORIGINAL");
     write_text(path,
         "version=1\nlook_updown=0\naim_control=0\nmouse_invert_y=1\nsprint_enabled=1\naspect_ratio=1\n"
         "fov_vertical=5872\nmouse_sensitivity=100\nscoped_mouse_sensitivity=100\npad_button_layout=0\npad_stick_layout=0\n"
@@ -1362,13 +1452,152 @@ int main(void)
         "window_mode=0\nwindow_width=0\nwindow_height=0\nfullscreen_width=0\nfullscreen_height=0\nvsync=1\nworld_detail=1\nbind.aim.kbm.2=none\n");
     reset_store();
     sl_settings_init();
-    ck(sl_settings_get(SL_SET_TEXTURES) == 0 && sl_settings_get(SL_SET_WORLD_DETAIL) == 1
-       && sl_settings_ext_count() == 1 && !file_has(path, "textures="),
-       "a pre-#47 file: ORIGINAL, world_detail=1 read, the file not rewritten");
-    sl_settings_set(SL_SET_TEXTURES, SL_TEXTURES_COMMUNITY);
-    ck(file_has(path, "textures=1\n") && file_has(path, "world_detail=1\n") && file_has(path, "vsync=1\n")
+    ck(sl_settings_get(SL_SET_PRESENTATION) == 0 && sl_settings_get(SL_SET_WORLD_DETAIL) == 1
+       && sl_settings_ext_count() == 1 && !file_has(path, "presentation="),
+       "a file with NEITHER key: ORIGINAL, world_detail=1 read, the file not rewritten");
+    sl_settings_set(SL_SET_PRESENTATION, SL_PRESENTATION_COMMUNITY);
+    ck(file_has(path, "presentation=1\n") && file_has(path, "world_detail=1\n") && file_has(path, "vsync=1\n")
        && file_has(path, "bind.aim.kbm.2=none\n"),
-       "the next write-on-change (textures) adds the line and keeps every other line");
+       "the next write-on-change (presentation) adds the line and keeps every other line");
+
+    /* 17b. THE ONE MIGRATION (#68). A #47-era config carries the player's
+     *      choice under `textures` and no `presentation`. Each of the three
+     *      ids must arrive unchanged, the canonical key must be written at
+     *      once (so there is one stored value from the first run), and the
+     *      legacy line must go with that write. */
+    {
+        int id;
+        for (id = 0; id < SL_PRESENTATION_COUNT; id++) {
+            char fixture[128];
+            sprintf(fixture, "version=1\nworld_detail=1\ntextures=%d\nbind.aim.kbm.2=none\n", id);
+            write_text(path, fixture);
+            reset_store();
+            sl_settings_init();
+            ck(sl_settings_get(SL_SET_PRESENTATION) == id,
+               "legacy textures=0/1/2 migrates to the same presentation id");
+            ck(file_has(path, "presentation=") && !file_has(path, "textures="),
+               "the migration writes presentation and drops the legacy key");
+            ck(sl_settings_get(SL_SET_WORLD_DETAIL) == 1 && sl_settings_ext_count() == 1,
+               "the migration keeps every other row and the bind lines");
+        }
+    }
+    /* A legacy value that is malformed or out of range does not migrate: the
+     * presentation stays at its default, exactly as a bad scalar does. */
+    write_text(path, "version=1\ntextures=xbla\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_PRESENTATION) == SL_PRESENTATION_ORIGINAL,
+       "a malformed legacy textures value does not migrate -> ORIGINAL");
+    write_text(path, "version=1\ntextures=9\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_PRESENTATION) == SL_PRESENTATION_ORIGINAL,
+       "an out-of-range legacy textures value does not migrate -> ORIGINAL");
+
+    /* 17c. NEW KEY WINS, in BOTH line orders - a half-upgraded or hand-edited
+     *      file can carry both, and which one is authoritative must not
+     *      depend on where it sits in the file. */
+    write_text(path, "version=1\npresentation=2\ntextures=1\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_PRESENTATION) == SL_PRESENTATION_XBLA,
+       "both keys, presentation first: the new key wins");
+    write_text(path, "version=1\ntextures=1\npresentation=2\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_PRESENTATION) == SL_PRESENTATION_XBLA,
+       "both keys, legacy first: the new key still wins");
+    write_text(path, "version=1\ntextures=2\npresentation=0\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_PRESENTATION) == SL_PRESENTATION_ORIGINAL,
+       "both keys, the new one ORIGINAL: it wins even when the legacy one is not");
+    /* Both present is NOT a migration, so nothing is written until something
+     * changes - the file the player has is left alone. */
+    ck(file_has(path, "textures=2\n"),
+       "both keys present is not a migration: no write, the stale line stands until the next change");
+
+    /* 18. RENDER FPS (2026-10-07): default 0 (the accepted pacing) on a
+     *     missing file, -1 (uncapped) and a cap stored, the range -1..1000
+     *     enforced on set and on load, and a file without the key reads 0. */
+    remove(path);
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_RENDER_FPS) == 0, "render_fps default 0 on a missing file");
+    sl_settings_set(SL_SET_RENDER_FPS, 144);
+    ck(sl_settings_get(SL_SET_RENDER_FPS) == 144 && file_has(path, "render_fps=144\n"),
+       "render_fps=144 written on change");
+    sl_settings_set(SL_SET_RENDER_FPS, -1);
+    ck(sl_settings_get(SL_SET_RENDER_FPS) == -1 && file_has(path, "render_fps=-1\n"),
+       "render_fps=-1 (uncapped) written");
+    sl_settings_set(SL_SET_RENDER_FPS, 1001);
+    sl_settings_set(SL_SET_RENDER_FPS, -2);
+    ck(sl_settings_get(SL_SET_RENDER_FPS) == -1, "render_fps 1001 / -2 refused (stays -1)");
+    write_text(path, "version=1\nrender_fps=5000\nvsync=1\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_RENDER_FPS) == 0 && sl_settings_get(SL_SET_VSYNC) == 1,
+       "out-of-range render_fps=5000 -> 0, vsync=1 read beside it");
+    write_text(path, "version=1\nvsync=0\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_RENDER_FPS) == 0, "a file without render_fps reads 0");
+
+    /* 19. THE FRAME RATE ROW's values (#87): every value the menus offer
+     *     is written on change and read back by a fresh load, beside the
+     *     VSYNC row it sits next to; the default ORIGINAL (0) is a write of
+     *     0, not a removed key. */
+    {
+        static const int menu[] = { 30, 60, 120, 144, 165, 240, -1, 0 };
+        char line[32];
+        int k, ok = 1;
+        remove(path);
+        reset_store();
+        sl_settings_init();
+        sl_settings_set(SL_SET_VSYNC, 1);
+        for (k = 0; k < 8; k++) {
+            sl_settings_set(SL_SET_RENDER_FPS, menu[k]);
+            snprintf(line, sizeof line, "render_fps=%d\n", menu[k]);
+            if (!file_has(path, line)) ok = 0;
+            reset_store();
+            sl_settings_init();
+            if (sl_settings_get(SL_SET_RENDER_FPS) != menu[k] || sl_settings_get(SL_SET_VSYNC) != 1) ok = 0;
+        }
+        ck(ok, "each FRAME RATE value (30 60 120 144 165 240 -1 0) written on change and reloaded, vsync=1 kept");
+        ck(file_has(path, "render_fps=0\n") && file_has(path, "vsync=1\n"),
+           "back to ORIGINAL: render_fps=0 stays in the file beside vsync=1");
+    }
+
+    /* 20. SHOW FPS (#87): default 0 on a missing file, 1 written on
+     *     change and reloaded beside render_fps, 0 written back (not a
+     *     removed key), 2 / -1 refused, an out-of-range file value and a
+     *     file without the key read 0. */
+    remove(path);
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_SHOW_FPS) == 0, "show_fps default 0 on a missing file");
+    sl_settings_set(SL_SET_RENDER_FPS, 144);
+    sl_settings_set(SL_SET_SHOW_FPS, 1);
+    ck(sl_settings_get(SL_SET_SHOW_FPS) == 1 && file_has(path, "show_fps=1\n"), "show_fps=1 written on change");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_SHOW_FPS) == 1 && sl_settings_get(SL_SET_RENDER_FPS) == 144,
+       "show_fps=1 reloaded beside render_fps=144");
+    sl_settings_set(SL_SET_SHOW_FPS, 2);
+    sl_settings_set(SL_SET_SHOW_FPS, -1);
+    ck(sl_settings_get(SL_SET_SHOW_FPS) == 1, "show_fps 2 / -1 refused (stays 1)");
+    sl_settings_set(SL_SET_SHOW_FPS, 0);
+    ck(sl_settings_get(SL_SET_SHOW_FPS) == 0 && file_has(path, "show_fps=0\n"),
+       "back to OFF: show_fps=0 stays in the file");
+    write_text(path, "version=1\nshow_fps=7\nvsync=1\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_SHOW_FPS) == 0 && sl_settings_get(SL_SET_VSYNC) == 1,
+       "out-of-range show_fps=7 -> 0, vsync=1 read beside it");
+    write_text(path, "version=1\nrender_fps=60\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_SHOW_FPS) == 0, "a file without show_fps reads 0");
 
     remove(path);
     printf("sl_settings selftest: %d checks, %d failed\n", g_checks, g_fail);

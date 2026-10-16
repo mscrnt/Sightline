@@ -1,6 +1,6 @@
 /**
  * sl_world_detail.c - the WORLD DETAIL ENHANCED profile's render-only prop
- * lift (#43, 2026-09-21, the owner's Dam yard marks).
+ * lift (#43, 2026-09-21, the playtest Dam yard marks).
  *
  * THE MECHANISM IT RELAXES. The object tick (src/game/propobj.c objTick,
  * :5948) decides a prop's PROPFLAG_ONSCREEN through posIsOnScreen, whose
@@ -9,11 +9,11 @@
  * c_lodscalez) evaluated on the TICK side. A prop it rejects never gets the
  * flag, never gets render matrices, never enters g_OnScreenPropList and so
  * never reaches chrobjRenderProp - which is why the render seam's ENHANCED
- * arm (chrobjFogVisRangeRelated) could not lift it. MEASURED at the owner's
+ * arm (chrobjFogVisRangeRelated) could not lift it. MEASURED at playtest
  * mark 1 (Dam 15227 / 60.3 / 13970.6 theta 212.4, room 110, the tunnel mouth
  * onto the yard): 9 of the yard's 24 crates (PROPDEF_PROP) in the rendered
  * room 111 read fogvis=1 inbox=1 visrange=0 -> off screen; 600 units on
- * (mark 2) all 24 pass. The owner's [submitted-lists] agree: 7 crate lists
+ * (mark 2) all 24 pass. The marks' [submitted-lists] agree: 7 crate lists
  * at mark 1, 16 at mark 2.
  *
  * THE BOUNDARY, and why this is a LIFT and not a widening. PROPFLAG_ONSCREEN
@@ -25,7 +25,7 @@
  * WITHOUT the flag and WITHOUT joining that list: it is a render-only
  * eligibility kept in this file's own per-frame list, rebuilt every
  * propsTick and walked by chrpropsRenderPass after the on-screen props of
- * the same room and pass. CONSEQUENCE the owner must weigh: a lifted prop
+ * the same room and pass. CONSEQUENCE to be weighed: a lifted prop
  * is visible but, until it comes inside the cartridge's own range, it is
  * exactly what it is under ORIGINAL - not shootable, not interactable, not
  * a target; a bullet passes through it to whatever the cartridge would have

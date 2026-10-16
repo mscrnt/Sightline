@@ -110,9 +110,9 @@ static int  g_crash_fd = -1;
  * and the crash report, with no flag to remember.
  *
  * This is the SL_HANG_SECONDS lesson again, three lines down in main(): a
- * facility that must be switched on is never on when it is wanted. The owner
- * asked for exactly this - the playthrough always on disk, the log out of
- * their way but kept for diagnosis. So stderr LEAVES the terminal (one line on
+ * facility that must be switched on is never on when it is wanted. The
+ * requirement is exactly this - the playthrough always on disk, the log out of
+ * the way but kept for diagnosis. So stderr LEAVES the terminal (one line on
  * stdout says where it went) and the recording is automatic.
  *
  * Replays are not re-recorded: SL_INPUT in means a copy of its own input out,
@@ -206,7 +206,7 @@ static void sl_run_open(void)
      *
      * Filtering on "is this a replay" was too narrow. It caught SL_INPUT and
      * missed bootsweep, which drives twenty levels with no SL_INPUT at all, so
-     * twenty automated runs six seconds apart evicted the owner's playthrough
+     * twenty automated runs six seconds apart evicted a human playthrough
      * a second time - after the first fix, from the same rotation, for a
      * different reason.
      *
@@ -249,7 +249,7 @@ static void sl_run_open(void)
     sl_run_rotate(root, keep != NULL ? atoi(keep) : 5);
 
     /* A stable name for "the run that just happened", so a diagnosis never
-     * depends on the owner reading a timestamp back to anyone. */
+     * depends on anyone reading a timestamp back by hand. */
     snprintf(path, sizeof path, "%s/latest", root);
     unlink(path);
     if (symlink(stamp, path) != 0) { /* a plain dir listing still finds it */ }
@@ -276,8 +276,8 @@ static void sl_run_open(void)
      * This block used to be entered only when SL_INPUT_RECORD was UNSET, so
      * everything below hung off the default `<run>/input` name. Naming the
      * stream yourself - which is the obvious thing to do when the recording is
-     * meant to be kept, and exactly what the owner did - silently opted out of
-     * every sidecar the stream cannot be replayed without.
+     * meant to be kept, and exactly what the playtest recordings did -
+     * silently opted out of every sidecar the stream cannot be replayed without.
      *
      * MEASURED 2026-09-08. The two Dam witnesses were recorded with an
      * explicit SL_INPUT_RECORD=tools/trace/inputs/dam-{fid,pad}.input and an
@@ -321,7 +321,7 @@ static void sl_run_open(void)
          * mouse records a stream in which the stick is (0,0) on every single
          * record, because native keyboard and mouse do not drive the N64 stick
          * - they drive four channels and a look pair that nothing wrote down.
-         * The owner's two Dam witnesses were both recorded that way and both
+         * The two playtest Dam witnesses were both recorded that way and both
          * replay with Bond standing still. See the SL_MOVE block in
          * sl_ultra_shim.c. The name is `<stream>.move` so that
          * SL_INPUT=<stream> finds it with no second variable to remember. */
@@ -339,7 +339,7 @@ static void sl_run_open(void)
      * caller is already capturing it deliberately, and stealing it produces
      * an empty log with no error - which is exactly what this did to a
      * measurement pipeline on 2026-08-26, silently, for five runs. The point
-     * was ever only to keep the owner's terminal quiet; a script's redirect
+     * was ever only to keep the player's terminal quiet; a script's redirect
      * is not a terminal and was never the target. */
     if (isatty(2)) {
         snprintf(path, sizeof path, "%s/log", g_run_dir);
@@ -456,7 +456,7 @@ void sl_run_note_rng_seed(unsigned long long state)
  * matrices, triangles - and not one game event. You could not tell from a
  * recording whether the player reached the gas, died, or changed level, which
  * made every question about a playthrough depend on replaying it with probes
- * compiled in. The owner asked for the obvious thing: see when fog gets
+ * compiled in. The requirement was the obvious one: see when fog gets
  * triggered in the actual session.
  *
  * This WATCHES rather than instruments. It reads a few game globals at the
@@ -548,7 +548,7 @@ void sl_watch_frame(unsigned record_index)
     }
 }
 
-/* A MARK is the owner pointing at something.
+/* A MARK is the player pointing at something.
  *
  * Diagnosis kept stalling on "which moment?" - two five-minute recordings
  * reached neither the tanks nor a room anyone could identify, and the science
@@ -602,11 +602,11 @@ void sl_run_mark(unsigned read_index)
     fflush(stdout);
 }
 
-/* ---- LIVE OWNER BUG MARK (F8) -------------------------------------------
+/* ---- LIVE BUG MARK (F8) -------------------------------------------------
  *
- * F9 already records "I saw it at read index N" - one integer, next to the
+ * F9 already records "seen at read index N" - one integer, next to the
  * recording, so a replay can jump there. That was built on the assumption
- * that the replay would then reproduce what the owner saw. It does not: the
+ * that the replay would then reproduce what was seen live. It does not: the
  * measured divergence between a native recording and its replay reaches 202
  * world units by sample 4201 and 26464 at worst, so a mark that only names a
  * MOMENT points into a run that never happened.
@@ -624,7 +624,7 @@ void sl_run_mark(unsigned read_index)
  * back buffer being read is the one the walk just filled.
  *
  * BMP rather than PPM. The existing SL_SHOT path writes PPM, which nothing on
- * Windows opens by double-clicking; a capture the owner cannot look at is a
+ * Windows opens by double-clicking; a capture nobody can open is a
  * capture that does not get looked at. BMP is bottom-up 24-bit BGR, which is
  * exactly what glReadPixels hands back with the rows already in the right
  * order - so it costs one channel swap and no dependency.
@@ -720,7 +720,7 @@ void sl_run_mark_full(int (*shoot)(const char *path),
      * The table used to be assembled in this function out of six scalar
      * accessors, and it described only the submissions the FRAME LIST made -
      * so it stopped at the first list that carried the rest of the frame
-     * inside it, which in the owner's Dam marks is the trailing heap list
+     * inside it, which in the playtest Dam marks is the trailing heap list
      * holding the props, the characters and the viewmodel. The renderer now
      * prints the whole tree itself, where the ucode05 call/branch semantics
      * live, and takes this resolver as a callback. */
@@ -764,7 +764,7 @@ void sl_run_mark_full(int (*shoot)(const char *path),
 
     /* On the TERMINAL, not just in the log: stderr has been redirected into
      * the run directory by now, so a message there is invisible to somebody
-     * playing. The owner needs to see that the key did something. */
+     * playing. The player needs to see that the key did something. */
     printf("sightline: bug mark %u -> %s%s\n", num, txt,
            shot ? " (+ .bmp)" : " (no screenshot)");
     fflush(stdout);
@@ -1007,7 +1007,7 @@ void sl_duration_report(void)
             sl_dur_bad_bu, big);
     { extern unsigned long sl_dur_val[64], sl_dur_trk[64], sl_dur_n;
       unsigned long j;
-      /* the values themselves - a threshold I chose is not evidence, the
+      /* the values themselves - a chosen threshold is not evidence, the
        * distribution is. 384 ticks is a quarter note (the measured division). */
       fprintf(stderr, "  durations (track:ticks:quarterNotes):");
       for (j = 0; j < sl_dur_n; j++)
@@ -1376,6 +1376,7 @@ static int sl_posix_plausible(const void *p, unsigned long n)
 
 static void sl_report(const char *what, unsigned long ip, unsigned long bp)
 {
+    const unsigned long bp0 = bp;   /* the walk below consumes bp */
     int i;
     sl_say("\n=== sightline ");
     sl_say(what);
@@ -1426,6 +1427,22 @@ static void sl_report(const char *what, unsigned long ip, unsigned long bp)
         if (sl_crash_chr_scan(chrs, (int) sizeof chrs, sl_posix_plausible) > 0)
 #endif
             sl_say(chrs);
+    }
+    /* WHICH MODEL, AND WHOSE (src/native/sl_crash_model.c): a fault that
+     * followed a pointer out of model state names the Model handed down the
+     * frame chain, every live Model whose pointer fields fail, their owners
+     * and the slot bytes. Same readability predicate, same terms. */
+    {
+        extern int sl_crash_model_scan(char *out, int n,
+                                       int (*readable)(const void *, unsigned long),
+                                       unsigned long bp);
+        static char models[6144];
+#ifdef _WIN32
+        if (sl_crash_model_scan(models, (int) sizeof models, sl_win_readable, bp0) > 0)
+#else
+        if (sl_crash_model_scan(models, (int) sizeof models, sl_posix_plausible, bp0) > 0)
+#endif
+            sl_say(models);
     }
 }
 
@@ -1653,7 +1670,7 @@ int main(void)
      * a main-handling one. */
     SDL_SetMainReady();
 
-    /* Keep failures on the console rather than on the owner's screen. An
+    /* Keep failures on the console rather than on the player's screen. An
      * aborting process otherwise raises Windows Error Reporting, and the hang
      * and crash reporters below both end in abort() - so the one path that
      * runs when something has already gone wrong is exactly the path that

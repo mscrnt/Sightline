@@ -56,7 +56,7 @@
  * rested on the core REPORTING retro_get_memory_size == 0x800000. A reported
  * size is not evidence that the emulated machine has that memory mapped:
  * GoldenEye is a 4 MB title, its own map tiles exactly to 0x00400000, and
- * writes above that appear to go nowhere. I could not confirm the mapping, so
+ * writes above that appear to go nowhere. The mapping could not be confirmed, so
  * the fixed-address design is abandoned rather than debugged further.
  *
  * A linked array is guaranteed to be mapped, because the linker placed it. The

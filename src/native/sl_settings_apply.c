@@ -37,7 +37,7 @@
  * Aim Control are the global game_options_entries values and are applied and
  * mirrored whatever the player count, as the folder load does.
  *
- * THE CONTROL STYLE IS PINNED TO 1.1 HONEY (#63, owner decision 2026-09-20:
+ * THE CONTROL STYLE IS PINNED TO 1.1 HONEY (#63, design decision 2026-09-20:
  * no N64 control styles on the native build - Sightline never has an N64
  * controller attached and the native layer owns every mapping). The eight
  * styles decided two things the native producers no longer leave to the
@@ -75,6 +75,7 @@
 #include "options.h"
 #include "bondview.h"          /* #47: HUDMESSAGEBOTTOM, the cycle's notice */
 #include "../platform/sl_settings.h"
+#include "../platform/sl_presentation.h"   /* #68: the presentation policy */
 
 extern char *getenv(const char *);
 /* The action layer's HOLD / TOGGLE latch reset (src/platform/sl_action.c,
@@ -223,69 +224,57 @@ void sl_world_detail_step(int dir)
 }
 
 /**
- * TEXTURES (#47, 2026-09-21): the texture set, SL_TEXTURES_ORIGINAL (0),
- * SL_TEXTURES_COMMUNITY (1) or SL_TEXTURES_XBLA (2). The WORLD DETAIL shape:
- * ONE getter for the two editors' display, ONE setter both call, neither
- * holding a copy. The renderer does NOT read these: its single owner of the
- * decision is sl_texprov_active (src/gfx/sl_gfx_texprov.c), which reads the
- * same store row each resolution and bumps its cache generation when the
- * value moves - so a change made here applies to each texture at its next
- * resolve, the next frame, with no restart. An INACTIVE store answers
- * ORIGINAL and the provider never opens a pack.
+ * PRESENTATION (#68, 2026-09-23): the one player-facing visual selection.
+ *
+ * THE VALUE AND ITS MAPPING ARE NOT HERE. They are the presentation policy's
+ * (src/platform/sl_presentation.{c,h}), which owns the canonical value, the
+ * store row behind it and the resolution into a set for each visual provider.
+ * This file is the GAME-FACING half and holds exactly what needs game headers:
+ * the HUD line the cycle action shows. Nothing here caches the value, and the
+ * providers do not read this file.
+ *
+ * WHAT #47's sl_textures* PAIR BECAME. It moved, it did not multiply: the
+ * getter, setter and step are sl_presentation(), sl_presentation_set() and
+ * sl_presentation_step(), called by the same two editors as before. There is
+ * no compatibility alias for them, because there is no stored or player-facing
+ * identity to preserve - only call sites, and they are all in this tree.
  */
-int sl_textures(void)
-{
-    int v = sl_settings_get(SL_SET_TEXTURES);
-    return (v >= 0 && v < SL_TEXTURES_COUNT) ? v : SL_TEXTURES_ORIGINAL;
-}
-
-void sl_textures_set(int set)
-{
-    sl_settings_set(SL_SET_TEXTURES,
-                    (set >= 0 && set < SL_TEXTURES_COUNT) ? set : SL_TEXTURES_ORIGINAL);
-}
-
-/* The editors' step (the watch's named row's LEFT / RIGHT, the front end's
- * advancing cell): the next set in the list, wrapping both ways. */
-void sl_textures_step(int dir)
-{
-    int v = sl_textures() + (dir < 0 ? -1 : 1);
-    if (v < 0) v = SL_TEXTURES_COUNT - 1;
-    if (v >= SL_TEXTURES_COUNT) v = 0;
-    sl_textures_set(v);
-}
 
 /**
- * THE CYCLE ACTION (#47, the owner: "I'd like to be able to cycle by using
- * F5 on keyboard, and the 'Select' button ... on controller"). One press
- * advances ORIGINAL -> COMMUNITY HD -> XBLA -> ORIGINAL, writing the SAME
- * store row both UIs read, so the front end's DISPLAY tab and the watch's
- * GRAPHICS child show the new value the next time either draws, and it
- * persists exactly as a change made in either of them does. It takes effect
- * live: sl_texprov_active sees the moved row at the next texture resolve and
- * bumps its cache generation (no restart, no level reload).
+ * THE CYCLE ACTION (#47 requirement: cycle with F5 on the keyboard and the
+ * 'Select' button on a controller; retargeted by
+ * #68 from the texture set to the whole presentation). One press advances
+ * ORIGINAL -> COMMUNITY HD -> XBLA -> ORIGINAL, writing the SAME store row
+ * both UIs read, so the front end's DISPLAY tab and the watch's GRAPHICS
+ * child show the new value the next time either draws, and it persists
+ * exactly as a change made in either of them does.
  *
- * The edge that calls it is the binding registry's (SL_ACT_TEXTURE_CYCLE,
+ * IT TAKES EFFECT LIVE, AND NOW IN BOTH PROVIDERS: sl_texprov_active asks the
+ * policy at the next texture resolve and bumps its cache generation, and
+ * sl_wa_active asks the policy at the next frame's seam - so one press moves
+ * the artwork and the Dam's skydome together. No restart, no level reload.
+ *
+ * The edge that calls it is the binding registry's (SL_ACT_PRESENTATION_CYCLE,
  * src/platform/sl_input.c), gated on the same "live input, no menu"
  * predicate the action channels are.
  *
- * FEEDBACK. The player has to see which set they landed on, and the game
- * already has a one-line notice at the bottom of the HUD - the same FIFO
+ * FEEDBACK. The player has to see which presentation they landed on, and the
+ * game already has a one-line notice at the bottom of the HUD - the same FIFO
  * the cartridge's own cheat messages use (bondview2.c hudmsgBottomShow, via
  * bondview.h's HUDMESSAGEBOTTOM). No new text system, no new font, no new
  * draw: one existing call with a literal. It is a HUD message like any
  * other, and if no player is up it simply is not sent.
  */
-void sl_textures_cycle(void)
+void sl_presentation_cycle(void)
 {
     static char msg[64];
     int v;
 
-    sl_textures_step(1);
-    v = sl_textures();
-    sprintf(msg, "TEXTURES: %s", sl_textures_name(v));
-    fprintf(stderr, "sightline textures: cycle -> %d(%s)\n", v,
-            sl_textures_name(v));
+    sl_presentation_step(1);
+    v = sl_presentation();
+    sprintf(msg, "PRESENTATION: %s", sl_presentation_name(v));
+    fprintf(stderr, "sightline presentation: cycle -> %d(%s)\n", v,
+            sl_presentation_name(v));
     if (g_CurrentPlayer != NULL)
         HUDMESSAGEBOTTOM(msg);
 }

@@ -6,7 +6,7 @@
  *
  * This exists because object identity by INFERENCE has cost this investigation
  * more time than the instrument costs to build. The player's live position
- * could not be read reliably, so which of twenty tinted-glass panes the owner
+ * could not be read reliably, so which of twenty tinted-glass panes the player
  * was looking at had to be guessed, so a glare/material comparison against the
  * cartridge was blocked.
  *
@@ -72,7 +72,7 @@
  *  1. tools/native/rominspect.py replays a finished recording offline.
  *  2. `make trace-record-debug` drives it LIVE while a human plays, and prints
  *     what each press found as it happens. That is not a convenience: for two
- *     sessions the owner pressed the button, the terminal said nothing, and the
+ *     play sessions the button was pressed, the terminal said nothing, and the
  *     misses were only discovered afterwards from a replay - with no way to
  *     tell a press that missed from a press that never registered.
  *
@@ -243,7 +243,7 @@ typedef struct SlRomDbg {
     /* IS THERE A CROSSHAIR AT ALL, this frame.
      *
      * Published unconditionally, because it is what separates the two ways a
-     * SELECT can come back empty, and the owner cannot act on the difference
+     * SELECT can come back empty, and nobody can act on the difference
      * unless the instrument states it: "I was aiming at the wrong place" is a
      * different mistake from "I was not aiming, so there was nothing to aim
      * with". gunDrawSight() (gunfire.c:6276) draws the crosshair when and only

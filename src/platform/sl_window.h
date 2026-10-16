@@ -84,7 +84,56 @@ int         sl_window_mode(void);                       /* clamped; WINDOWED whe
 const char *sl_window_mode_name(int mode);              /* "WINDOWED" / "BORDERLESS" / "FULLSCREEN"; "?" out of range */
 int         sl_window_stored_windowed(int *w, int *h);  /* 1 when a windowed pair is chosen (both > 0) */
 int         sl_window_stored_fullscreen(int *w, int *h);/* 1 when an exclusive pair is chosen */
-int         sl_vsync(void);                             /* 0 / 1 */
+int         sl_vsync(void);                             /* 0 / 1; SL_VSYNC=0/1 overrides for one launch */
+int         sl_render_fps(void);                        /* 0 off, -1 uncapped, N cap; SL_RENDER_FPS overrides until the row is changed */
+/* The FRAME RATE row (both editors): ORIGINAL (0) / 30 / 60 / 120 / 144 /
+ * 165 / 240 / UNLIMITED (-1), wrapping. _menu_next is pure (the entry after
+ * or before `cur`; an off-list value steps to its nearest neighbour); _set
+ * writes the store (write-on-change) and ends the launch's SL_RENDER_FPS
+ * override; _step is _set of _menu_next of the value in force; _name is
+ * "ORIGINAL" / "UNLIMITED" / the number (one static buffer). */
+int         sl_render_fps_menu_next(int cur, int dir);
+void        sl_render_fps_set(int v);
+void        sl_render_fps_step(int dir);
+const char *sl_render_fps_name(int v);
+/* The SHOW FPS row (both editors, #87): 0 / 1. sl_show_fps is the value in
+ * force - SL_SHOW_FPS=0 / 1 for one launch until the row is changed, else
+ * the store; _set writes the store (write-on-change) and ends the
+ * override (the FRAME RATE rule). Read on every present by the SDL
+ * backend, so a change shows on the next presented frame. */
+int         sl_show_fps(void);
+void        sl_show_fps_set(int on);
+
+/* ---- the SHOW FPS counter: pure ------------------------------------------
+ * The SDL backend notes the time of every swap it makes - the regular
+ * present and every extra presentation frame; a frame held by a cap below
+ * the VI rate makes no swap and is not counted - and draws the value.
+ * _note takes the swap's time in seconds: the first note opens a window,
+ * and a note at least SL_FPS_WINDOW after the window opened closes it -
+ * value = swaps after the opening one / the time between them, rounded -
+ * and opens the next at the same swap; it returns 1 when a window closed
+ * (a new value). _reset forgets the window and the value (the row turned on).
+ * _place lays a box of cols x rows font cells (SL_FPS_CELL_W x
+ * SL_FPS_CELL_H units each, the box padding one unit) in the upper-right
+ * corner of the content rect (cx, cy, cw, ch: window pixels, top-left
+ * origin): *scale pixels per unit, from the rect's height (one per 360
+ * lines, rounded, at least 1); *x, *y the box's top-left, two units in from
+ * the rect's top and right edges (never left of its left edge). */
+#define SL_FPS_WINDOW  0.5
+#define SL_FPS_CELL_W  6
+#define SL_FPS_CELL_H  8
+struct sl_fps_meter {
+    double   t0;            /* the swap that opened the window */
+    unsigned n;             /* swaps after it */
+    int      open;          /* a window is open */
+    int      value;         /* presents per second, the last closed window; -1 none yet */
+    double   span;          /* that window's length, s */
+    unsigned count;         /* that window's swaps */
+};
+void        sl_fps_meter_reset(struct sl_fps_meter *m);
+int         sl_fps_meter_note(struct sl_fps_meter *m, double t);
+void        sl_fps_place(int cx, int cy, int cw, int ch, int cols, int rows,
+                         int *x, int *y, int *scale);
 
 /* ---- the lists: pure ----------------------------------------------------- */
 /* The display's modes (any order, duplicates across refresh rates) -> the

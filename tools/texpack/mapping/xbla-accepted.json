@@ -1,7 +1,7 @@
 {
  "version": 1,
  "set": "xbla",
- "about": "N64 texture id -> the identity of the user-supplied XBLA resource that replaces it, for the 127 accepted mappings. \"bundle\" and \"res\" name a resource inside a source the USER supplies; \"flips\" are the two orientation corrections (HD->source, source->N64) applied when converting. \"n64\" is the image-table entry's width and height (imageTypes.txt). No source bytes are recorded here, Sightline neither distributes nor locates any source, and the review-tier candidates are deliberately absent.",
+ "about": "N64 texture id -> the identity of the user-supplied XBLA resource that replaces it, for the 161 accepted mappings. \"bundle\" and \"res\" name a resource inside a source the USER supplies; \"flips\" are the two orientation corrections (HD->source, source->N64) applied when converting. \"n64\" is the image-table entry's width and height (imageTypes.txt). No source bytes are recorded here, Sightline neither distributes nor locates any source, and the pixel stage's review-tier candidates are deliberately absent; an id may instead be established by GEOMETRY, where a level's remastered and original backgrounds draw it on the same triangles with the same texture coordinates, or tile it on a whole number of the remaster image's own repeat cells (docs/texture-packs.md, \"Pairing by geometry\", \"Re-tiled pairs\"). An entry may also carry \"bleed\" (fill transparent texels' colour from their covered neighbours), \"level\" (scale the colour to the native image's mean luminance) and \"sample\" (resample a re-UV'd remaster item's window into the native texture's domain; tools/texpack/nativeuv.py).",
  "entries": [
   {
    "id": "0008",
@@ -69,6 +69,19 @@
    ]
   },
   {
+   "id": "00a0",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x05FD0535.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
    "id": "00a3",
    "n64": [
     64,
@@ -93,6 +106,45 @@
     "h",
     "v"
    ]
+  },
+  {
+   "id": "00b5",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x00F48715.tga",
+   "flips": [
+    "none",
+    "v"
+   ],
+   "sample": {
+    "size": [
+     256,
+     256
+    ],
+    "u": {
+     "n64": [
+      0,
+      32
+     ],
+     "src": [
+      85.333,
+      256.0
+     ]
+    },
+    "v": {
+     "n64": [
+      0,
+      32
+     ],
+     "src": [
+      256.0,
+      426.667
+     ]
+    }
+   }
   },
   {
    "id": "00c8",
@@ -160,6 +212,19 @@
    ]
   },
   {
+   "id": "0101",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x08066E65.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
    "id": "0102",
    "n64": [
     32,
@@ -171,6 +236,21 @@
     "none",
     "v"
    ]
+  },
+  {
+   "id": "0105",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/prop/damchaindoor",
+   "res": "_0x01E8D305.tga",
+   "flips": [
+    "v",
+    "none"
+   ],
+   "level": 117,
+   "bleed": true
   },
   {
    "id": "0107",
@@ -195,6 +275,32 @@
    "res": "_0x05BE1F25",
    "flips": [
     "v",
+    "v"
+   ]
+  },
+  {
+   "id": "0118",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0E2932C5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "011a",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0CA312E5.tga",
+   "flips": [
+    "none",
     "v"
    ]
   },
@@ -232,6 +338,19 @@
    ],
    "bundle": "new/background/dam",
    "res": "_0x07124795.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0123",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x04C1C8E5.tga",
    "flips": [
     "none",
     "v"
@@ -336,6 +455,19 @@
    ],
    "bundle": "new/background/control",
    "res": "_0x0C0AEB65.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0137",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x03A0FD25.tga",
    "flips": [
     "none",
     "v"
@@ -732,6 +864,45 @@
    ]
   },
   {
+   "id": "029f",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x077CB475.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02a0",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x077CB475.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02a1",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x077CB475.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
    "id": "02a3",
    "n64": [
     32,
@@ -754,6 +925,19 @@
    "res": "_0x019F6335.tga",
    "flips": [
     "h",
+    "v"
+   ]
+  },
+  {
+   "id": "02a6",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x05C4C105.tga",
+   "flips": [
+    "none",
     "v"
    ]
   },
@@ -784,6 +968,32 @@
    ]
   },
   {
+   "id": "02b8",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0A437EA5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02b9",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x03A0FD25.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
    "id": "02ba",
    "n64": [
     32,
@@ -791,6 +1001,45 @@
    ],
    "bundle": "new/background/facility",
    "res": "_0x0A437EA5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02be",
+   "n64": [
+    32,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x058933B5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02bf",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x09A2C585.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02c0",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x09A2C585.tga",
    "flips": [
     "none",
     "v"
@@ -808,6 +1057,218 @@
     "none",
     "v"
    ]
+  },
+  {
+   "id": "02c2",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x01B85A95.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "02ce",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x04E7B145.tga",
+   "flips": [
+    "none",
+    "v"
+   ],
+   "sample": {
+    "size": [
+     128,
+     128
+    ],
+    "u": {
+     "n64": [
+      0,
+      64
+     ],
+     "src": [
+      412.8,
+      515.2
+     ]
+    },
+    "v": {
+     "n64": [
+      0,
+      64
+     ],
+     "src": [
+      99.2,
+      201.6
+     ]
+    }
+   }
+  },
+  {
+   "id": "02cf",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0C2B7AA5.tga",
+   "flips": [
+    "none",
+    "v"
+   ],
+   "sample": {
+    "size": [
+     128,
+     128
+    ],
+    "u": {
+     "n64": [
+      0,
+      64
+     ],
+     "src": [
+      412.8,
+      515.2
+     ]
+    },
+    "v": {
+     "n64": [
+      0,
+      64
+     ],
+     "src": [
+      99.2,
+      201.6
+     ]
+    }
+   }
+  },
+  {
+   "id": "02d1",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x09D4F4C5.tga",
+   "flips": [
+    "none",
+    "v"
+   ],
+   "sample": {
+    "size": [
+     512,
+     512
+    ],
+    "u": {
+     "n64": [
+      0,
+      32
+     ],
+     "src": [
+      101.0,
+      613.0
+     ]
+    },
+    "v": {
+     "n64": [
+      0,
+      32
+     ],
+     "src": [
+      53.0,
+      565.0
+     ]
+    }
+   }
+  },
+  {
+   "id": "02d3",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x04EAF545.tga",
+   "flips": [
+    "none",
+    "v"
+   ],
+   "sample": {
+    "size": [
+     512,
+     512
+    ],
+    "u": {
+     "n64": [
+      0,
+      64
+     ],
+     "src": [
+      90.0,
+      602.0
+     ]
+    },
+    "v": {
+     "n64": [
+      0,
+      64
+     ],
+     "src": [
+      37.0,
+      549.0
+     ]
+    }
+   }
+  },
+  {
+   "id": "02fa",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/prop/damchaindoor",
+   "res": "_0x02D98175.tga",
+   "flips": [
+    "v",
+    "none"
+   ],
+   "sample": {
+    "size": [
+     64,
+     64
+    ],
+    "u": {
+     "n64": [
+      9.72,
+      33.16
+     ],
+     "src": [
+      121.75,
+      147.0
+     ],
+     "wrap": 32,
+     "outside": "mirror"
+    },
+    "v": {
+     "n64": [
+      0,
+      32
+     ],
+     "src": [
+      72.0,
+      111.87
+     ]
+    },
+    "seam": 0.25
+   },
+   "level": 178
   },
   {
    "id": "0301",
@@ -949,6 +1410,19 @@
    "res": "_0x0F8E1435.tga",
    "flips": [
     "h",
+    "v"
+   ]
+  },
+  {
+   "id": "0492",
+   "n64": [
+    64,
+    32
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x010421B5.tga",
+   "flips": [
+    "none",
     "v"
    ]
   },
@@ -1291,6 +1765,19 @@
    ]
   },
   {
+   "id": "05d0",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0313D2B5.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
    "id": "05d1",
    "n64": [
     38,
@@ -1298,6 +1785,19 @@
    ],
    "bundle": "new/background/facility",
    "res": "_0x0873FC55.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05d2",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0746A625.tga",
    "flips": [
     "none",
     "v"
@@ -1337,6 +1837,19 @@
    ],
    "bundle": "new/background/facility",
    "res": "_0x06977345.tga",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "05d6",
+   "n64": [
+    38,
+    38
+   ],
+   "bundle": "new/background/facility",
+   "res": "_0x0A8A1D35.tga",
    "flips": [
     "none",
     "v"
@@ -1486,6 +1999,84 @@
    ]
   },
   {
+   "id": "0892",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screen1",
+   "res": "screen1",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0893",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screen2",
+   "res": "screen2",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "0897",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screen7",
+   "res": "screen7",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "08a6",
+   "n64": [
+    128,
+    48
+   ],
+   "bundle": "new/texture/monitors/earthmap",
+   "res": "earthmap",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "08af",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screennew1",
+   "res": "screennew1",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
+   "id": "08b0",
+   "n64": [
+    32,
+    32
+   ],
+   "bundle": "new/texture/monitors/screennew2",
+   "res": "screennew2",
+   "flips": [
+    "none",
+    "v"
+   ]
+  },
+  {
    "id": "08b1",
    "n64": [
     32,
@@ -1509,6 +2100,19 @@
    "flips": [
     "none",
     "none"
+   ]
+  },
+  {
+   "id": "08b3",
+   "n64": [
+    64,
+    64
+   ],
+   "bundle": "new/texture/monitors/screenstatic",
+   "res": "screenstatic",
+   "flips": [
+    "none",
+    "v"
    ]
   },
   {

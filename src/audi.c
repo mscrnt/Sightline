@@ -557,7 +557,7 @@ unsigned long sl_am_reg_hits, sl_am_reg_clients, sl_am_reg_nextword;
 unsigned long sl_am_ctl_fired;
 /* ORDERED SEQUENCES, not counters. A control that only moves a total cannot
  * show WHERE the lifecycle diverged, and "a counter changed" is exactly the
- * evidence the brief rules out. Each is the first 32 entries.
+ * evidence the task specification rules out. Each is the first 32 entries.
  *   slot_seq     the triple-buffer slot each frame handling chose
  *   evt_seq      the scheduler frameCount the step ran on - the event identity
  *   lastinfo_seq the slot of the lastInfo passed to amHandleFrameMessage,

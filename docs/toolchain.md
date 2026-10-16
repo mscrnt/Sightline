@@ -90,7 +90,7 @@ python3 -m venv .venv
 
 This is the single most important operational rule in this file.
 
-`source .venv/bin/activate` is **not** part of any workflow here. Agent sessions
+`source .venv/bin/activate` is **not** part of any workflow here. Automated sessions
 and CI steps get fresh non-interactive shells, so an activation performed in one
 step does not survive into the next. The resulting failures are `ModuleNotFound`
 and wrong-interpreter errors deep inside a build step, which look exactly like

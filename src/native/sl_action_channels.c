@@ -38,7 +38,7 @@
  * ln(60/7)/ln(1.21) = 11.3 notches - about one comfortable swipe of a wheel
  * end to end, with each notch a step small enough to settle on a target. One
  * tick per notch (x1.1, 23 notches) was too fine to feel like a zoom control;
- * three (x1.33, 7.5 notches) too coarse to aim with. Feel is the owner's to
+ * three (x1.33, 7.5 notches) too coarse to aim with. Feel is for a playtest to
  * judge; the constant is one line.
  *
  * A HELD ZOOM IS A LEVEL (round 6 of #63 / #64, 2026-09-20): a zoom action
@@ -48,7 +48,7 @@
  * reports a tick of zoom while the pulse runs OR the level is up; the two
  * compose (a notch during a hold adds nothing visible, which is right). Up
  * to round 5 the pulse was the only path, and R3's ZOOM IN - a button - got
- * two ticks per press and read to the owner as doing nothing.
+ * two ticks per press and read in playtest as doing nothing.
  *
  * LIVE INPUT ONLY, MENU CLOSED, and zero on every headless run and every
  * recorded replay: `active` is set by the platform layer only while there is
@@ -72,7 +72,7 @@
  * occupy bits 8..13. They are consumed inside sl_input.c (the walk / strafe
  * channels and the N64 Z / R buttons) and published here only so the
  * witness line names them; no game seam reads those bits. */
-/* #47: SL_ACT_TEXTURE_CYCLE is enum bit 14 and DELIBERATELY has no channel.
+/* #47: SL_ACT_PRESENTATION_CYCLE is enum bit 14 and DELIBERATELY has no channel.
  * It changes a renderer setting, not game state, and is consumed in
  * sl_input.c; the bound below is what drops its pulse, so the game's reader
  * never sees it and no seam has to know it exists. */

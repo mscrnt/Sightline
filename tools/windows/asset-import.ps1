@@ -130,7 +130,7 @@ $ErrorActionPreference = 'Stop'
 # the script prints its usage instead of importing anything. Measured: the
 # first run of this file did exactly that. The bound value is read out of
 # $PSBoundParameters, which is not shadowed, and the parameter keeps the name
-# the owner types.
+# the user types.
 $InputPath = $PSBoundParameters['Input']
 
 # Repo root from this script's own location - never a literal path.

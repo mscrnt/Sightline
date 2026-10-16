@@ -281,7 +281,7 @@ void sl_input_live_wheel(int notches);
  * list the hardware never actually had - and never looks again. That is not
  * a hotplug nicety, it is the ordinary startup of a pad that is plugged in
  * the whole time. Wireless pads sleeping on idle and waking on input (the
- * owner's Xbox does exactly this) widen the same hole to minutes.
+ * reference Xbox pad does exactly this) widen the same hole to minutes.
  *
  * Event-driven, not scanned: SDL raises CONTROLLERDEVICEADDED/REMOVED and the
  * drain already runs every presented frame, so there is no periodic poll here

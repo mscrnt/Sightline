@@ -2,7 +2,7 @@
 
 This module exists so that the two things that talk to the debug mailbox -
 `tools/native/rominspect.py`, which replays a recording offline, and the LIVE
-recorder in `record_libretro.py`, which talks to it while the owner plays -
+recorder in `record_libretro.py`, which talks to it while a human plays -
 cannot drift apart. The layout is mirrored from `src/game/sl_romdbg.h` exactly
 once, here, and the ROM publishes its own sizeof so a drift is an error rather
 than a plausible-looking wrong answer.
@@ -502,7 +502,7 @@ class LiveCapture:
         edge = pressed and not self._prev_pressed
         self._prev_pressed = pressed
         if edge:
-            # Held presses collapse to one capture. That is correct: the owner
+            # Held presses collapse to one capture. That is correct: the player
             # holds the button for as long as it takes to notice they pressed it.
             self.presses += 1
             if self._pending is None:
@@ -600,7 +600,7 @@ class LiveCapture:
                           f"(crosshair on no prop; {box['onscreen_count']} props "
                           f"on screen)")
                 if self.miss_detail and self._pending is None:
-                    # Answer "what WAS on screen" straight away, while the owner
+                    # Answer "what WAS on screen" straight away, while the player
                     # is still standing there. NEAREST, so it cannot take over
                     # the watched prop from an earlier SELECT.
                     self._issue(mem, CMD_NEAREST, -1, "missdetail", index)

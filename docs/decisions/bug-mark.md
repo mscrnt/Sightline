@@ -1,4 +1,4 @@
-# Live owner bug mark (F8)
+# Live bug mark (F8)
 
 **Status:** shipped 2026-09-08, on `sightline/full-sp-native`.
 **Hardened 2026-09-08** (v2) — stale telemetry removed, room semantics made
@@ -6,8 +6,8 @@ truthful, centre pixel and depth recorded, source provenance added.
 
 ## The problem it replaces
 
-Diagnosis of rendering defects kept routing through the same loop: the owner
-plays, sees something wrong, and then somebody tries to reproduce it. F9 was
+Diagnosis of rendering defects kept routing through the same loop: a manual
+playtest finds something wrong, and then somebody tries to reproduce it. F9 was
 built for that loop — it writes `mark <n> read <index>` into the run directory
 so a replay can jump straight to the moment.
 
@@ -20,7 +20,7 @@ no progress on the actual rendering defects; that work is now parked as
 tooling/evidence debt (Gitea #7).
 
 F8 removes the replay from the path entirely. It captures the answer in the
-live run, at the instant the owner is looking at the defect.
+live run, at the instant the defect is on screen.
 
 ## What it does
 

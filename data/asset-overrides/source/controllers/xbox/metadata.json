@@ -15,8 +15,8 @@
  "authored_parts": {
   "btn_guide": "plain btn_guide replacing the original logo-shaped part"
  },
- "authored_parts_note": "These parts are the project owner's own replacement geometry (manufacturer logos removed); everything else in the mesh and every texture is the third party's CC-BY-4.0 work as changed above.",
- "debranding": "btn_guide: the embossed manufacturer logo (an 836-face shell) and its dome replaced by an owner-authored plain dome of the same footprint, textured with the plain disc colour the original used (extras.sl_authored_part on the node).",
+ "authored_parts_note": "These parts are Sightline-authored replacement geometry (manufacturer logos removed); everything else in the mesh and every texture is the third party's CC-BY-4.0 work as changed above.",
+ "debranding": "btn_guide: the embossed manufacturer logo (an 836-face shell) and its dome replaced by a Sightline-authored plain dome of the same footprint, textured with the plain disc colour the original used (extras.sl_authored_part on the node).",
  "frame": "GjoypadZ: +x = player's right, +y = up toward the watch camera, -z = the top edge; N64 body 788 x 253 x 836; fitted to width 788",
  "fitted_width": 788.0,
  "parts": {
@@ -42,6 +42,6 @@
   "controller_xbox.bin": "866494F27A7E18505E8AA751EC96903CDF0DA325",
   "controller_xbox.gltf": "95469358A5677BB669BE237983FE5E8A3E185431"
  },
- "source_oracle_note": "sha1 of the owner's staged package files as received (2026-09-19); the .bin and textures are committed verbatim, the .gltf's extras were rewritten",
+ "source_oracle_note": "sha1 of the staged package files as received (2026-09-19); the .bin and textures are committed verbatim, the .gltf's extras were rewritten",
  "texture_refs": {}
 }

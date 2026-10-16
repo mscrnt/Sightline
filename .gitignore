@@ -196,3 +196,13 @@ SightlineDemo.exe
 #                 inherits their boundary exactly.
 /texsources/
 /texpacks/
+
+# World assets (#68). The SAME boundary, one directory further out: the user
+# brings the SOURCE (texsources/ above - the two features share it and nothing
+# else), a local tool writes the ASSET, and neither is ours to distribute.
+#
+#   worldassets/  what tools/windows/prepare-xbla-assets.ps1 WRITES:
+#                 xbla/<class>/<item>.slwa, the development
+#                 SL_WORLDASSET_ROOT. Derived from the source above, so it
+#                 inherits its boundary exactly.
+/worldassets/

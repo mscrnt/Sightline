@@ -1,9 +1,20 @@
 # Texture sets (#47)
 
-A player-facing TEXTURES setting - **ORIGINAL / COMMUNITY HD / XBLA** - in
-the front end's DISPLAY tab and the watch's GRAPHICS child, and the provider
+The TEXTURE PROVIDER - **ORIGINAL / COMMUNITY HD / XBLA** - and the seam
 behind it. Render-only, native-only, default ORIGINAL. Nothing in the
 simulation reads it; a trace replay never sees it.
+
+> **THERE IS NO LONGER A PLAYER-FACING "TEXTURES" SETTING (#68,
+> 2026-09-23).** The player has ONE visual selection, **PRESENTATION**, and a
+> policy resolves it into a set for each visual provider - this one and the
+> world-asset provider - so one choice moves the whole picture together.
+> `docs/world-assets.md` and the policy header
+> `src/platform/sl_presentation.h` hold that layer. What this page describes
+> is still exactly true of the MECHANISM: the sets below, their roots, their
+> format, their cache and their per-texture fallback are this provider's own,
+> and nothing else reads them. What changed is only WHO CHOOSES which set is
+> active. Where this page says "the TEXTURES setting", read "the texture set
+> the active presentation selects".
 
 This page is the runtime architecture. It carries no asset, no pack and no
 pointer to one: Sightline neither ships nor locates a texture set. The
@@ -25,39 +36,66 @@ the decode, never the XBLA file, and the reverse. No set is assumed
 complete; a set that is not installed is every id missing, the game is
 playable, and one line says so.
 
-The setting is `textures=0/1/2` in the native settings store
-(`%LOCALAPPDATA%\sightline\config.ini`, beside `world_detail`). Missing,
-malformed or out of range reads ORIGINAL; an inactive store (replay,
-headless) answers ORIGINAL. A change applies at each texture's next resolve
-- the next frame - with no restart and no level reload.
+## Which set is active
 
-## Switching sets while you play
+The provider does not read a setting of its own. It asks the presentation
+policy - `sl_presentation_textures(sl_presentation())`,
+`src/platform/sl_presentation.h` - which of the three sets above the player's
+one visual selection resolves to:
 
-Three ways in, one store:
+| PRESENTATION | this provider draws | (and the world-asset provider) |
+|---|---|---|
+| ORIGINAL | ORIGINAL - no pack is read | nothing |
+| COMMUNITY HD | the COMMUNITY HD set | nothing |
+| XBLA | the XBLA set | the `xbla` world-asset set |
+
+The stored key is `presentation=0/1/2` in the native settings store
+(`%LOCALAPPDATA%\sightline\config.ini`, beside `world_detail`). It replaced
+#47's `textures` key, which held the same three ids: a config written before
+2026-09-23 is migrated at load - the value is copied across, the canonical
+key is written once, and the legacy key is never written again, so exactly
+one stored value is authoritative. If a hand-edited file carries both, the
+new key wins whatever the line order. Missing, malformed or out of range
+reads ORIGINAL; an inactive store (replay, headless) answers ORIGINAL.
+
+A change applies at each texture's next resolve - the next frame - with no
+restart and no level reload, because the provider asks the policy at every
+resolve and bumps its cache generation when the answer moves.
+
+## Switching while you play
+
+Three ways in, one stored value:
 
 | Where | How |
 |---|---|
 | **In the level** | **F5**, or the pad's **View / Create** button ("Select") - one press steps ORIGINAL -> COMMUNITY HD -> XBLA -> ORIGINAL |
-| Front end | OPTIONS -> SETTINGS -> DISPLAY -> TEXTURES |
-| Watch | SIGHTLINE -> GRAPHICS -> textures |
+| Front end | OPTIONS -> SETTINGS -> DISPLAY -> PRESENTATION |
+| Watch | SIGHTLINE -> GRAPHICS -> presentation |
 
-The in-level cycle is a binding like any other - action **TEXTURE SET** in
+One press moves **every** visual provider, which is the point of the
+coordination: at the Dam, stepping into XBLA brings the XBLA artwork and the
+XBLA skydome together, and stepping out of it takes both away.
+
+The in-level cycle is a binding like any other - action **PRESENTATION** in
 the registry (#46) - so it appears in the bindings editor in both UIs, both
 slots, and is re-bindable. It is bound in every controller preset, and the
 button it is bound to is the one that **used to mark**: the pad no longer
-marks at all (owner decision, 2026-09-22), while the keyboard's F9 / F8 marks
+marks at all (design decision, 2026-09-22), while the keyboard's F9 / F8 marks
 are unchanged and still deliberately unbindable so nothing can steal them.
+Its persisted binding key is still `bind.texture_cycle.*`, deliberately: a
+stored key is an identity, and renaming it would silently discard a player's
+own rebinding. The label they read is what changed.
 
 A press only lands with live input and no menu up, which is the same rule the
 gameplay actions take, so the cycle cannot fire from inside the watch, the
 front end or a binding capture - nor on the frame one of those closes with
 the button still held.
 
-**What you see.** The set you landed on is named on the HUD's own bottom
-message line ("TEXTURES: COMMUNITY HD"), the same line the game's cheats use
-- no new text system was added - and one line goes to the log. If no pack is
-prepared the setting still moves and the art stays ORIGINAL; the launcher
-already says so once per launch.
+**What you see.** The presentation you landed on is named on the HUD's own
+bottom message line ("PRESENTATION: COMMUNITY HD"), the same line the game's
+cheats use - no new text system was added - and one line goes to the log. If
+no pack is prepared the selection still moves and the art stays ORIGINAL; the
+launcher already says so once per launch.
 
 ## Where the files live
 
@@ -122,7 +160,7 @@ recorded SHA-256 cannot vouch for it).
 The binary's ladder above is the whole of its contract: it holds no source
 path and looks in no checkout. That leaves a gap a **source checkout** has to
 close on its own, and not closing it is what failed this feature's first
-owner replay - the packs sat outside the tree, only an exported
+acceptance playtest - the packs sat outside the tree, only an exported
 `SL_TEXPACK_ROOT` reached them, and an ordinary launch therefore read a root
 that did not exist and drew ORIGINAL under every setting while automated runs
 that did export the variable reported replacements. Two launches, described
@@ -176,6 +214,24 @@ shows the selected set with no variable set anywhere. An explicit
 set selected and no pack prepared, the launcher says so in ONE line naming
 the command above, and the game runs on the ROM's own artwork.
 
+**Where level 0 lives (#68).** `tools\texpack\xdecode.py` owns the console's
+texture memory layout, not just its block formats, because reading the right
+bytes is a prerequisite to decoding them. A texture's base level is stored at
+the row pitch its fetch constant carries, padded to 32 blocks each way; its
+mip levels have a layout of their own; and when packed mips are on, every
+level whose width **or height** has fallen to 16 texels or fewer shares a
+single packed tail rather than getting storage of its own. Because that rule
+is written on the SHORTER side, a texture already 16 or less on one side has
+its tail begin at level 0 - **the base level itself is inside the tail and is
+not at the start of its allocation**. The decoder models the packed level, the
+level's offset within the tail and the base pitch, refuses a level placed
+outside its surface, and takes the container's declared mip count as the gate:
+with no chain there is no tail, so the base is at the origin. `selftest.py`
+drives all of it on synthetic surfaces whose every block carries its own
+coordinates. This changes no accepted mapping's output - none of the 127 names
+a texture the rule moves - and `docs\world-assets.md` records the measurement
+that recovered it.
+
 **What the repository holds, and what it does not.** `tools\texpack\` holds
 the converter - the container and block-format readers, the SLTX writer - and
 two mapping tables (`mapping\community.json`, `mapping\xbla-accepted.json`)
@@ -206,6 +262,62 @@ absent, `prepare-textures.ps1` falls back to the package's own PowerShell
 converter, which needs nothing - so a checkout can always build the Community
 set. The XBLA conversion has no such fallback and needs numpy.
 
+### Native-domain entries (re-UV'd remaster items)
+
+Most XBLA entries are a source image that IS the native image at a higher
+resolution: the two flips are the whole conversion. Remaster images already
+reach cartridge geometry this way; the mapping has taken images from the
+remaster's `new/prop/*` items since it was built. Some remaster items were
+re-UV'd, though. The native model samples its texture with the cartridge's
+coordinates, while the remaster draws different artwork with different
+coordinates. The mapping names such an id with up to three more fields,
+applied in order after decoding (`tools\texpack\nativeuv.py`):
+
+- **`sample`** - resample a source window into the native texture's domain.
+  `u` maps a native texel band `n64: [a, b]` onto source pixels `src: [c, d]`.
+  With `wrap`, texels below the band continue past its far end. With
+  `"outside": "mirror"`, a model that samples past the band sees the artwork
+  reflected, not one edge column smeared across. `v` repeats a source window
+  every `n64` span, and `seam` cross-fades the last fraction of each repeat
+  into the rows before the window, so the repeat tiles without a seam row.
+- **`level`** - scale colour so the covered texels' mean luminance equals the
+  native image's. The native model shades its texture with vertex colours
+  authored for the native image's brightness, and a remaster image lit for
+  another shading model can land several times darker.
+- **`bleed`** - give every transparent texel the colour of its nearest covered
+  texel, so a cut-out's filtered edge never fades towards the colour under
+  its transparent part.
+
+Every number is measured from the two models. On the Dam's chain-link doors
+(`Pdamchaindoor`, `prop/damchaindoor`):
+
+- **Chain field (0x0105).** The chain quad's corners carry
+  (u, v) = (s / 2 - 12 x 1024, 1024 - t) in both remaster generations, where
+  s and t are the ROM quad's S/T. At the remaster's 1/1024 scale this is the
+  native normalised domain, with v flipped and whole-repeat offsets. So the
+  remaster chain tile IS the native tile. Flipped vertically, its alpha
+  correlates 0.991 with the ROM image's alpha; the unflipped image correlates
+  only 0.531. The entry is that image flipped, levelled to the ROM image's
+  covered luminance (117) and bled.
+- **Frame (0x02fa).** The remaster re-UV'd the frame: it draws a riveted steel
+  bar from a 256x256 atlas at u 487..588 (atlas pixels 121.75..147.0), two
+  repeats per bar. The ROM frame samples a 32x32 tube gradient across the
+  native band S 9.72..33.16 and tiles it about 18 times per bar. Measured over
+  both models' frame edges (median texel density along the bar), one native
+  repeat is 39.87 atlas pixels. The entry takes the bar across the band, a
+  rivet-free window of that length along it (atlas rows 72.0..111.87, seam
+  0.25) and the ROM image's covered luminance (178). Unlevelled, the bar
+  read 71 and drew near-black under the native shading.
+
+An id is global, so the replacement reaches every model that draws it, in
+every level. A scan of the ROM's image commands, room streams included:
+
+- 0x0105 is also drawn in rooms of `bg_ark`, `bg_run` and `bg_sevx`. The
+  replacement is tile-exact, so it lands correctly wherever it is drawn.
+- 0x02fa is also drawn by `PcarweirdZ` (S 0.31..31.69), `PcarzilZ`
+  (S 10.28..31.66) and rooms of `bg_dest` and `bg_crad`. That is why its
+  band mirrors instead of clamping.
+
 ## The runtime image format (SLTX)
 
 The tree links no PNG decoder and none was added (project rules: no
@@ -228,7 +340,8 @@ decoder produces and `glTexImage2D` takes - no flip anywhere):
 The parser (`src/gfx/sl_gfx_texprov.c`) checks every field before a byte of
 payload is read or an allocation is sized; a malformed file is INVALID,
 reported once, and that texture stays ORIGINAL's. `tools\windows\
-texprovtest.ps1` drives it with synthetic fixtures (56 checks).
+texprovtest.ps1` drives it with synthetic fixtures (74 checks, the
+carried-coordinate table's included).
 
 The replacement may be any size within the bound; a non-integer ratio to
 the N64 image is fine (see below). Mip levels are not stored; the far-image
@@ -550,11 +663,344 @@ That is consistent with how the build works: the display-mode switch swaps
 per-texture correspondence. Texture-level pairing therefore has to be earned
 from evidence, which is what the stages above do.
 
+### Pairing by geometry
+
+Pixels cannot pair a texture the remaster redrew, but on some levels the
+source pairs it another way. Facility's remastered background
+(`new/background/facility`) and its original one describe the same rooms:
+both declare the same bounds, they hold 23364 and 24897 vertices, and 12040
+of the remaster's 19603 triangles sit at exactly the positions of an original
+triangle. Each such triangle names one remastered image and one original
+image, so the pair comes from the level itself rather than from how the two
+images look.
+
+The same triangles also show whether the remastered image can stand in for
+the native one. Over every shared edge, the remaster's texture-coordinate step
+is compared with the original's. When the ratio is 1 on both axes and the
+offset is a whole number of repeats, the image tiles exactly as the native
+texture does, so the substitution is the same kind as every other entry.
+
+**The rule**, applied to every pair on the level, with nothing chosen by hand:
+
+- the coordinate ratio is 1 on both axes, within 1%, on at least 60% of the
+  shared edges;
+- the offset is a whole number of repeats, within 0.01, on at least 60% of
+  them;
+- the pair shares at least 4 triangles;
+- the original image's id comes from the pixel stage, which matches the
+  original bundle's images (copies of the ROM's own) to the image table, at
+  NCC 0.75 or better;
+- the remastered image is larger than the original one, so it is a remaster
+  and not a carried-over copy;
+- the id is not already mapped.
+
+When one id meets the rule with more than one image, the pair with the most
+shared triangles wins. The orientation is the pixel stage's flip for the
+original image, since the two images share coordinates.
+
+**Checked against the pixel stage.** All 13 accepted Facility entries that the
+geometry reaches come back with the same remastered image, and every one of
+their offsets is a whole number of repeats. The rule added 17 Facility ids:
+`00a0 0101 0118 011a 0123 029f 02a0 02a1 02a6 02b8 02be 02bf 02c2 0492 05d0
+05d2 05d6`. Among them are the bathroom and second-floor walls (`0123`), the
+air duct (`029f 02a0 02a1`), the stairs (`02be`) and the biohazard sign
+(`05d6`). The pixel stage had paired some of these remastered images with the
+wrong id. For example, `0123`'s image had been placed beside `02c5`, and
+`00a0`'s beside `02ac`.
+
+**What the rule leaves out.** The biggest Facility walls (`02cf 02ce 02d1
+02d3 00b5 0137`) do pair by geometry, but at a coordinate ratio of about 0.2,
+0.5, 0.69 or 2. The remaster tiles them on a different period, so one native
+repeat is a fraction or a multiple of the remastered image. A plain
+substitution would draw them at the wrong scale. They are taken by the
+re-tiling rule below instead.
+
+### Re-tiled pairs
+
+On the triangles both generations share, the exact relation between the two
+texture coordinates is an affine map, solved per triangle from its three
+corners. Weighted by area, each of these walls has one dominant map, and it
+is a pure scale with no shear:
+
+| id | remastered image | dominant scale (share of the shared area) | the image's own cells | cells per native repeat | drawn larger than the remaster by |
+|---|---|---|---|---|---|
+| `02cf` | 512x512 bathroom tiles | 0.1983 x 0.1984 (84%) | 5 x 5 tiles | 1 | +0.9%, +0.8% |
+| `02ce` | 512x512 tiles | 0.2012 x 0.2015 (68%) | 5 x 5 tiles | 1 | -0.6%, -0.7% |
+| `02d1` | 256x256 concrete | 2.0562 x 2.0548 (60%) | 1 | 2 | -2.7%, -2.7% |
+| `02d3` | 256x256 concrete | 2.0507 x 2.0518 (68%) | 1 | 2 | -2.5%, -2.5% |
+| `00b5` | 512x512 brick | 0.3654 x 0.3770 (53%) | 3 x 3 (a brick, two courses) | 1 | -8.8%, -11.6% |
+| `0137` | 512x512 floor | 1.0000 x 1.0000, phase 0 (33%) | 2 x 2 | 2 (the whole image) | 0 |
+
+The scale is how many remastered images one native repeat spans. The cells
+are the image's own repeat grid: along each axis, the shift of 1/n of the
+image at which it correlates best with itself (`nativeuv.repeat_cells`, 0.84
+for the bathroom tiles at n = 5; an image with no correlation of 0.4 or more
+is one cell).
+
+**The rule** (`nativeuv.retile`): one native repeat can only hold a WHOLE
+number of the image's cells and still tile, so it holds
+k = max(1, round(scale x cells)) of them. A window of exactly 2.056 images
+would put a 0.056-image discontinuity at every native repeat. The last column
+of the table is what rounding costs: how much larger the drawn artwork is
+than the remaster draws it, which is k / cells / scale - 1.
+
+**Where the window starts.** When the window is a single cell of a larger
+grid, the cell and its shift, in steps of 1/32 cell, are the ones that best
+match the native image (normalised cross-correlation 0.925 for `02cf`, 0.910
+for `02ce`, 0.747 for `00b5`). So a tile's grout and a brick's mortar land
+where the native texture has them. When the window is whole images, the
+start is the remaster's own phase at the native lattice, rounded to a whole
+source pixel so the copy is not resampled. `0137` comes out at phase
+0.7 px, scale 1: it is a direct entry, with no `sample` block.
+
+The colours are the remaster's, not levelled, like the seventeen direct
+entries beside them.
+
+**What it does not reproduce:**
+
+- The remaster gives each tile on a bathroom wall its own cell of the 5 x 5
+  image, varying the grime; one cell repeats here.
+- `00b5` is drawn at two scales in the remaster: 0.37 in the dominant rooms
+  and 0.53 in the others (about 45% of the shared area). Only the dominant
+  one is reproduced. In the other rooms the bricks are about 1.4 times the
+  remaster's size, which is the native texture's own brick size.
+- `0137` is rotated by about 105 degrees at scale 0.53 in about a third of
+  the shared area. There the floor tiles are half the remaster's size.
+- **`0137` bends where the cartridge's own coordinates bend.** On parts of
+  the floor the native texture coordinates change scale and direction from
+  one triangle to the next. In room 55, the lab beside the biohazard sign,
+  for example, a single floor carries 1.8 to 6.0 repeats per 1000
+  units at -60 to +30 degrees, while the remaster's coordinates on the same
+  triangles are uniform (2.56 to 2.60, 0 degrees). The cartridge's tile is
+  noise, so its bends never showed. Any image with lines drawn through
+  those coordinates bends with them. Over the coplanar edges two `0137`
+  triangles share, 35 of 394 change the coordinate gradient by more than
+  10%; the 47 triangles they touch are 12.6% of the floor's area, in
+  several rooms. No single native-domain image can be right on both sides
+  of such an edge. The floor now follows the remaster's own coordinates
+  there instead (see "Carried coordinates" below).
+
+The ids are global. A scan of every room stream of the ROM's backgrounds for
+image commands finds `00b5 02ce 02cf 02d1 02d3` only in Facility (`bg_ark`)
+and `0137` also in the Bunker (`bg_sev`), so under XBLA the Bunker's floor
+draws Facility's remastered floor tile too.
+
+**The floor beyond the lockers (`02b9`).** The remaster lays the same floor
+image as `0137` there. On the 90 shared triangles the dominant relation is
+again the identity at phase zero (about 35% of the area; the rest at 1.5 x 2
+or turned), so `02b9` is a direct entry for that image. Its native
+coordinates carry no seam on any of their 99 shared edges. `bg_ark` only.
+
+**The catwalk grating (`02c0`).** The cartridge has the diamond grating
+twice: `02bf` and `02c0` are the same 32x32 artwork (normalised
+cross-correlation 0.995, no shift), `02c0` about 17% brighter. Only `02c0` is
+drawn in a level. Two image commands name it, both in `bg_ark`'s room
+streams, and no background room stream names `02bf`. The remaster's copy of
+the original draws Facility's gratings, the catwalk above the last tank
+room included, with ONE image that the pixel stage pairs with `02bf` (0.9629)
+a hair ahead of `02c0` (0.9625). The geometry rule took its id from that
+match, so the grating went into the table as `02bf` and the surfaces stayed
+the cartridge's. On the catwalk the original generation's four corners carry
+the native texture coordinates exactly (u -1.783 and 5.023, v 4.891 and
+32.881), and the remastered generation draws `_0x09A2C585` at the same
+coordinates. So `02c0` is a direct entry for that image, with `02bf`'s
+flips; table 153 -> 154.
+
+**The tank room's tanks and pipes (`02bd`) are not taken.** They draw a flat
+grey native tile under vertex colour. On the remastered background, the
+same surfaces (a flat 64x64 legacy image, 1709 shared triangles) carry a
+512x512 painted-metal image, but with no dominant relation: the largest
+family of triangles is mirrored at 1.9 x 0.9 and covers about a third of the
+area, the rest scattered across scales, swaps and turns. The pixel stage
+cannot name the flat legacy image's id either, since a uniform image
+correlates with nothing. Choosing a scale, a mirroring and a brightness for
+it would be a judgment rather than a measurement. The carried coordinates
+(below) do not reach them either: over the native `02bd` area, 53% has no
+remastered surface in its plane at all (the tanks were re-tessellated), 24%
+lies under the image `0101` takes and 22% under the painted metal. One id,
+two remastered materials and a different surface: no image and no set of
+coordinates stands for it.
+
+**What Facility's remaster did not redraw.** Some surfaces look the same
+under XBLA because the remaster kept the original images. Its background
+draws them on the same triangles as the original:
+
+- **The bulletin-board papers** (`041b 041d 041e 041f 0422`). Both boards
+  carry 64x32 and 32x64 copies of the N64 papers (`.scaled`), and the
+  original generation draws the same names. Nothing in the source redraws
+  them. The only redrawn paper is the staff list, a different document
+  (`prop/chrstafflist`). Community HD's own images for these ids are its
+  own.
+- **The window frames in the labs** (`0393`, a 64x32 copy in both
+  generations) and the grey trim beside them (`02c4`, a 64x64 copy). The frames around the glazed lab
+  doors are the doors' own model, which the door item now replaces
+  (`docs/world-assets.md`, the swinging door).
+- **Small wall pieces**: a 32x32 rusty plate (`0493`, beside the replaced
+  `0492`) and a vent grille (`00f0`, re-UV'd with no dominant relation).
+- **The conveyor**: its rails and legs (`0393`) draw the same image,
+  `_0x001D0AD5`, in both generations.
+
+**Redrawn on other geometry: the conveyor's exit frame (`0134`).** The
+remaster did redraw the metal (`_0x0E2932C5`, 512x512), but on geometry of
+its own. Each remastered triangle was sampled at three interior points
+against the original generation's `0134` triangles in the same plane. Only
+11% of the image's area lies over them, and there no relation dominates:
+the identity covers about 4% of the image's area, the rest is scattered.
+96% of `0134`'s own area has no remastered triangle at its positions. At
+the conveyor's exit, 62% of the frame's area has no remastered surface in
+its plane at all, and the rest mixes two images. No native-domain image can
+stand for it. Like the tanks (`02bd`), it follows the remaster only by
+drawing the remaster's geometry.
+
+The biohazard sign that seemed to vanish between two close views in the lab
+(`05d6`) is not a defect. Over nine steps between the two cameras, its
+visible pixels track its projected area inside the viewport (7698 -> 100
+pixels, the last 100 being a second, distant sign). As the view turns, the
+sign leaves the left edge of the frame; ORIGINAL draws it the same way.
+
+**Every level that draws these ids changes.** The ids are global. By the pixel
+stage, `0101` is also drawn on Bunker 1 and 2, Surface 1 and the Train; `011a`
+and `0123` on the Dam; `0123` on Runway and Surface 1; `0492` in the Depot and
+Statue; `05d0` in the Cradle; `05d6` on Runway. `02c2` is a metal tile the
+gas-plant doors, cars and gas tank models share. Under XBLA all of them now
+draw Facility's remaster of the same native tile.
+
+### Carried coordinates
+
+Some direct entries are right as images and wrong as drawn, because the
+cartridge's own texture coordinates bend. On Facility's floor (`0137`, and
+`02b9` beyond the lockers) the coordinates change scale and direction from
+one triangle to the next; the cartridge's noise tile hid it, and the
+remaster's tiled floor drawn through those coordinates shows every grout
+line kinking at a triangle edge. The remaster draws the same surfaces with
+coordinates of its own, which do not bend. So for those triangles the set
+carries the remaster's coordinates as data, and the renderer draws the
+triangle with them.
+
+**Where the triangle and its coordinates come from.** The pairing of
+triangles used for the mapping does not reach here: the remaster's two
+generations re-triangulate the cartridge's rooms, so a native triangle is
+looked for on the remastered SURFACE instead (`tools\texpack\uvcarry.py`):
+
+- The native triangles are read from the user's ROM: the stage's background
+  file (`levelinfotable`, `src/game/bg.c`), its room table, each room's point
+  table and lists ('Background File Data/background data.txt'; the room
+  record holds the three offsets first and the position after them, as the
+  decomp's `bg_room_data` says and the file confirms). Each triangle is named
+  by its room and the three point-table entries its corners were loaded from
+  (a segment-14 vertex operand, offset / 16), and the C0 command gives its
+  image ('Texture application (Rooms).txt').
+- The remastered background (`new/background/<stage>`) is authored at the
+  room coordinates times one scale, fitted from the two vertex sets by least
+  squares over the vertices that coincide: Facility 1.560002 (it is
+  100 / the stage's last `levelinfotable` column, docs/world-assets.md).
+- Its triangles are the reader's (`xblaworld.read_level`), whose draws come
+  back already expanded into flat triangle lists. They are taken three at a
+  time as they stand; an earlier revision expanded Facility's 67 quad lists
+  and 13 fans a second time, which read 19603 triangles where the item has
+  13913 - 13708 of them not the remaster's, and 8200 of its own missing.
+- A native triangle takes the remastered triangle of the entry's image that
+  lies in its plane (normals within 0.999, 2 units) and contains its centroid
+  (failing that, most of six interior samples; failing that, the nearest
+  such triangle within 96 units, across the remaster's own seams). That
+  triangle's map is affine, and is evaluated at the native corners:
+  s = 32 w u, t = 32 h (1 - v), the relation that makes the original
+  generation's coordinates equal the cartridge's. A triangle under which the
+  remaster changes its own map (beyond whole repeats) is refused.
+- An id is carried only when the cartridge's coordinates bend and the
+  carried ones do not: of the coplanar edges two of its triangles share, at
+  least 4 change the coordinate gradient by more than 10% under the
+  cartridge's coordinates, and at most half as many under the carried ones.
+  Only triangles whose carried coordinates differ from the cartridge's by
+  more than whole repeats get a row, shifted by an even number of repeats to
+  sit beside the cartridge's values; a clamped tile is never carried.
+
+On Facility that takes two ids and 423 triangles: `0137` (49 bent edges ->
+0, 371 triangles carried, 70 already equal to whole repeats, none uncovered)
+and `02b9` (30 -> 0, 52 carried, 40 equal). Every other direct id keeps the
+cartridge's coordinates, by the same rule: theirs do not bend.
+
+**The plates the double-read left (FIXED 2026-10-02).** With the corrupted
+triangle set 12 of `0137`'s triangles found no remastered surface and drew
+the cartridge's coordinates between carried neighbours. Their tile pattern
+stood off by a fraction of a repeat - the floor read as tiles laid in
+overlapping plates. Measured over every coplanar edge and T-junction the
+floor ids' triangles share: 14 steps in the pattern before, 2 after (both
+on `02b9` where room 26 meets room 27, carried on both sides - a seam in
+the remaster's own map).
+
+**The table** is written beside the pack, `texpacks\xbla\uv\<LEVELID>.sluv`
+(little-endian: 'SLUV', version 1, the LEVELID, the row count, then 24-byte
+rows of room, image id, the three point entries in increasing order, a zero
+pad word and the three (s, t) pairs, sorted). `prepare-textures.ps1 -Xbla`
+derives it when the ROM is at hand (`SL_ROM`, else `baserom.u.z64` at the
+root) and says per stage what it carried or why it refused. It holds
+coordinates and indices only, and like the pack it is generated, gitignored
+and never committed or packaged.
+
+**At runtime** (`emit_tri_room`, `src/gfx/sl_gfx_dl.c`; the table is read by
+`sl_texprov_uv`, `src/gfx/sl_gfx_texprov.c`) a triangle is carried only when
+it is room geometry, its three corners came from the room's point table,
+the render tile's image is the row's id and the active set replaces that
+image. The three vertex slots' s/t are swapped for the row's before the
+triangle is clipped and drawn, and restored after it, so the vertex buffer
+the next command sees is unchanged. Under ORIGINAL nothing is opened; a set
+with no table draws the cartridge's coordinates. `SL_TEX_UVCARRY=0` is the
+control.
+
+**Not reached.** The fit refuses a stage whose remastered background does
+not pair with its rooms on one scale; on the user's source that is every
+stage the mapping names except Facility, Control, the Frigate, Silo, Streets
+and the Train, and those five carry nothing (their coordinates do not bend
+under a direct entry). The Bunker draws `0137` too and has no table, so its
+floor keeps the cartridge's coordinates. The multiplayer Facility is another
+LEVELID and has no table either.
+
+### The monitors' images (#81)
+
+The control room's main screen in Bunker 1 drew the cartridge's own images
+under XBLA. The remaster's are in the source as standalone bundles under
+`texture/monitors/` - one per image, named for it (`earthmap`, `screen1` ..
+`screen9`, `screennew1` .. `screennew4`, `screenstatic`, the Cyrillic labels
+and more) - in two generations: `texture/monitors/<name>` the legacy copy at
+the cartridge's size, `new/texture/monitors/<name>` the remaster's. The
+legacy copy pairs with the ROM's image by pixels and the remaster's with the
+legacy one by NAME, the way the runtime pairs whole items by path.
+
+Measured at playtest mark 6 over 700 reads (the screens animate - the
+game's own image cycling, which the provider only follows): every id the
+screens asked for and the XBLA set lacked was dumped from the running game
+(`SL_TEX_DUMP`) and compared with every legacy monitor image under the four
+orientations. Taken, all at the `v` orientation and all remastered (larger
+than the legacy copy; `none` from the remaster's image to the legacy one, by
+inspection - the art is redrawn, so pixels cannot say):
+
+| id | legacy NCC | resource |
+|---|---|---|
+| `08a6` | 0.998 | `earthmap` (128x48 -> 512x256) |
+| `08af` | 0.999 | `screennew1` |
+| `0892` | 0.925 | `screen1` |
+| `08b0` | 1.000 | `screennew2` |
+| `0893` | 0.933 | `screen2` (the remaster draws a bar chart in its place) |
+| `0897` | 0.888 | `screen7` |
+| `08b3` | 0.989 | `screenstatic` |
+
+Left out: the Cyrillic labels (`088c`, `088d`, `0891`), the `drax` panels
+(`0245` .. `0248`, `0899` .. `089d`) and `anim2.x` - carry-overs, the
+remaster's copy identical to the legacy one; `0898`, `08a7`, `08a9`, `08b7`,
+`07bc` - no pairing above 0.6; `0894` (`screen3`, 0.765) and `0896`
+(`screen6`, 0.642) below the bar this table used (0.85).
+
+The ids are the game's, not Bunker 1's: any stage whose monitors show these
+images draws the remaster's now. Facility does (its desk monitor at the
+mark accepted in playtest shows `screennew2`, the remaster's list of names, where
+the cartridge's bars of text were).
+
 ### Coverage limits
 
 - **The mapping is the ceiling, not the engine.** 468 of the image table's
-  2698 ids have a Community HD mapping and 127 an accepted XBLA one, 541
-  distinct. The other 2157 draw the ROM's artwork under every set because no
+  2698 ids have a Community HD mapping and 161 an accepted XBLA one, 555
+  distinct. The other 2143 draw the ROM's artwork under every set because no
   art for them exists in the sets, not because anything refuses it.
 - Fonts and HUD glyphs are not image-table textures (they never pass
   through `texLoad`) and stay ORIGINAL under every set.

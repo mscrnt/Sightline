@@ -32,8 +32,8 @@
  "authored_parts": {
   "btn_ps": "plain btn_ps replacing the original logo-shaped part"
  },
- "authored_parts_note": "These parts are the project owner's own replacement geometry (manufacturer logos removed); everything else in the mesh and every texture is the third party's CC-BY-4.0 work as changed above.",
- "debranding": "btn_ps: the logo-shaped button (all five shells) replaced by an owner-authored plain oval covering the logo-shaped recess so no outline shows through (extras.sl_authored_part on the node); tile 1002 (textures/dualsense_basecolor_2.png): the manufacturer wordmark painted out with the surrounding colour (the tile is now one flat colour, zero dark pixels).",
+ "authored_parts_note": "These parts are Sightline-authored replacement geometry (manufacturer logos removed); everything else in the mesh and every texture is the third party's CC-BY-4.0 work as changed above.",
+ "debranding": "btn_ps: the logo-shaped button (all five shells) replaced by a Sightline-authored plain oval covering the logo-shaped recess so no outline shows through (extras.sl_authored_part on the node); tile 1002 (textures/dualsense_basecolor_2.png): the manufacturer wordmark painted out with the surrounding colour (the tile is now one flat colour, zero dark pixels).",
  "frame": "GjoypadZ: +x = player's right, +y = up toward the watch camera, -z = the top edge; N64 body 788 x 253 x 836; fitted to width 788",
  "fitted_width": 788.0,
  "parts": {
@@ -63,6 +63,6 @@
   "controller_dualsense.bin": "566D62777C63684A9B856B8204C4CD29965B9301",
   "controller_dualsense.gltf": "CC76F4C9E1B5FE3404E4B818E9C96BEA8B8DCFF4"
  },
- "source_oracle_note": "sha1 of the owner's staged package files as received (2026-09-19); the .bin and textures/dualsense_basecolor_0.png / _2.png are committed verbatim, the .gltf's extras were rewritten, and textures/dualsense_basecolor_1.png carries the scripted symbol edit recorded under sightline_edits (its current sha1 there; the oracle above is the file as received)",
+ "source_oracle_note": "sha1 of the staged package files as received (2026-09-19); the .bin and textures/dualsense_basecolor_0.png / _2.png are committed verbatim, the .gltf's extras were rewritten, and textures/dualsense_basecolor_1.png carries the scripted symbol edit recorded under sightline_edits (its current sha1 there; the oracle above is the file as received)",
  "texture_refs": {}
 }

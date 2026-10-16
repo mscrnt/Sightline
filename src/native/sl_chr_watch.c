@@ -2,7 +2,7 @@
  * Character-record pointer witness, native side. Inert unless SL_CHR_WATCH
  * is set; plus the crash report's [characters] section, which is always on.
  *
- * WHAT THIS IS FOR. The Aztec fault of 2026-09-17 (owner run
+ * WHAT THIS IS FOR. The Aztec fault of 2026-09-17 (playtest run
  * 20260917-090450-lvl28) was chrlvUpdateAimendsideback (chraction.c:5968)
  * reading weapons_held[hand]->flags through 0x3333fb4c - a value that is
  * neither NULL nor an element of g_Props (chrprop.c:59, the only pool a
@@ -56,6 +56,7 @@
 #include "bondview.h"
 #include "player.h"
 #include "gun.h"
+#include "chrobjdata.h"
 
 extern int    fprintf(void *, const char *, ...);
 extern void  *stderr;
@@ -153,10 +154,140 @@ static void sl_cw_scan_heap(s32 frame)
     fprintf(stderr, "sl_chrw: f%d scan for %08x: %d hit(s)\n", (int) frame, v, hits);
 }
 
+/* SL_CHR_PRES=1 - CHARACTER PRESENTATION WITNESS (#70). Read-only, like the
+ * rest of this file. Every 240 pumped frames (at most 16 times) it lists the
+ * live characters nearest the player - slot, chrnum, the body and head entries
+ * of c_item_entries with their model file names, position, room and distance
+ * - and, once per model file, that file's texture table: each entry's
+ * TextureID word (after texLoad it is the decoded pointer) resolved through
+ * the texture provider's identity bridge to the N64 texture number and the
+ * base size the pool recorded, beside the table's own declared size. That is
+ * the identity a presentation provider would be asked about for the body and
+ * the head a player sees; which of those ids the frame actually paints is the
+ * renderer's SL_TEX_COVERAGE / SL_TEX_HILITE, and what the provider answered
+ * is SL_TEX_PROVIDER_DBG. Unset, it is one getenv on the first frame. */
+static void sl_cw_pres_model(const char *what, int idx)
+{
+    extern int sl_texprov_id_of(const void *src, unsigned *w, unsigned *h);
+    static const void *said[64];
+    static int nsaid;
+    const ModelFileHeader *hd;
+    int i, k;
+
+    if (idx < 0) return;
+    hd = c_item_entries[idx].header;
+    if (hd == NULL) return;
+    for (k = 0; k < nsaid; k++) if (said[k] == (const void *) hd) return;
+    if (nsaid < 64) said[nsaid++] = (const void *) hd;
+    fprintf(stderr, "sl_chrpres: model %s=%d file=%s hdr=%p textures=%d loaded=%d\n",
+            what, idx, c_item_entries[idx].filename ? c_item_entries[idx].filename : "?",
+            (const void *) hd, (int) hd->numtextures, (int) hd->isLoaded);
+    /* the rest pose: every GROUP node of THIS file (the walk stops at the
+     * file's root - a head file's root hangs under a body's head node), its
+     * joint, matrix ids and origin, and the origins summed up the tree */
+    {
+        const ModelNode *nd = hd->RootNode;
+        int guard = 0;
+        while (nd != NULL && guard++ < 512) {
+            float base[3];
+            const ModelNode *up;
+            int d = 0;
+            base[0] = base[1] = base[2] = 0.0f;
+            for (up = nd; up != hd->RootNode && up->Parent != NULL; up = up->Parent) {
+                d++;
+                if ((up->Parent->Opcode & 0xff) == MODELNODE_OPCODE_GROUP && up->Parent->Data != NULL) {
+                    base[0] += up->Parent->Data->Group.Origin.f[0];
+                    base[1] += up->Parent->Data->Group.Origin.f[1];
+                    base[2] += up->Parent->Data->Group.Origin.f[2];
+                }
+            }
+            if ((nd->Opcode & 0xff) == MODELNODE_OPCODE_GROUP && nd->Data != NULL) {
+                const struct ModelRoData_GroupRecord *g = &nd->Data->Group;
+                fprintf(stderr, "sl_chrpres:   group node=%p depth=%d joint=%u mtx=%d,%d origin=(%.3f, %.3f, %.3f) model=(%.3f, %.3f, %.3f)\n",
+                        (const void *) nd, d, (unsigned) g->JointID, (int) g->MatrixID0, (int) g->MatrixID1,
+                        (double) g->Origin.f[0], (double) g->Origin.f[1], (double) g->Origin.f[2],
+                        (double) (base[0] + g->Origin.f[0]), (double) (base[1] + g->Origin.f[1]),
+                        (double) (base[2] + g->Origin.f[2]));
+            } else if ((nd->Opcode & 0xff) == MODELNODE_OPCODE_HEAD) {
+                fprintf(stderr, "sl_chrpres:   head node=%p depth=%d model=(%.3f, %.3f, %.3f)\n",
+                        (const void *) nd, d, (double) base[0], (double) base[1], (double) base[2]);
+            }
+            /* never into an attached head: its nodes are another file's */
+            if (nd->Child != NULL && (nd->Opcode & 0xff) != MODELNODE_OPCODE_HEAD) { nd = nd->Child; continue; }
+            while (nd != NULL && nd != hd->RootNode && nd->Next == NULL) nd = nd->Parent;
+            if (nd == NULL || nd == hd->RootNode) break;
+            nd = nd->Next;
+        }
+    }
+    if (hd->Textures == NULL) return;
+    for (i = 0; i < hd->numtextures && i < 64; i++) {
+        const ModelFileTextures *t = &hd->Textures[i];
+        unsigned w = 0, h = 0;
+        int id = sl_texprov_id_of((const void *) (unsigned long) t->TextureID, &w, &h);
+        fprintf(stderr, "sl_chrpres:   tex[%d] word=%08x id=%04x pool=%ux%u table=%ux%u type=%u depth=%u s=%u t=%u mips=%u\n",
+                i, (unsigned) t->TextureID, id >= 0 ? (unsigned) id : 0xFFFFu, w, h,
+                (unsigned) t->Width, (unsigned) t->Height, (unsigned) t->Type,
+                (unsigned) t->RenderDepth, (unsigned) t->sflags, (unsigned) t->tflags,
+                (unsigned) t->MipMapTiles);
+    }
+}
+
+static void sl_cw_pres_frame(s32 frame)
+{
+    extern double sqrt(double);
+    static int checked, on, dumps;
+    int i;
+    float px = 0.0f, py = 0.0f, pz = 0.0f;
+
+    if (!checked) {
+        const char *e = getenv("SL_CHR_PRES");
+        on = (e != NULL && *e != '\0' && *e != '0');
+        checked = 1;
+    }
+    if (!on || dumps >= 16 || (frame % 240) != 1) return;
+    if (g_ChrSlots == NULL || g_NumChrSlots <= 0 || g_CurrentPlayer == NULL
+        || g_CurrentPlayer->prop == NULL)
+        return;
+    dumps++;
+    px = g_CurrentPlayer->prop->pos.f[0];
+    py = g_CurrentPlayer->prop->pos.f[1];
+    pz = g_CurrentPlayer->prop->pos.f[2];
+    fprintf(stderr, "sl_chrpres: f%d player (%.3f, %.3f, %.3f) room %d slots=%d\n",
+            (int) frame, (double) px, (double) py, (double) pz,
+            (int) g_CurrentPlayer->prop->rooms[0], (int) g_NumChrSlots);
+    if (dumps == 1) {
+        /* the stage's whole loaded character set, once: every body and head
+         * model file the setup has loaded, whether or not it is near */
+        for (i = 0; c_item_entries[i].filename != NULL && i < 256; i++)
+            if (c_item_entries[i].header != NULL && c_item_entries[i].header->isLoaded)
+                sl_cw_pres_model("entry", i);
+    }
+    for (i = 0; i < g_NumChrSlots; i++) {
+        const ChrRecord *c = &g_ChrSlots[i];
+        const PropRecord *p = c->prop;
+        double dx, dy, dz, d;
+        int body, head;
+        if (c->model == NULL || p == NULL) continue;
+        dx = p->pos.f[0] - px; dy = p->pos.f[1] - py; dz = p->pos.f[2] - pz;
+        d = sqrt(dx * dx + dy * dy + dz * dz);
+        if (d > 3000.0) continue;
+        body = (int) c->bodynum; head = (int) c->headnum;
+        fprintf(stderr, "sl_chrpres: f%d chr slot=%d chrnum=%d body=%d(%s) head=%d(%s) pos=(%.3f, %.3f, %.3f) room=%d dist=%.1f act=%d model=%p\n",
+                (int) frame, i, (int) c->chrnum,
+                body, (body >= 0 && c_item_entries[body].filename) ? c_item_entries[body].filename : "-",
+                head, (head >= 0 && c_item_entries[head].filename) ? c_item_entries[head].filename : "-",
+                (double) p->pos.f[0], (double) p->pos.f[1], (double) p->pos.f[2],
+                (int) p->rooms[0], d, (int) c->actiontype, (const void *) c->model);
+        sl_cw_pres_model("body", body);
+        if (head >= 0 && !c_item_entries[body].hasHead) sl_cw_pres_model("head", head);
+    }
+}
+
 void sl_chr_watch_frame(s32 frame)
 {
     int i, n;
 
+    sl_cw_pres_frame(frame);
     if (!g_cw_checked) {
         const char *e = getenv("SL_CHR_WATCH");
         g_cw_level = (e != NULL && *e != '\0' && *e != '0') ? (*e - '0') : 0;

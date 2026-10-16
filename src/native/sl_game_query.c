@@ -227,7 +227,7 @@ void sl_game_watch_child_back(void)
  *
  * The input layer needs this for ONE narrow purpose: the mouse must have
  * conventional PC pitch whatever this option says, while the PAD must keep
- * obeying it. Owner decision, 2026-09-01 - the option is a CONTROLLER setting
+ * obeying it. Design decision, 2026-09-01 - the option is a CONTROLLER setting
  * and the mouse is a separate producer.
  *
  * The option reaches pitch through bondviewProcessInput:
@@ -386,12 +386,12 @@ s32 sl_game_action_witness(char *out, s32 n)
  *
  * ---- `pos=` IS AN INTRO FIELD AND IS FROZEN IN GAMEPLAY -------------------
  *
- * MEASURED 2026-09-08 on the owner's marks run
+ * MEASURED 2026-09-08 on the playtest marks run
  * (20260908-205947-lvl33/log): 6202 `sl_cam: f... pos=` lines carry 133
  * DISTINCT positions, all of them from the intro. From frame 531 - the frame
  * cameramode drops to 0 - to the end of the 12255-frame session, `pos=`
  * reports 16659.31,480.98,19463.86 UNCHANGED, including at all eight frames
- * the owner marked, whose eyes are hundreds of units apart. Reading this line
+ * marked in playtest, whose eyes are hundreds of units apart. Reading this line
  * to locate a player produces a confident, wrong answer.
  *
  * The `sl_eye:` line below therefore prints the field the F8 record itself
@@ -449,7 +449,7 @@ s32 sl_cam_probe_frame(s32 frame)
     /* TEMPORARY: the EYE, from the same authority the F8 mark cites
      * (viewtoworldmtxf m[3]). pl->pos above is a cutscene-camera field and is
      * FROZEN during gameplay - measured constant across 6000 gameplay frames
-     * of the owner's marks run - so it cannot be used to locate a replay. */
+     * of the playtest marks run - so it cannot be used to locate a replay. */
     if (pl->viewtoworldmtxf != NULL)
         fprintf(stderr, "sl_eye: f%d %.3f %.3f %.3f room=%d\n", (int) frame,
                 (double) pl->viewtoworldmtxf->m[3][0],
@@ -481,9 +481,9 @@ s32 sl_cam_probe_frame(s32 frame)
 
 
 
-/* ---- LIVE OWNER BUG MARK: the game's half of the record ------------------
+/* ---- LIVE BUG MARK: the game's half of the record ------------------------
  *
- * F8 writes one file describing the moment the owner was looking at a defect.
+ * F8 writes one file describing the moment a defect was on screen in play.
  * The renderer supplies what it drew (sl_mark_render in src/gfx/sl_gfx_dl.c);
  * this supplies what the SIMULATION believed - camera, rooms, projection -
  * because src/platform physically cannot see a game struct (see the header of
@@ -510,7 +510,7 @@ s32 sl_cam_probe_frame(s32 frame)
  * within StandTile. g_CurrentPlayer itself is NON-null there, so the existing
  * `pl == NULL` guard never fired. The mark wrote its .bmp and then died before
  * its .txt, which is the worst possible failure for a facility whose entire
- * job is to be trustworthy when the owner presses one key.
+ * job is to be trustworthy on a single key press.
  *
  * THE GAME FUNCTION IS NOT TOUCHED (rule 5): faulting there is Rare's
  * behaviour and every in-level caller satisfies its preconditions. The guard
@@ -564,7 +564,7 @@ s32 sl_mark_room_of_dl(u32 addr, s32 *kindout)
 
 /* THE CRASH REPORT'S POSE. B-139.
  *
- * An owner crash used to arrive as addresses and a frame number and nothing
+ * A playtest crash used to arrive as addresses and a frame number and nothing
  * that said WHERE in the level it happened - the Aztec crash of 2026-09-16
  * (run 20260916-074840-lvl28) came with a 13 KB log, an input recording that
  * does not reproduce the session, and no position at all. This writes the

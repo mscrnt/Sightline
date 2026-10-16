@@ -39,7 +39,7 @@ from pathlib import Path
 #:
 #: Nothing here is committed or vendored - the core is an external dependency
 #: that stays outside git (project rule 2), so this only ever
-#: DISCOVERS one. The owner's absolute home directory is never written down:
+#: DISCOVERS one. A user's absolute home directory is never written down:
 #: the default is derived from Path.home() at runtime.
 if sys.platform == "win32":
     CORE_NAME = "parallel_n64_libretro.dll"
@@ -58,7 +58,7 @@ def default_system_dir() -> Path:
 
     "/tmp/sl-libretro" resolved to a top-level "tmp" directory on whatever
     drive happened to be current under Windows. It worked, but planting a
-    directory at the root of the owner's drive is not something a tool
+    directory at the root of the user's drive is not something a tool
     should do uninvited.
     """
     if sys.platform == "win32":
@@ -269,7 +269,7 @@ LIBRETRO_TO_N64 = {v: k for k, v in BUTTON_MAP.items()}
 # C-buttons do NOT arrive as joypad buttons. ParaLLEl N64 exposes them as the
 # core's RIGHT analog stick, which is why sending them as button ids did
 # nothing at all - the left thumbstick appeared dead and weapon cycling and
-# reload went with it. Confirmed against the user's own working RetroArch
+# reload went with it. Confirmed against an existing working RetroArch
 # remap, which drives stk_r from the physical left stick.
 #
 # They stay DIGITAL in the recorded frame: the N64 C-buttons are digital, the

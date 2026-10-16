@@ -88,15 +88,22 @@ enum sl_action {
     SL_ACT_STRAFE_RIGHT,
     SL_ACT_FIRE,
     SL_ACT_AIM,
-    /* #47: cycle the TEXTURES setting, ORIGINAL -> COMMUNITY HD -> XBLA ->
-     * ORIGINAL. Appended last, so no published bit moves. It is NOT a
-     * gameplay semantic and the game never reads it - like the mark, it is
-     * consumed in sl_input.c, which is also why it is published as a bit
-     * nowhere (sl_action_channels.c stops at SL_ACTCH_COUNT). It lives in
-     * the registry rather than as another hard-wired scancode so that it is
-     * re-bindable, labelled by the same tables every other control is, and
-     * inherits the stale-edge rule instead of a private `static int held`. */
-    SL_ACT_TEXTURE_CYCLE,
+    /* #47, retargeted by #68 (2026-09-23): cycle the PRESENTATION, ORIGINAL
+     * -> COMMUNITY HD -> XBLA -> ORIGINAL. It used to step the texture set
+     * alone; it now steps the one visual selection that resolves EVERY visual
+     * provider, so no second hotkey was needed to bring the world assets with
+     * it. Appended last, so no published bit moves. It is NOT a gameplay
+     * semantic and the game never reads it - like the mark, it is consumed in
+     * sl_input.c, which is also why it is published as a bit nowhere
+     * (sl_action_channels.c stops at SL_ACTCH_COUNT). It lives in the registry
+     * rather than as another hard-wired scancode so that it is re-bindable,
+     * labelled by the same tables every other control is, and inherits the
+     * stale-edge rule instead of a private `static int held`.
+     *
+     * ITS PERSISTED BINDING KEY IS STILL `texture_cycle` (sl_bindings.c): the
+     * key is a STORED identity and renaming it would silently discard a
+     * player's own binding. The label they read did change. */
+    SL_ACT_PRESENTATION_CYCLE,
     SL_ACT_COUNT
 };
 

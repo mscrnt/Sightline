@@ -38,10 +38,17 @@ MARKER = CACHE_DIR / "last-lookup.json"
 # Notes for a ROM HACK's modified formats. Never authority for the base game.
 EXCLUDE_PREFIX = "Rand++ Documentation (Misc)"
 
+# Every read and write names its encoding. Windows Python defaults files and a
+# redirected stdout to the locale code page (cp1252), which cannot encode the
+# U+FFFD that errors="replace" produces for the notes' non-UTF-8 bytes. Measured
+# 2026-10-12: `gedocs.py index` died with UnicodeEncodeError partway through the
+# write and left an 18-row index of 496 notes that the mtime check judged fresh.
+ENCODING = "utf-8"
+
 
 def load_routing() -> dict:
     try:
-        return json.loads(ROUTING.read_text())
+        return json.loads(ROUTING.read_text(encoding=ENCODING))
     except Exception as exc:                                  # noqa: BLE001
         die(f"cannot read {ROUTING}: {exc}")
 
@@ -91,50 +98,83 @@ def die(msg: str, code: int = 1):
 # index
 
 
-def build_index(root: Path) -> list[tuple[str, int, str]]:
-    """(relpath, size, first meaningful line) for every note."""
-    rows = []
+def eligible_notes(root: Path):
+    """(path, relpath) for every note the index covers - EXCLUDE_PREFIX skipped."""
     for dirpath, _dirnames, filenames in os.walk(root):
         for fn in filenames:
             p = Path(dirpath) / fn
             rel = str(p.relative_to(root))
-            if rel.startswith(EXCLUDE_PREFIX):
-                continue
-            try:
-                size = p.stat().st_size
-                head = ""
-                with open(p, errors="replace") as fh:
-                    for _ in range(8):
-                        line = fh.readline()
-                        if not line:
-                            break
-                        line = line.strip()
-                        if line and not set(line) <= set("_-=+*#/ \t"):
-                            # Collapse ALL whitespace: these notes contain tabs
-                            # and form feeds, which would add fields or split
-                            # the row across lines - and the parser dropped
-                            # such rows SILENTLY. 337 of 496 notes were
-                            # invisible to search before this.
-                            head = " ".join(line.split())[:110]
-                            break
-            except Exception as exc:                          # noqa: BLE001
-                size, head = 0, f"<{exc}>"
-            rows.append((rel, size, head))
+            if not rel.startswith(EXCLUDE_PREFIX):
+                yield p, rel
+
+
+def build_index(root: Path) -> list[tuple[str, int, str]]:
+    """(relpath, size, first meaningful line) for every note."""
+    rows = []
+    for p, rel in eligible_notes(root):
+        try:
+            size = p.stat().st_size
+            head = ""
+            with open(p, encoding=ENCODING, errors="replace") as fh:
+                for _ in range(8):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    line = line.strip()
+                    if line and not set(line) <= set("_-=+*#/ \t"):
+                        # Collapse ALL whitespace: these notes contain tabs
+                        # and form feeds, which would add fields or split
+                        # the row across lines - and the parser dropped
+                        # such rows SILENTLY. 337 of 496 notes were
+                        # invisible to search before this.
+                        head = " ".join(line.split())[:110]
+                        break
+        except Exception as exc:                              # noqa: BLE001
+            size, head = 0, f"<{exc}>"
+        rows.append((rel, size, head))
     rows.sort()
     return rows
 
 
+def read_index() -> tuple[list[tuple[str, int, str]], int]:
+    """Parse the cached index: (rows, count of unparsable rows)."""
+    rows, dropped = [], 0
+    for line in INDEX.read_text(encoding=ENCODING, errors="replace").split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split("\t", 2)          # maxsplit: a stray tab must not drop the row
+        if len(parts) >= 2:
+            try:
+                rows.append((parts[0], int(parts[1] or 0),
+                             parts[2] if len(parts) > 2 else ""))
+                continue
+            except ValueError:
+                pass
+        dropped += 1
+    return rows, dropped
+
+
 def index_is_stale(root: Path) -> bool:
+    """True unless the cache lists exactly the eligible notes and is newer than all.
+
+    mtime alone is not enough: a write that dies partway leaves a TRUNCATED
+    index newer than every note, which an mtime check judges fresh forever (the
+    18-of-496 index measured 2026-10-12). So the cached rows must also match
+    the walked eligible set one-for-one - same relpaths, same count, no
+    unparsable rows. EXCLUDE_PREFIX notes are outside that set and never count.
+    """
     if not INDEX.exists():
         return True
     try:
-        newest = max(
-            (Path(dp) / f).stat().st_mtime
-            for dp, _dn, fns in os.walk(root) for f in fns
-        )
-        return newest > INDEX.stat().st_mtime
-    except ValueError:
-        return True
+        notes = [rel for _p, rel in eligible_notes(root)]
+        if not notes:
+            return True
+        newest = max((root / rel).stat().st_mtime for rel in notes)
+        if newest > INDEX.stat().st_mtime:
+            return True
+        rows, dropped = read_index()
+        return (dropped > 0 or len(rows) != len(notes)
+                or {r for r, _s, _h in rows} != set(notes))
     except Exception:                                          # noqa: BLE001
         return False
 
@@ -148,23 +188,15 @@ def ensure_index(root: Path, force: bool = False) -> list[tuple[str, int, str]]:
     if force or index_is_stale(root):
         rows = build_index(root)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        with open(INDEX, "w") as out:
+        # Write beside, then replace: a write that fails partway must never
+        # leave a truncated index in INDEX's place.
+        tmp = INDEX.with_name(INDEX.name + ".tmp")
+        with open(tmp, "w", encoding=ENCODING, newline="\n") as out:
             for rel, size, head in rows:
                 out.write(f"{rel}\t{size}\t{head}\n")
+        os.replace(tmp, INDEX)
         return rows
-    rows, dropped = [], 0
-    for line in INDEX.read_text(errors="replace").split("\n"):
-        if not line.strip():
-            continue
-        parts = line.split("\t", 2)          # maxsplit: a stray tab must not drop the row
-        if len(parts) >= 2:
-            try:
-                rows.append((parts[0], int(parts[1] or 0),
-                             parts[2] if len(parts) > 2 else ""))
-                continue
-            except ValueError:
-                pass
-        dropped += 1
+    rows, dropped = read_index()
     if dropped:
         print(f"gedocs: WARNING {dropped} index rows unparsable - rebuild with "
               f"'gedocs.py index'", file=sys.stderr)
@@ -175,7 +207,8 @@ def stamp(what: str) -> None:
     """Record that a lookup happened - the hook reports on this."""
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        MARKER.write_text(json.dumps({"ts": int(time.time()), "what": what}))
+        MARKER.write_text(json.dumps({"ts": int(time.time()), "what": what}),
+                          encoding=ENCODING)
     except Exception:                                          # noqa: BLE001
         pass
 
@@ -311,7 +344,7 @@ def cmd_search(a, routing, root):
             if len(content) >= a.limit:
                 break
             try:
-                text = (root / rel).read_text(errors="replace")
+                text = (root / rel).read_text(encoding=ENCODING, errors="replace")
             except Exception:                                  # noqa: BLE001
                 continue
             hits = [ln.strip() for ln in text.splitlines() if pat.search(ln)]
@@ -351,7 +384,7 @@ def cmd_show(a, routing, root):
         die(f"no note matching '{a.file}'")
     rel = matches[0]
     stamp(f"show {rel}")
-    text = (root / rel).read_text(errors="replace")
+    text = (root / rel).read_text(encoding=ENCODING, errors="replace")
     lines = text.splitlines()
     if not a.pattern:
         out = lines[:a.limit]
@@ -386,7 +419,7 @@ def cmd_status(a, routing, root):
     last = None
     if MARKER.exists():
         try:
-            last = json.loads(MARKER.read_text())
+            last = json.loads(MARKER.read_text(encoding=ENCODING))
         except Exception:                                      # noqa: BLE001
             last = None
     info = {"docs_root": str(root), "root_exists": root.is_dir(),
@@ -408,7 +441,22 @@ def cmd_index(a, routing, root):
     return 0
 
 
+def utf8_stdio() -> None:
+    """Emit UTF-8 whatever the caller's defaults are.
+
+    A redirected stdout on Windows is cp1252, which cannot encode U+FFFD or
+    most of the notes' text. Set here rather than relying on PYTHONIOENCODING
+    or -X utf8 in every caller (the docs-first hook, MCP wrappers, shells).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding=ENCODING, errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main() -> int:
+    utf8_stdio()
     ap = argparse.ArgumentParser(prog="gedocs.py", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true", help="machine-readable output")

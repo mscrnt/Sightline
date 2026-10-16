@@ -54,7 +54,7 @@
     its own, where the measurement child got CREATE_NEW_CONSOLE), it writes the
     player's REAL EEPROM rather than a scratch one, it names no SL_FRAMES, and
     it inherits whatever SL_* variables happen to be in the shell. Use
-    -MeasurementMode for the launch an agent reproduces.
+    -MeasurementMode for the launch automation reproduces.
 
     What this flag does do, relative to the default path: the window still
     opens and is played normally, and only two things change:
@@ -81,9 +81,9 @@
     EEPROM path above.
 
 .PARAMETER MeasurementMode
-    THE canonical measurement launch. One command, used by the owner and by
-    automation alike, so that "it rotates correctly for me" and "it rotates
-    correctly for the agent" are statements about the same process creation.
+    THE canonical measurement launch. One command, used in manual play and by
+    automation alike, so that "it rotates correctly in play" and "it rotates
+    correctly in automation" are statements about the same process creation.
 
     This mode exists because they were NOT the same. A measurement run that
     reached NINTENDO at frames=501 / 8.327 s was reconstructed as: window on,
@@ -94,8 +94,8 @@
 
     THAT EXTRA CONSOLE WINDOW IS EXPECTED AND MUST NOT BE "FIXED". It is part
     of the process creation being reproduced. Whether it matters is a question
-    for a later round; removing it here would once again make the owner's
-    launch and the agent's launch two different things, which is the entire
+    for a later round; removing it here would once again make the manual
+    launch and the automated launch two different things, which is the entire
     defect this mode was added to close.
 
     Every launch value is ESTABLISHED rather than inherited: SL_ROM, SL_WINDOW,
@@ -113,7 +113,7 @@
     Nintendo near 8.3 s, around frames 311-811, comfortably inside that.
 
     The EEPROM is a SCRATCH file, derived at runtime beside the redirected
-    streams. The owner's real save is never opened, and the agent and the owner
+    streams. The player's real save is never opened, and automated and manual runs
     boot from the same state.
 
     Like -NoConsoleCapture, this run is NOT recorded (SL_RUN=0).
@@ -137,10 +137,53 @@
     remotemine, taser, ...), by ITEM_IDS stem, or by number. An item the
     level has not handed out is added to the inventory with a full load,
     so -Cheats is not required for it. Combine with -TeleportMark to stand
-    at an owner's mark holding the weapon the mark was taken with:
+    at a playtest mark holding the weapon the mark was taken with:
 
         .\tools\windows\play.ps1 -Level surface -Weapon sniper `
             -TeleportMark C:\Users\me\.sightline\runs\<run>\mark-001.txt
+
+.PARAMETER Presentation
+    DEVELOPER: start on a named PRESENTATION (#68) - ORIGINAL, COMMUNITY or
+    XBLA - so a test does not need a manual environment export or a trip
+    through the menus. It writes the one canonical stored key, `presentation`,
+    into the config this run will use (SL_CONFIG when that names one, the
+    player's config.ini otherwise), leaving every other line alone. That is
+    the SAME value F5 steps, so the run starts where you asked and F5 keeps
+    working from there.
+
+    ONE SELECTION MOVES EVERYTHING. The presentation resolves every visual
+    provider: ORIGINAL = the game's own artwork and no external world assets;
+    COMMUNITY = the Community HD textures, still the game's own world; XBLA =
+    the XBLA textures AND the XBLA world assets, so the Dam's skydome comes
+    with them. The normal path needs no -WorldAssets at all:
+
+        .\tools\windows\play.ps1 -Level dam -Cheats invincible,invisible,maxammo
+
+    then F5 (or the pad's BACK) cycles ORIGINAL -> COMMUNITY HD -> XBLA ->
+    ORIGINAL with the whole picture following.
+
+.PARAMETER WorldAssets
+    DIAGNOSTIC / ADVANCED, and not needed for ordinary play. It pins the
+    WORLD-ASSET PROVIDER ALONE (#68) ahead of the presentation:
+
+        FOLLOW   (the default) the presentation decides, and SL_WORLD_ASSETS
+                 is CLEARED for the child so a variable left in the shell
+                 cannot quietly make the session look mixed
+        OFF      pin the provider dark whatever the presentation selects
+        XBLA     pin the xbla set lit whatever the presentation selects
+
+    OFF and XBLA can produce a MIXED state - XBLA textures with no skydome,
+    or the skydome over the game's own artwork - which is exactly what the
+    coordination round removed from the player's reach. When they do, this
+    launcher says so before the run and the binary says so again on stderr.
+    Use them to isolate one provider, never to play.
+
+    The root is found the same way the texture pack root is:
+    SL_WORLDASSET_ROOT if set, otherwise the checkout's own worldassets\,
+    otherwise the player-data ladder - and it is handed to the child whenever
+    it exists, so the presentation-driven path finds a prepared asset without
+    any switch. Prepare the one asset this slice carries with
+    .\tools\windows\prepare-xbla-assets.ps1 -DamSkydome.
 #>
 [CmdletBinding()]
 param(
@@ -150,6 +193,10 @@ param(
     [string]$TeleportMark,
     [string[]]$Cheats,
     [string]$Weapon,
+    [ValidateSet('ORIGINAL', 'COMMUNITY', 'XBLA')]
+    [string]$Presentation,
+    [ValidateSet('FOLLOW', 'OFF', 'XBLA')]
+    [string]$WorldAssets = 'FOLLOW',
     [switch]$Quiet,
     [switch]$NoConsoleCapture,
     [switch]$MeasurementMode
@@ -179,8 +226,8 @@ if ($MeasurementMode -and $NoConsoleCapture) {
 }
 # AMBIENT VALUES DO NOT REACH A MEASUREMENT RUN. SL_LEVEL and SL_WINDOW_SIZE
 # are read above as ordinary defaults, which is right for playing and wrong
-# here: a variable left in one shell and not the other is how the owner's run
-# and the agent's run silently stopped being the same run. Only an explicitly
+# here: a variable left in one shell and not the other is how the manual run
+# and the automated run silently stopped being the same run. Only an explicitly
 # passed -Level or -Size is honoured.
 if ($MeasurementMode) {
     if (-not $PSBoundParameters.ContainsKey('Level')) { $Level = $null }
@@ -257,7 +304,7 @@ if ($saveDir -and -not (Test-Path $saveDir)) {
 # THIS IS THE DEFECT THAT FAILED #47's FIRST ROUND. The prepared packs lived
 # outside the tree and only an explicitly exported SL_TEXPACK_ROOT found
 # them. An ordinary `.\tools\windows\play.ps1` therefore read a pack root
-# that did not exist, every texture fell back to ORIGINAL - "I don't notice
+# that did not exist, every texture fell back to ORIGINAL - reported in playtest as "I don't notice
 # any changes with the graphics or textures" - while the automated runs that
 # did set the variable saw replacements and called it working. The two were
 # never the same launch. They are now.
@@ -280,31 +327,134 @@ if (-not $texpack) {
     $texpackShown = $texpack
 }
 
-# ONE line, once, when a non-ORIGINAL set is selected and there is nothing
-# for it to read - naming the command that prepares a pack. Never per
-# texture, and never when ORIGINAL is selected, which reads no pack at all.
+# WORLD ASSETS (#68). The same shape as the pack root above and for the same
+# reason. The two providers remain separate MECHANISMS - additive world
+# geometry keyed by asset class and item path on one side, per-texture
+# substitution on the other - but since 2026-09-23 they are no longer selected
+# separately: the PRESENTATION selects both, and this root is handed over
+# whenever it exists so the presentation-driven path can find a prepared asset
+# with no switch at all. -WorldAssets is a diagnostic pin, below.
+$waRoot = $env:SL_WORLDASSET_ROOT
+$waWhy = 'SL_WORLDASSET_ROOT'
+if (-not $waRoot) {
+    $devWa = Join-Path $repo 'worldassets'
+    if (Test-Path $devWa) { $waRoot = $devWa; $waWhy = 'this checkout' }
+}
+if (-not $waRoot) {
+    $waBase = $env:LOCALAPPDATA
+    if (-not $waBase -and $env:USERPROFILE) { $waBase = Join-Path $env:USERPROFILE 'AppData\Local' }
+    if ($waBase) { $waShown = Join-Path $waBase 'sightline\assets\worldassets' }
+    else         { $waShown = '(no player-data directory)' }
+    $waWhy = 'player data'
+} else {
+    $waShown = $waRoot
+}
+# THE PRESENTATION (#68, 2026-09-23). ONE canonical stored key, `presentation`,
+# in the config this run will use. The launcher reads it to report what the run
+# will look like and what it needs prepared, and -Presentation writes it - the
+# same value F5 steps, so there is no second authority and no environment
+# export to remember.
 $cfgPath = $env:SL_CONFIG
 if (-not $cfgPath) {
     $cfgBase = $env:LOCALAPPDATA
     if (-not $cfgBase -and $env:USERPROFILE) { $cfgBase = Join-Path $env:USERPROFILE 'AppData\Local' }
     if ($cfgBase) { $cfgPath = Join-Path $cfgBase 'sightline\config.ini' }
 }
-$texSet = 0
+
+# READ IT. `presentation` wins; a #47-era config carrying only `textures` reads
+# through that, exactly as the binary's own migration does, so the line this
+# launcher prints agrees with the run.
+$presId = 0
+$presWhy = 'default'
 if ($cfgPath -and (Test-Path -LiteralPath $cfgPath)) {
-    $m = Select-String -LiteralPath $cfgPath -Pattern '^\s*textures\s*=\s*([0-9]+)' |
+    $m = Select-String -LiteralPath $cfgPath -Pattern '^\s*presentation\s*=\s*([0-9]+)' |
          Select-Object -Last 1
-    if ($m) { $texSet = [int]$m.Matches[0].Groups[1].Value }
-}
-if ($texSet -ne 0) {
-    $setName = @('ORIGINAL', 'COMMUNITY HD', 'XBLA')[$texSet]
-    if ($texSet -ge 1 -and $texSet -le 2) {
-        $setDir = Join-Path $texpackShown @('community', 'xbla')[$texSet - 1]
-        if (-not (Test-Path -LiteralPath $setDir)) {
-            Write-Host ""
-            Write-Host "TEXTURES is set to $setName and no pack is prepared ($setDir)."
-            Write-Host "  Run .\tools\windows\prepare-textures.ps1 to build one from your own"
-            Write-Host "  sources. Until then every texture draws the game's own artwork."
+    if ($m) {
+        $presId = [int]$m.Matches[0].Groups[1].Value
+        $presWhy = 'presentation'
+    } else {
+        $m = Select-String -LiteralPath $cfgPath -Pattern '^\s*textures\s*=\s*([0-9]+)' |
+             Select-Object -Last 1
+        if ($m) {
+            $presId = [int]$m.Matches[0].Groups[1].Value
+            $presWhy = 'legacy textures key, migrated at startup'
         }
+    }
+}
+
+# WRITE IT, when asked. One line replaced or appended; every other line -
+# bindings included - is kept byte for byte.
+if ($Presentation) {
+    $want = @{ 'ORIGINAL' = 0; 'COMMUNITY' = 1; 'XBLA' = 2 }[$Presentation]
+    if (-not $cfgPath) {
+        Write-Host 'sightline: -Presentation has no config to write (no SL_CONFIG, no player-data directory).'
+        exit 1
+    }
+    $cfgDir = Split-Path -Parent $cfgPath
+    if ($cfgDir -and -not (Test-Path $cfgDir)) { New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null }
+    if (Test-Path -LiteralPath $cfgPath) { $lines = @(Get-Content -LiteralPath $cfgPath) }
+    else { $lines = @('# sightline settings', 'version=1') }
+    $done = $false
+    $out = @()
+    foreach ($l in $lines) {
+        if ($l -match '^\s*presentation\s*=') {
+            if (-not $done) { $out += "presentation=$want"; $done = $true }
+        } else {
+            $out += $l
+        }
+    }
+    if (-not $done) { $out += "presentation=$want" }
+    Set-Content -LiteralPath $cfgPath -Value $out -Encoding utf8
+    $presId = $want
+    $presWhy = '-Presentation'
+}
+
+if ($presId -lt 0 -or $presId -gt 2) { $presId = 0; $presWhy = 'out of range, read as ORIGINAL' }
+$presName = @('ORIGINAL', 'COMMUNITY HD', 'XBLA')[$presId]
+
+# WHAT THE PRESENTATION SELECTS, and one line each when the thing it selects
+# is not prepared. Never when ORIGINAL is selected, which reads nothing.
+if ($presId -ne 0 -and -not $Quiet) {
+    $setDir = Join-Path $texpackShown @('community', 'xbla')[$presId - 1]
+    if (-not (Test-Path -LiteralPath $setDir)) {
+        Write-Host ""
+        Write-Host "PRESENTATION is $presName and no texture pack is prepared ($setDir)."
+        Write-Host "  Run .\tools\windows\prepare-textures.ps1 to build one from your own"
+        Write-Host "  sources. Until then every texture draws the game's own artwork."
+    }
+}
+if ($presId -eq 2 -and $WorldAssets -ne 'OFF' -and -not $Quiet) {
+    $slice = Join-Path $waShown 'xbla\skydome\dam.slwa'
+    if (-not (Test-Path -LiteralPath $slice)) {
+        Write-Host ""
+        Write-Host "PRESENTATION is XBLA and no world asset is prepared ($waShown)."
+        Write-Host '  Prepare the one this slice carries with:'
+        Write-Host '    .\tools\windows\prepare-xbla-assets.ps1 -DamSkydome'
+        Write-Host '  Until then the Dam draws its own sky and every other stage is unchanged.'
+    }
+}
+
+# THE MIXED-STATE WARNING. -WorldAssets pins one provider ahead of the
+# presentation; when the two disagree the run is a mixed picture ON PURPOSE,
+# and saying so here is what keeps it from being mistaken for the coordinated
+# one. The binary repeats it on stderr from the provider itself.
+$waDerived = if ($presId -eq 2) { 'XBLA' } else { 'OFF' }
+if ($WorldAssets -ne 'FOLLOW' -and $WorldAssets -ne $waDerived -and -not $Quiet) {
+    Write-Host ""
+    Write-Host "MIXED STATE: -WorldAssets $WorldAssets pins the world-asset provider,"
+    Write-Host "  but PRESENTATION $presName selects $waDerived. This is a diagnostic"
+    Write-Host "  launch, not what a player can reach. Drop -WorldAssets for the"
+    Write-Host "  coordinated picture."
+}
+# A variable left in the shell is the same hazard with no switch to blame it
+# on, so the default path CLEARS it for the child and says it did.
+$waClearedStale = $false
+if ($WorldAssets -eq 'FOLLOW' -and $env:SL_WORLD_ASSETS) {
+    $waClearedStale = $true
+    if (-not $Quiet) {
+        Write-Host ""
+        Write-Host "SL_WORLD_ASSETS was set in this shell ('$env:SL_WORLD_ASSETS') and has been"
+        Write-Host "  CLEARED for this run: the presentation decides. Pass -WorldAssets to pin it."
     }
 }
 
@@ -315,6 +465,7 @@ if (-not $Quiet) {
     } else {
         Write-Host "Sightline - booting to the title screen"
     }
+    Write-Host "Presentation: $presName ($presWhy). World assets: $(if ($WorldAssets -eq 'FOLLOW') { "$waDerived, from the presentation" } else { "$WorldAssets, PINNED by -WorldAssets" })."
     Write-Host ""
     Write-Host "  mouse         CLICK IN THE WINDOW to capture the pointer"
     Write-Host "  move          W A S D  /  left stick"
@@ -325,6 +476,8 @@ if (-not $Quiet) {
     Write-Host "  weapons       1 / wheel up = previous, 2 / wheel down = next"
     Write-Host "  scope zoom    wheel while aiming with the sniper or the camera"
     Write-Host "  classic B     Space (use-or-reload, as the cartridge's B)"
+    Write-Host "  presentation  F5 / pad BACK cycles ORIGINAL -> COMMUNITY HD -> XBLA"
+    Write-Host "                (one selection: artwork AND external world assets)"
     Write-Host "  gamepad       unchanged: A/B use-or-reload, X next weapon,"
     Write-Host "                aim + C-down crouch, per the selected control style"
     Write-Host "  watch / pause Tab or Esc, pad Start"
@@ -379,11 +532,16 @@ if (-not $Quiet) {
     Write-Host "  `$env:SL_LOOK_INVERT=1    invert GAMEPAD stick pitch (developer override; not the mouse)"
     Write-Host "  `$env:SL_FPS=30           pace to something other than 60"
     Write-Host ""
-    Write-Host "  TEXTURES                 OPTIONS > SETTINGS > DISPLAY, or the watch's"
-    Write-Host "                           SIGHTLINE > GRAPHICS: ORIGINAL / COMMUNITY HD /"
-    Write-Host "                           XBLA. Pack root: $texpackShown ($texpackWhy)."
-    Write-Host "                           .\tools\windows\prepare-textures.ps1 builds one"
-    Write-Host "                           from your own sources; ORIGINAL needs none"
+    Write-Host "  PRESENTATION             F5, the pad's BACK, OPTIONS > SETTINGS > DISPLAY,"
+    Write-Host "                           or the watch's SIGHTLINE > GRAPHICS - all one"
+    Write-Host "                           value: ORIGINAL / COMMUNITY HD / XBLA. It chooses"
+    Write-Host "                           the artwork AND the external world assets together,"
+    Write-Host "                           so XBLA brings the Dam's skydome with it."
+    Write-Host "                           Texture packs: $texpackShown ($texpackWhy)"
+    Write-Host "                           World assets: $waShown ($waWhy)"
+    Write-Host "                           .\tools\windows\prepare-textures.ps1 and"
+    Write-Host "                           .\tools\windows\prepare-xbla-assets.ps1 build them"
+    Write-Host "                           from your own sources; ORIGINAL needs neither"
     Write-Host ""
 }
 
@@ -399,6 +557,19 @@ $vars = @{
 # Established here with everything else, so there is ONE place the child's
 # environment is set and nothing for a later run to reproduce by hand.
 if ($texpack) { $vars['SL_TEXPACK_ROOT'] = $texpack }
+# #68: the ROOT is handed over whenever this launcher found one, exactly as
+# the texture pack root is, because the presentation - not a switch - decides
+# whether anything is read from it. A root costs nothing when the presentation
+# selects no world assets: no directory is opened.
+if ($waRoot) { $vars['SL_WORLDASSET_ROOT'] = $waRoot }
+# The SELECTION is normally not in the environment at all. -WorldAssets pins
+# it for a diagnostic run; FOLLOW clears any stale value so the presentation
+# is the only thing deciding.
+if ($WorldAssets -eq 'XBLA') {
+    $vars['SL_WORLD_ASSETS'] = 'xbla'
+} elseif ($WorldAssets -eq 'OFF') {
+    $vars['SL_WORLD_ASSETS'] = 'off'
+}
 # Only a NAMED level sets the direct-boot seam. Without it the binary leaves
 # g_StageNum at LEVELID_TITLE (boss.c:112) and boots the way the cartridge does.
 if ($directBoot) {
@@ -409,9 +580,9 @@ if ($directBoot) {
 # -TeleportMark: DEVELOPER mark-teleport. This launcher does ALL of the F8
 # mark parsing here and hands the binary already-split scalars
 # (SL_TELEPORT_X/Y/Z/THETA/VERTA/ROOM); src/native/sl_teleport.c never parses a
-# report. The mark - not the owner's input stream - is the navigation anchor:
+# report. The mark - not the recorded input stream - is the navigation anchor:
 # a recorded replay drifts from the live session (measured), so it cannot put
-# the camera where the owner marked. This does.
+# the camera where the mark was taken. This does.
 #
 # The mark's authoritative viewpoint values live in a compact [teleport]
 # section on marks recorded since this feature landed; a LEGACY mark predating
@@ -524,12 +695,17 @@ if ($Cheats -or $Weapon) {
 if ($NoConsoleCapture) { $vars['SL_RUN'] = '0' }
 
 # THE MEASUREMENT LAUNCH. Same table, for the same reason: one place where the
-# child's environment is established, so there is nothing for an agent to
+# child's environment is established, so there is nothing for a caller to
 # reproduce by hand and get subtly wrong.
 $mmOut = $null
 $mmErr = $null
 $mmSave = $null
 $mmCleared = @()
+# #68: the DEFAULT path removes a stale SL_WORLD_ASSETS from the child's
+# environment, through the same list -MeasurementMode uses, so the
+# presentation is the only thing selecting a world-asset set. Announced
+# further up; listed here so the restore at the end puts it back.
+if ($waClearedStale) { $mmCleared += 'SL_WORLD_ASSETS' }
 if ($MeasurementMode) {
     # Derived at RUNTIME, never a literal: this repository is cloned by other
     # people onto other drives under other user names. Same ladder the $save
@@ -553,7 +729,7 @@ if ($MeasurementMode) {
     $mmErr = Join-Path $mmDir "$mmStamp.err.txt"
 
     # A SCRATCH cartridge save, not the player's. Two reasons, both about
-    # parity rather than safety: the agent and the owner boot from the same
+    # parity rather than safety: automated and manual runs boot from the same
     # stored state, and a measurement run never writes the save someone plays.
     $mmSave = Join-Path $mmDir 'eeprom.bin'
 
@@ -567,7 +743,7 @@ if ($MeasurementMode) {
     # the reconstructed launch removed it explicitly - and it is covered by
     # this same sweep rather than by a special case.
     foreach ($e in Get-ChildItem env: | Where-Object { $_.Name -like 'SL_*' }) {
-        if (-not $vars.ContainsKey($e.Name)) { $mmCleared += $e.Name }
+        if (-not $vars.ContainsKey($e.Name) -and $mmCleared -notcontains $e.Name) { $mmCleared += $e.Name }
     }
     $mmCleared = @($mmCleared | Sort-Object)
 }
@@ -605,7 +781,7 @@ if ($NoConsoleCapture) {
     Write-Host "  The game window opens as usual; only the streams moved."
     Write-Host ""
 }
-# THE MANIFEST. Printed before anything launches so the owner and an agent have
+# THE MANIFEST. Printed before anything launches so a manual run and an automated one have
 # the same short list of concrete values to compare, rather than two prose
 # descriptions of what each believes it ran. Knobs only - this is not a dump of
 # the environment.
@@ -620,6 +796,8 @@ if ($MeasurementMode) {
     Write-Host "  boot           $(if ($directBoot) { "level $Level (stage $stage), difficulty $Difficulty" } else { 'front end (no SL_BOOT_LEVEL)' })"
     Write-Host "  eeprom         $mmSave (scratch)"
     Write-Host "  texpack root   $texpackShown ($texpackWhy)"
+    Write-Host "  presentation   $presName ($presWhy)"
+    Write-Host "  world assets   $(if ($WorldAssets -eq 'FOLLOW') { "$waDerived - from the presentation" } else { "$WorldAssets - PINNED by -WorldAssets" }) - root $waShown ($waWhy)"
     Write-Host "  stdout         $mmOut"
     Write-Host "  stderr         $mmErr"
     Write-Host "  console        Start-Process WITHOUT -NoNewWindow (child gets its own console - expected)"

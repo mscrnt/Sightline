@@ -22,7 +22,7 @@ does **not** apply to:
   `metadata.json`, and in the inventory at
   [../../LICENSES/README.md](../../LICENSES/README.md). Only the two
   replacement parts flagged `sl_authored_part` in those packages (the plain
-  Guide and PS buttons, drawn by the project owner to remove the
+  Guide and PS buttons, drawn for Sightline to remove the
   manufacturers' logos) are Sightline-authored.
 
 Nothing here changes the no-ROM-derived-pixels rule or the `sl_authored`
