@@ -4,8 +4,9 @@ The standing rules for anyone contributing to this repository. Other
 documents, source comments and tool docstrings cite these by number
 ("project rules, rule 2"), so the numbering is stable: do not renumber.
 
-`ROADMAP.md` holds the phase structure, gates and the current status. This
-file holds the rules.
+`ROADMAP.md` summarizes published releases and the next player-facing
+milestone. This file holds standing engineering rules. Phase-specific examples
+below are historical context, not scheduled release commitments.
 
 ---
 
@@ -15,14 +16,10 @@ file holds the rules.
 decompilation, covering the **full game** — all campaign levels, all
 multiplayer maps.
 
-Three goals, in dependency order:
-
-1. **Smarter AI** — squad communication and an alarm information graph, with
-   behavior archetypes ported by design from Perfect Dark.
-2. **Real lighting** — clustered forward rendering with shadow-casting dynamic
-   lights, retaining original vertex colors as baked indirect.
-3. **NIGHTWATCH** — asymmetric online mode, 1 infiltrator vs. up to 7 human
-   guards, across the campaign.
+The next announced milestone, v0.5.0, focuses on easier installation and
+updates. Earlier AI, lighting and online-mode concepts are not scheduled
+releases. See the [player roadmap](https://github.com/users/mscrnt/projects/9)
+for the current plan.
 
 ---
 
@@ -260,7 +257,5 @@ gets sent back rather than merged.
 
 ## Current status
 
-See `ROADMAP.md`. The vertical-slice target is Facility, but the full game is
-the shipping scope: the slice is judged on whether the derivers generalize,
-not on how good Facility looks. If Facility looks wrong, fix the deriver,
-never the level.
+The current published release is v0.4.1. v0.5.0 is planned around setup and
+updates. See [ROADMAP.md](ROADMAP.md) for the current player-facing status.
