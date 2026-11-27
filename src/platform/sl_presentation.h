@@ -94,9 +94,13 @@ int  sl_presentation(void);
  * write-on-change. */
 void sl_presentation_set(int presentation);
 
-/* The step both editors and the cycle action use: the next presentation in
- * the list, wrapping both ways. dir >= 0 steps forward. Forward from XBLA is
- * ORIGINAL, so three presses of F5 return where they started. */
+/* Whether the required prepared assets for a presentation are installed.
+ * ORIGINAL needs only the ROM. This checks the same roots the providers use. */
+int sl_presentation_available(int presentation);
+
+/* The step both editors and the cycle action use. It skips presentations
+ * whose prepared assets are absent; with only the ROM, it stays on ORIGINAL.
+ * dir >= 0 steps forward. */
 void sl_presentation_step(int dir);
 
 /* ---- the resolution: presentation -> per-provider selections -------------

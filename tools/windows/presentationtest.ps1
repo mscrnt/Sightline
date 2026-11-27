@@ -21,14 +21,15 @@
       * an invalid value resolving exactly as ORIGINAL;
       * the canonical value: one store row, out-of-range sets refused, and no
         copy held anywhere - a write straight to the row is seen by the policy;
-      * F5 cycling exactly 0 -> 1 -> 2 -> 0, and a full cycle being a no-op;
+      * F5 staying on ORIGINAL with no pack, and skipping an absent mode;
+      * F5 cycling 0 -> 1 -> 2 -> 0 once both prepared sets are present;
       * the backward step both editors' LEFT takes;
       * and the coordination itself: one step moves the texture provider only,
         the next moves BOTH.
 
     NO CONFIG FILE IS READ OR WRITTEN: the store is left INACTIVE, so sets
-    change memory only. Nothing is installed, nothing is prepared, no ROM is
-    opened - this runs on CI as it stands.
+    change memory only. The test creates four tiny synthetic format-header
+    fixtures under %TEMP% and removes them; no ROM or pack is opened.
 
     Exits 0 when every check passes, 1 otherwise. Same toolchain ladder as
     build.ps1 / settingstest.ps1.

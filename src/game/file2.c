@@ -68,7 +68,16 @@ void fileWriteSmallSave(smallSave *save)
     if (fileGamePakProbe())
     {
         fileGenerateCRC(&save->unk[0], &save->unk[24], save);
+#ifndef __sgi
+        {
+            smallSave wire = *save;
+            sl_be32w(&wire.chksum1, (u32) save->chksum1);
+            sl_be32w(&wire.chksum2, (u32) save->chksum2);
+            joyGamePakLongWrite(0, &wire, sizeof(wire));
+        }
+#else
         joyGamePakLongWrite(0, save, sizeof(smallSave));
+#endif
     }
 }
 
@@ -83,8 +92,22 @@ void fileWriteSave(save_data *save)
     {
         if ( fileGamePakProbe())
         {
+#ifndef __sgi
+            /* The native struct is little-endian, but EEPROM remains in the
+             * cartridge's byte order. Compute the CRC over the bytes that
+             * will actually be written, then encode its two stored words. */
+            save_data wire = *save;
+            sl_be16w(&wire.options, save->options);
+            fileGenerateCRC(&wire.completion_bitflags, &wire + 1, &wire);
+            save->chksum1 = wire.chksum1;
+            save->chksum2 = wire.chksum2;
+            sl_be32w(&wire.chksum1, (u32) save->chksum1);
+            sl_be32w(&wire.chksum2, (u32) save->chksum2);
+            joyGamePakLongWrite((((u32)((save - &saves[SAVESLOT1]) * 0x60) >> 3) + 4), &wire, sizeof(wire));
+#else
             fileGenerateCRC(&save->completion_bitflags, save + 1, save);
             joyGamePakLongWrite((((u32)((save - &saves[SAVESLOT1]) * 0x60) >> 3) + 4), save, sizeof(save_data)); // 0x60 = sizeof(save_data) be sure to manually update if save changes
+#endif
         }
     }
 }
@@ -485,6 +508,10 @@ void fileValidateSaves(void)
     s32 crc[2];
     s32 i;
     s32 *temp;
+#ifndef __sgi
+    s32 legacySmall[2];
+    s32 legacyFolders[5][2];
+#endif
 
     if (fileGamePakProbe())
     {
@@ -494,6 +521,8 @@ void fileValidateSaves(void)
         joyGamePakLongRead(0, &joyChecksum, sizeof(smallSave));
 
 #ifndef __sgi
+        legacySmall[0] = joyChecksum.chksum1;
+        legacySmall[1] = joyChecksum.chksum2;
         /* EEPROM images are cartridge byte dumps.  The stored checksums are
          * compared as VALUES against fileGenerateCRC's output, so they must be
          * promoted from big-endian first; the CRC's own input range is read
@@ -514,6 +543,16 @@ void fileValidateSaves(void)
 
         if ((crc[0] != temp[0]) || (crc[1] != temp[1]))
         {
+#ifndef __sgi
+            if (crc[0] == legacySmall[0] && crc[1] == legacySmall[1]
+                && checksumOK)
+            {
+                /* Older native builds wrote host-order checksum words. The
+                 * payload is still valid, so re-seal it in cartridge order. */
+                fileWriteSmallSave(&joyChecksum);
+            }
+            else
+#endif
             checksumOK = FALSE;
         }
 
@@ -537,6 +576,8 @@ void fileValidateSaves(void)
         {
             s32 sv;
             for (sv = 0; sv < 5; sv++) {
+                legacyFolders[sv][0] = saves[sv].chksum1;
+                legacyFolders[sv][1] = saves[sv].chksum2;
                 saves[sv].chksum1 = (s32) sl_be32r(&saves[sv].chksum1);
                 saves[sv].chksum2 = (s32) sl_be32r(&saves[sv].chksum2);
             }
@@ -560,6 +601,18 @@ void fileValidateSaves(void)
 
             if (!checksumOK2)
             {
+#ifndef __sgi
+                if (crc[0] == legacyFolders[i][0]
+                    && crc[1] == legacyFolders[i][1])
+                {
+                    /* The older native payload, including options, was in
+                     * host order. Preserve it and rewrite the wire record. */
+                    saves[i].chksum1 = legacyFolders[i][0];
+                    saves[i].chksum2 = legacyFolders[i][1];
+                    fileWriteSave(&saves[i]);
+                }
+                else
+#endif
                 fileResetSave(&saves[i]);
             }
 #ifndef __sgi

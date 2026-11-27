@@ -22,6 +22,7 @@
 #include "front.h"
 #ifndef __sgi
 #include "../sl_asset_override.h"
+#include <stdio.h>
 #endif
 #include "image_bank.h"
 #include "lv.h"
@@ -2811,8 +2812,8 @@ char* get_ptr_difficulty_name(s32 difficulty)
  * Render the file folder select screen. That includes the background texture, four 3D wallet models, the progress text written on them,
  * the crosshair cursor, and the "SELECT FILE", "Copy", and "Erase" text and icons.
  *
- * The declaration of difficultytext (spD0) is likely incorrect, if this function is modified
- * make sure to extend difficultytext to avoid overflow.
+ * The original difficultytext stack size is likely misidentified. The native
+ * build bounds the copy so the difficulty label cannot corrupt the text anchor.
  */
 Gfx *constructor_menu05_fileselect(Gfx *DL)
 {
@@ -2878,7 +2879,11 @@ Gfx *constructor_menu05_fileselect(Gfx *DL)
 
     for (foldernum = FOLDER1; foldernum < MAX_FOLDER_COUNT; foldernum++)
     {
+#ifdef __sgi
         char difficultytext[4]; // spD0
+#else
+        char difficultytext[64]; // difficulty name, newline, and terminator
+#endif
         char missiontext[18];   // spBC: "Mission <chapter>.<part>\n"
         s32 padding3;
         struct coord3d * folderworldpos;
@@ -2947,8 +2952,12 @@ Gfx *constructor_menu05_fileselect(Gfx *DL)
 
                 if (langp != NULL)
                 {
+#ifdef __sgi
                     strcpy((char *)&difficultytext, langp);
                     strcat((char *)&difficultytext, "\n");
+#else
+                    snprintf(difficultytext, sizeof(difficultytext), "%s\n", langp);
+#endif
 
                     textsize.p[0] = 0;
                     textsize.p[1] = 0;

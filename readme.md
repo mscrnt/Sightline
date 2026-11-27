@@ -260,6 +260,13 @@ written (`%LOCALAPPDATA%\sightline`), the optional Community HD textures
 
 ### Releases
 
+- **v0.4.1 - Save Persistence.** Fixes native cartridge saves failing to load
+  after a restart and writes each EEPROM update to disk. Valid older native
+  saves are converted on first load. Notes:
+  [docs/releases/v0.4.1.md](docs/releases/v0.4.1.md).
+- **v0.4.0 - Optimized Rendering.** Adds the optional rendering path and its
+  display setting. See the [v0.4.0 release](https://github.com/mscrnt/Sightline/releases/tag/v0.4.0)
+  for validation limits and the known NVIDIA OpenGL fault.
 - **v0.3.0 - Visual Fidelity.** PRESENTATION (ORIGINAL / COMMUNITY HD /
   XBLA), WORLD DETAIL, FRAME RATE and SHOW FPS, and the fix for the
   model-code crashes when shooting guards (`Sightline-v0.3.0-win32.zip`).

@@ -8,7 +8,7 @@ characters, props and first-person models).
 > **Release package or source build.** The preparation below runs from a
 > source checkout. A build of the tree (`.\tools\windows\build.ps1`, launched
 > with `.\tools\windows\play.ps1`) reads the checkout's own `texpacks\` and
-> `worldassets\`. The v0.3.0 release package reads prepared sets from
+> `worldassets\`. Windows release packages read prepared sets from
 > `%LOCALAPPDATA%\sightline\assets\`: its `Get-Textures.cmd` fetches
 > COMMUNITY HD there on its own, and for XBLA pass
 > `-TexturesOut "$env:LOCALAPPDATA\sightline\assets\texpacks"` and
@@ -209,8 +209,9 @@ all of them:
 - the front end: **OPTIONS -> SETTINGS -> DISPLAY -> PRESENTATION**;
 - the watch, in a level: its last tab, **SIGHTLINE -> GRAPHICS**;
 - in play: **F5**, or the controller's **View / Create** button, steps
-  ORIGINAL -> COMMUNITY HD -> XBLA -> ORIGINAL and names the result on the
-  HUD.
+  through installed presentations and names the result on the HUD. With only
+  the base game, it stays on ORIGINAL. COMMUNITY HD requires prepared textures;
+  XBLA requires prepared textures and world assets. Restart after installation.
 
 Or start on one: `.\tools\windows\play.ps1 -Level dam -Presentation XBLA`.
 

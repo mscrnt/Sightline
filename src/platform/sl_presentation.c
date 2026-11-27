@@ -22,7 +22,10 @@
 #include "sl_settings.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+
+const char *sl_asset_override_dir(void);
 
 /* A presentation fog row's own developer switch: set to 0, the row is set
  * aside and the authored value stands. NULL for the rows whose only switches
@@ -78,12 +81,69 @@ void sl_presentation_set(int presentation)
     sl_settings_set(SL_SET_PRESENTATION, presentation);
 }
 
+/* The prepared sets have stable format headers. A directory alone is not an
+ * installation: an empty folder must not make F5 offer fallback artwork. The
+ * probes use the provider's root overrides and the player-data root exactly
+ * as the texture and world-asset providers do. */
+static int prepared_file(const char *root, const char *relative,
+                         const char *magic, long min_size)
+{
+    char path[600], header[8];
+    FILE *f;
+    size_t n;
+    long size;
+    if (root == NULL || *root == '\0' || strlen(root) + strlen(relative) + 2u > sizeof path)
+        return 0;
+    snprintf(path, sizeof path, "%s\\%s", root, relative);
+    f = fopen(path, "rb");
+    if (f == NULL) return 0;
+    n = fread(header, 1u, sizeof header, f);
+    size = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+    fclose(f);
+    return n == sizeof header && size > min_size
+        && memcmp(header, magic, 4u) == 0
+        && header[4] != 0 && header[5] == 0 && header[6] == 0 && header[7] == 0;
+}
+
+static const char *prepared_root(const char *override, const char *subdir,
+                                  char *path, size_t cap)
+{
+    const char *root = getenv(override);
+    if (root != NULL && *root != '\0' && strlen(root) + 1u < cap) return root;
+    root = sl_asset_override_dir();
+    if (root == NULL || *root == '\0' || strlen(root) + strlen(subdir) + 2u > cap)
+        return NULL;
+    snprintf(path, cap, "%s\\%s", root, subdir);
+    return path;
+}
+
+int sl_presentation_available(int presentation)
+{
+    char path[512];
+    const char *root;
+    if (presentation == SL_PRESENTATION_ORIGINAL) return 1;
+    if (!presentation_ok(presentation)) return 0;
+    root = prepared_root("SL_TEXPACK_ROOT", "texpacks", path, sizeof path);
+    if (presentation == SL_PRESENTATION_COMMUNITY)
+        return prepared_file(root, "community\\0014.sltx", "SLTX", 28);
+    if (!prepared_file(root, "xbla\\0008.sltx", "SLTX", 28)) return 0;
+    root = prepared_root("SL_WORLDASSET_ROOT", "worldassets", path, sizeof path);
+    return prepared_file(root, "xbla\\environment.slen", "SLEN", 32)
+        && prepared_file(root, "xbla\\background\\dam.slwa", "SLWA", 128);
+}
+
 void sl_presentation_step(int dir)
 {
-    int v = sl_presentation() + (dir < 0 ? -1 : 1);
-    if (v < 0) v = SL_PRESENTATION_COUNT - 1;
-    if (v >= SL_PRESENTATION_COUNT) v = 0;
-    sl_presentation_set(v);
+    int v = sl_presentation(), i;
+    for (i = 0; i < SL_PRESENTATION_COUNT; i++) {
+        v += dir < 0 ? -1 : 1;
+        if (v < 0) v = SL_PRESENTATION_COUNT - 1;
+        if (v >= SL_PRESENTATION_COUNT) v = 0;
+        if (sl_presentation_available(v)) {
+            sl_presentation_set(v);
+            return;
+        }
+    }
 }
 
 /* ---- the resolution ------------------------------------------------------ */
@@ -604,10 +664,33 @@ int sl_presentation_own_sea(const char *world_set, const char *item)
 
 /* ============================================================ self-test == */
 #ifdef SL_PRESENTATION_SELFTEST
-#include <stdio.h>
-#include <string.h>
+#include <direct.h>
+#include <io.h>
+#include <process.h>
 
 static int g_pass, g_fail;
+static char g_test_root[400];
+
+const char *sl_asset_override_dir(void) { return g_test_root; }
+
+static void test_file(const char *relative, const char *magic)
+{
+    char path[600];
+    unsigned char bytes[132] = {0};
+    FILE *f;
+    snprintf(path, sizeof path, "%s\\%s", g_test_root, relative);
+    f = fopen(path, "wb");
+    memcpy(bytes, magic, 4u);
+    bytes[4] = 1;
+    if (f != NULL) { fwrite(bytes, 1u, sizeof bytes, f); fclose(f); }
+}
+
+static void test_dir(const char *relative)
+{
+    char path[600];
+    snprintf(path, sizeof path, "%s\\%s", g_test_root, relative);
+    _mkdir(path);
+}
 static void ck(int cond, const char *what)
 {
     if (cond) { g_pass++; }
@@ -617,8 +700,57 @@ static void ck(int cond, const char *what)
 int main(void)
 {
     int p;
+    char path[600];
+    const char *tmp = getenv("TEMP");
+
+    if (tmp == NULL || strlen(tmp) > 330u) return 1;
+    snprintf(g_test_root, sizeof g_test_root, "%s\\sl_presentation_test_%ld",
+             tmp, (long) _getpid());
+    _mkdir(g_test_root);
+    _putenv_s("SL_TEXPACK_ROOT", "");
+    _putenv_s("SL_WORLDASSET_ROOT", "");
 
     printf("sl_presentation self-test (#68: the presentation policy)\n\n");
+
+    /* A plain ROM must never cycle through labels whose providers would
+     * silently fall back to ORIGINAL. Adding each prepared set makes it
+     * available, while an empty folder or bad file header does not. */
+    ck(sl_presentation_available(SL_PRESENTATION_ORIGINAL)
+       && !sl_presentation_available(SL_PRESENTATION_COMMUNITY)
+       && !sl_presentation_available(SL_PRESENTATION_XBLA),
+       "base game offers ORIGINAL alone");
+    sl_presentation_step(1);
+    ck(sl_presentation() == SL_PRESENTATION_ORIGINAL,
+       "F5 with only the base game stays on ORIGINAL");
+    sl_presentation_set(SL_PRESENTATION_XBLA);
+    sl_presentation_step(1);
+    ck(sl_presentation() == SL_PRESENTATION_ORIGINAL,
+       "F5 recovers an unavailable saved XBLA choice to ORIGINAL");
+    test_dir("texpacks"); test_dir("texpacks\\community");
+    test_file("texpacks\\community\\0014.sltx", "BAD!");
+    ck(!sl_presentation_available(SL_PRESENTATION_COMMUNITY),
+       "a bad texture header does not enable COMMUNITY");
+    test_file("texpacks\\community\\0014.sltx", "SLTX");
+    ck(sl_presentation_available(SL_PRESENTATION_COMMUNITY),
+       "a prepared community texture enables COMMUNITY");
+    sl_presentation_step(1);
+    ck(sl_presentation() == SL_PRESENTATION_COMMUNITY,
+       "F5 offers COMMUNITY after its texture is installed");
+    sl_presentation_step(1);
+    ck(sl_presentation() == SL_PRESENTATION_ORIGINAL,
+       "F5 skips XBLA without its texture and world set");
+    test_dir("texpacks\\xbla");
+    test_file("texpacks\\xbla\\0008.sltx", "SLTX");
+    ck(!sl_presentation_available(SL_PRESENTATION_XBLA),
+       "XBLA texture alone does not enable XBLA");
+    test_dir("worldassets"); test_dir("worldassets\\xbla");
+    test_dir("worldassets\\xbla\\background");
+    test_file("worldassets\\xbla\\environment.slen", "SLEN");
+    ck(!sl_presentation_available(SL_PRESENTATION_XBLA),
+       "XBLA still needs prepared world geometry");
+    test_file("worldassets\\xbla\\background\\dam.slwa", "SLWA");
+    ck(sl_presentation_available(SL_PRESENTATION_XBLA),
+       "complete XBLA set enables XBLA");
 
     /* 1. THE THREE NAMES, and the refusal outside the range. */
     ck(strcmp(sl_presentation_name(SL_PRESENTATION_ORIGINAL), "ORIGINAL") == 0,
@@ -1066,6 +1198,17 @@ int main(void)
        "only PRESENTATION XBLA reaches it");
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
+    snprintf(path, sizeof path, "%s\\texpacks\\community\\0014.sltx", g_test_root); _unlink(path);
+    snprintf(path, sizeof path, "%s\\texpacks\\xbla\\0008.sltx", g_test_root); _unlink(path);
+    snprintf(path, sizeof path, "%s\\worldassets\\xbla\\environment.slen", g_test_root); _unlink(path);
+    snprintf(path, sizeof path, "%s\\worldassets\\xbla\\background\\dam.slwa", g_test_root); _unlink(path);
+    snprintf(path, sizeof path, "%s\\worldassets\\xbla\\background", g_test_root); _rmdir(path);
+    snprintf(path, sizeof path, "%s\\worldassets\\xbla", g_test_root); _rmdir(path);
+    snprintf(path, sizeof path, "%s\\worldassets", g_test_root); _rmdir(path);
+    snprintf(path, sizeof path, "%s\\texpacks\\community", g_test_root); _rmdir(path);
+    snprintf(path, sizeof path, "%s\\texpacks\\xbla", g_test_root); _rmdir(path);
+    snprintf(path, sizeof path, "%s\\texpacks", g_test_root); _rmdir(path);
+    _rmdir(g_test_root);
     return g_fail == 0 ? 0 : 1;
 }
 #endif /* SL_PRESENTATION_SELFTEST */

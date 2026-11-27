@@ -55,7 +55,9 @@ of it. The XBLA set is user-supplied and no tool here obtains it.
 PRESENTATION = XBLA needs a texture pack and world assets prepared from your
 own copy of the remaster with a source checkout of Sightline; docs/xbla-setup.md
 in the public repository describes it. In a level, F5 (or View / Create on a
-controller) cycles ORIGINAL, COMMUNITY HD and XBLA.
+controller) cycles through installed presentations. With only the base game,
+it stays on ORIGINAL. COMMUNITY HD needs its texture pack; XBLA needs both
+its texture pack and world assets. Restart the game after installing a pack.
 
 Quitting
 --------

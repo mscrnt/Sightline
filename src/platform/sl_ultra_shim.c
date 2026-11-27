@@ -19,6 +19,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include "sl_acmd.h"
 
 typedef int32_t  s32;
@@ -2441,20 +2447,67 @@ static void sl_cont_count_report(void)
             n >= 2 ? " - 2.x control styles are selectable" : "");
 }
 
-static void sl_eeprom_flush(void)
+/* Persist a complete image before reporting an EEPROM write as successful.
+ * Writing a same-directory temporary file and replacing the old image keeps
+ * a process close from leaving a partially written cartridge save. */
+static int sl_eeprom_commit(void)
 {
     FILE *f;
+    char tmp[sizeof sl_eeprom_path + 32];
+    int written;
+    int failed;
 
     if (!sl_eeprom_writable || sl_eeprom_path[0] == '\0')
-        return;
-    f = fopen(sl_eeprom_path, "wb");
+        return 0;
+#ifdef _WIN32
+    written = snprintf(tmp, sizeof tmp, "%s.tmp.%lu", sl_eeprom_path,
+                       (unsigned long) GetCurrentProcessId());
+#else
+    written = snprintf(tmp, sizeof tmp, "%s.tmp.%lu", sl_eeprom_path,
+                       (unsigned long) getpid());
+#endif
+    if (written < 0 || (size_t) written >= sizeof tmp) {
+        fprintf(stderr, "sightline native: save temporary path too long\n");
+        return -1;
+    }
+    f = fopen(tmp, "wb");
     if (f == NULL) {
         fprintf(stderr, "sightline native: cannot write save %s\n",
                 sl_eeprom_path);
-        return;
+        return -1;
     }
-    fwrite(sl_eeprom, 1, sizeof sl_eeprom, f);
-    fclose(f);
+    failed = fwrite(sl_eeprom, 1, sizeof sl_eeprom, f) != sizeof sl_eeprom;
+    if (!failed && fflush(f) != 0) failed = 1;
+#ifdef _WIN32
+    if (!failed && _commit(_fileno(f)) != 0) failed = 1;
+#else
+    if (!failed && fsync(fileno(f)) != 0) failed = 1;
+#endif
+    if (fclose(f) != 0) failed = 1;
+    if (failed) {
+        remove(tmp);
+        fprintf(stderr, "sightline native: cannot flush save %s\n",
+                sl_eeprom_path);
+        return -1;
+    }
+#ifdef _WIN32
+    if (!MoveFileExA(tmp, sl_eeprom_path,
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+#else
+    if (rename(tmp, sl_eeprom_path) != 0) {
+#endif
+        remove(tmp);
+        fprintf(stderr, "sightline native: cannot replace save %s\n",
+                sl_eeprom_path);
+        return -1;
+    }
+    return 0;
+}
+
+static void sl_eeprom_flush(void)
+{
+    /* Also create an initial image on an otherwise read-only first session. */
+    sl_eeprom_commit();
 }
 
 void sl_eeprom_init(const char *path)
@@ -2606,11 +2659,30 @@ s32 osEepromProbe(sl_OSMesgQueue *mq) { (void) mq; return 1; /* EEPROM_TYPE_4K *
 s32 osEepromRead(sl_OSMesgQueue *mq, unsigned char block, unsigned char *buf)
 { (void) mq; memcpy(buf, sl_eeprom + block * 8, 8); return 0; }
 s32 osEepromWrite(sl_OSMesgQueue *mq, unsigned char block, unsigned char *buf)
-{ (void) mq; memcpy(sl_eeprom + block * 8, buf, 8); return 0; }
+{
+    unsigned char previous[sizeof sl_eeprom];
+    (void) mq;
+    memcpy(previous, sl_eeprom, sizeof previous);
+    memcpy(sl_eeprom + block * 8, buf, 8);
+    if (sl_eeprom_commit() == 0) return 0;
+    memcpy(sl_eeprom, previous, sizeof previous);
+    return -1;
+}
 s32 osEepromLongRead(sl_OSMesgQueue *mq, unsigned char block, unsigned char *buf, s32 n)
 { (void) mq; memcpy(buf, sl_eeprom + block * 8, n); return 0; }
 s32 osEepromLongWrite(sl_OSMesgQueue *mq, unsigned char block, unsigned char *buf, s32 n)
-{ (void) mq; memcpy(sl_eeprom + block * 8, buf, n); return 0; }
+{
+    unsigned char previous[sizeof sl_eeprom];
+    size_t off = (size_t) block * 8;
+    (void) mq;
+    if (n < 0 || (size_t) n > sizeof sl_eeprom - off) return -1;
+    if (n == 0) return 0;
+    memcpy(previous, sl_eeprom, sizeof previous);
+    memcpy(sl_eeprom + off, buf, (size_t) n);
+    if (sl_eeprom_commit() == 0) return 0;
+    memcpy(sl_eeprom, previous, sizeof previous);
+    return -1;
+}
 
 /* ---- native trace output -------------------------------------------------
  * SL_TRACE_OUT=<file> arms per-tick state capture: the pump calls the
