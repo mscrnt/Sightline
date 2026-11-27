@@ -1,0 +1,166 @@
+{
+  "schema": "sightline-readiness-suite/1",
+  "status": "offline policy; live coverage and budgets not yet qualified",
+  "window": {
+    "lo": 12001,
+    "hi": 18001,
+    "step": 2
+  },
+  "profiles": {
+    "1080p60": {
+      "width": 1920,
+      "height": 1080,
+      "target_fps": 60,
+      "budget": {
+        "mean_ms": 16.6666666667,
+        "p99_ms": 16.6666666667,
+        "mean_regression_pct": 2,
+        "p99_regression_pct": 5,
+        "mean_noise_floor_ms": 0.1,
+        "p99_noise_floor_ms": 0.25
+      },
+      "qualification": "roadmap target; regression allowances are configured policy, not a measured noise model"
+    },
+    "1440p60": {
+      "width": 2560,
+      "height": 1440,
+      "target_fps": 60,
+      "budget": {
+        "mean_ms": 16.6666666667,
+        "p99_ms": 16.6666666667,
+        "mean_regression_pct": 2,
+        "p99_regression_pct": 5,
+        "mean_noise_floor_ms": 0.1,
+        "p99_noise_floor_ms": 0.25
+      },
+      "qualification": "optional prospective target, not a supported-performance claim"
+    }
+  },
+  "scenes": [
+    {
+      "id": "facility-tanks",
+      "purpose": "intact tank-room geometry and ordinary fog",
+      "binding": "pinned pose and neutral input required",
+      "timing_role": "budget",
+      "events_required": false,
+      "required_metrics": [
+        "host_frames"
+      ],
+      "captures": {
+        "first": 2000,
+        "last": 2250,
+        "every": 100,
+        "phases": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "facility-gas",
+      "purpose": "ordinary tank destruction and gas buildup/fill",
+      "binding": "pinned tank-room pose and recorded ordinary firing input required",
+      "timing_role": "diagnostic",
+      "events_required": true,
+      "required_metrics": [
+        "host_frames"
+      ],
+      "gas": {
+        "initial_rgb": [
+          16,
+          32,
+          16
+        ],
+        "initial_far": 5000,
+        "full_rgb": [
+          64,
+          128,
+          64
+        ],
+        "full_far": 1000
+      },
+      "excluded": [
+        "gas damage and death with invincibility",
+        "exact adjacent destruction frames"
+      ],
+      "captures": {
+        "first": 100,
+        "last": 20000,
+        "every": 300,
+        "phases": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "id": "frigate-deck",
+      "purpose": "large background and sky/control workload",
+      "binding": "pinned pose and neutral input required",
+      "timing_role": "budget",
+      "events_required": false,
+      "required_metrics": [
+        "host_frames"
+      ],
+      "captures": {
+        "first": 2000,
+        "last": 2250,
+        "every": 100,
+        "phases": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "statue-dense",
+      "purpose": "dense geometry, transparency and depth fallback coverage",
+      "binding": "pinned pose/input required; live coverage unqualified",
+      "timing_role": "budget",
+      "events_required": false,
+      "required_metrics": [
+        "host_frames"
+      ],
+      "captures": {
+        "first": 2000,
+        "last": 2250,
+        "every": 100,
+        "phases": [
+          1
+        ]
+      }
+    },
+    {
+      "id": "combat-effects",
+      "purpose": "moving actors, muzzle flashes, particles and future dynamic lights",
+      "binding": "recorded repeatable gameplay input required; no arbitrary per-level shipping rules",
+      "timing_role": "budget",
+      "events_required": false,
+      "required_metrics": [
+        "host_frames"
+      ],
+      "captures": {
+        "first": 2000,
+        "last": 2250,
+        "every": 100,
+        "phases": [
+          1
+        ]
+      },
+      "requires_profile": true
+    }
+  ],
+  "baseline_policy": {
+    "supported_reference": "existing default renderer; no experimental switch promoted by this catalog",
+    "experimental": [
+      "SL_BG_GPU_XFORM",
+      "SL_BG_GPU_BYPASS"
+    ],
+    "parked": [
+      "fog extension without repeatable gain and complete event coverage",
+      "naive deferred upload",
+      "small GL state-query cache"
+    ],
+    "automatic_updates": false,
+    "future_graphics": "version and review intentional visual references separately; no tolerance or automatic rebaseline"
+  },
+  "qualification": "scene coverage inventory and future test policy; no scene here constitutes a shipping or full-campaign validation"
+}

@@ -40,6 +40,7 @@
  *     vsync=0
  *     world_detail=0
  *     presentation=0
+ *     optimized_rendering=1
  *
  * Unknown keys are ignored and preserved nowhere (the file is rewritten from
  * the table), a malformed or out-of-range value falls back to that setting's
@@ -283,6 +284,30 @@ enum sl_setting {
      * row is changed (sl_window.c, sl_show_fps). Missing / malformed /
      * out-of-range -> 0. */
     SL_SET_SHOW_FPS,
+    /* OPTIMIZED RENDERING: 0 = the original immediate / CPU render paths for
+     * the three subsystems the row reaches; 1 (THE DEFAULT) = the skydome
+     * pass's indexed submission with the validated float-colour carrier, the
+     * background pass's GPU clip computation, and the per-vertex CPU loop
+     * reduction that depends on it. src/platform/sl_perf.h owns the meaning
+     * and RESOLVES this row into a selection for each subsystem; nothing
+     * inspects this row directly except sl_perf.c.
+     *
+     * THE ROW SELECTS AN EXACT IMAGE AND PROMISES NO FRAME RATE. The
+     * background's GPU clip is computed by the auxiliary-context prepass whose
+     * frames were measured byte-exact against the original renderer's; the
+     * boundary of that evidence and the frame-time question are both
+     * src/platform/sl_perf.h's to state, not this enum's.
+     *
+     * THIS IS THE ONE ROW WHOSE DEFAULT IS ON, and the reason it can be is
+     * that sl_perf.c answers OFF for every question while the store is
+     * INACTIVE: trace replay, headless health and the matching build never
+     * call sl_settings_init, so the default cannot reach a recorded trace.
+     * The accepted CPU work (diagnostic statistics, the fill-query workers,
+     * the background vertex helper, the cached renderer settings, and the
+     * older memo / SSE2 / buffer-object work) is compiled in with its own
+     * eligibility and is NOT reached by this row in either position.
+     * Missing / malformed / out-of-range -> 1. */
+    SL_SET_OPTIMIZED_RENDERING,
     SL_SET_COUNT
 };
 

@@ -39,13 +39,72 @@
 param(
     [switch]$Clean,
     [switch]$Demo,
-    [string]$Msys2Root
+    [string]$Msys2Root,
+    # A SEPARATE OUTPUT TREE for a diagnostic build, as a single directory name
+    # under build\diag. Empty - the default - builds into build\win32 exactly as
+    # before, so a run that does not pass this is byte-for-byte the build it was
+    # without it.
+    #
+    # WHY THE WHOLE TREE AND NOT JUST THE EXECUTABLE'S NAME. Every output this
+    # script writes derives from one $OUT: the object files, the link, the
+    # staged SDL2.dll and libwinpthread-1.dll, the asset-override data and the
+    # build key. Renaming only the linked executable therefore leaves a
+    # diagnostic build recompiling the shared objects, restaging the DLLs and
+    # rewriting the data stage beside an executable an earlier measurement is
+    # pinned to - so the executable survives by name while everything around it
+    # is replaced. Redirecting $OUT is what actually isolates the two, because
+    # $OUT is the single root they both already derive from.
+    #
+    # The value is one path segment, validated below: the resolved destination
+    # must lie strictly inside build\diag, so this cannot be pointed at
+    # build\win32 or anywhere outside the tree.
+    [string]$DiagOut = ''
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $OUT  = Join-Path $repo 'build\win32'
+$SHARED_OUT = $OUT
+
+# THE DIAGNOSTIC OUTPUT TREE, resolved and bounded before anything is written.
+#
+# The destination must lie strictly inside build\diag. That is checked on the
+# RESOLVED absolute path rather than on the argument, so a segment containing
+# '..' or a rooted path cannot escape: a build that escaped this check would
+# write its objects, its link, its DLLs and its data over the shared tree,
+# which is the single thing this control exists to prevent.
+if ($DiagOut -ne '') {
+    if ($DiagOut -match '[\\/:]' ) {
+        Write-Error "build.ps1: -DiagOut must be ONE directory name, not a path (got '$DiagOut')."
+    }
+    $diagRoot = Join-Path $repo 'build\diag'
+    if (-not (Test-Path $diagRoot)) { New-Item -ItemType Directory -Force -Path $diagRoot | Out-Null }
+    $candidate = Join-Path $diagRoot $DiagOut
+    if (-not (Test-Path $candidate)) { New-Item -ItemType Directory -Force -Path $candidate | Out-Null }
+    $resolvedRoot = (Resolve-Path -LiteralPath $diagRoot).ProviderPath.TrimEnd('\')
+    $resolved     = (Resolve-Path -LiteralPath $candidate).ProviderPath.TrimEnd('\')
+    if (-not $resolved.StartsWith($resolvedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Error ("build.ps1: -DiagOut resolved to '$resolved', which is not inside " +
+                     "'$resolvedRoot'. Refusing: a diagnostic build may not write outside " +
+                     "its own tree.")
+    }
+    if ($resolved.Equals(((Resolve-Path -LiteralPath $SHARED_OUT).ProviderPath.TrimEnd('\')),
+                         [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Error ("build.ps1: -DiagOut resolved to the shared output directory. Refusing: " +
+                     "that tree holds the binaries and DLLs earlier measurements are pinned to.")
+    }
+    # -Clean deletes the output tree outright. Against a diagnostic tree that
+    # is the caller's own to discard; against the shared tree it would remove
+    # the pinned executable, the staged DLLs and every retained build output,
+    # so the two are never combined.
+    if ($Clean) {
+        Write-Error ("build.ps1: -Clean and -DiagOut are not combined. -Clean removes an " +
+                     "output tree outright; delete '$resolved' deliberately if that is " +
+                     "what is wanted.")
+    }
+    $OUT = $resolved
+}
 
 # ---------------------------------------------------------------- helpers --
 
@@ -654,7 +713,7 @@ try {
                           (Join-Path $OUT 'data\asset-overrides')) 'build_repo_assets.py'
 
     Write-Host "  stubs: $($unstubbed.Count)"
-    Write-Host "  built: build\win32\sightline.exe"
+    Write-Host "  built: $exe"
 }
 finally {
     $env:PATH   = $savedPath

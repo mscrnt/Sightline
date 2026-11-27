@@ -43660,11 +43660,12 @@ From playtest run 20261005-120919-lvl36, marks 8 and 10 - 13. Not fixed:
   reading stays inside the game heap (the first 0x46c00 bytes above
   0x01000000 - the obseg image, no display-list operand measured there)
   would still be misread, and the non-Windows build keeps the old order.
-- **The stage's world-asset pointers are latched for the process.**
-  `sky_frame_begin` looks `g_bg_asset` and `g_sky_asset` up once and never
-  clears them, so a later stage in the same process would draw the first
-  stage's background. Mode switching is not affected (assets stay
-  resident and the gate is re-asked every frame).
+- **The stage's world-asset pointers are latched for the process (CLOSED
+  2026-11-01; it was not hypothetical - see B-XSTAGE).** `sky_frame_begin`
+  looked `g_bg_asset` and `g_sky_asset` up once and never cleared them, so
+  every stage after the first in a process drew the first stage's background
+  and dome. The selection is now keyed on the item path. Mode switching was
+  never affected (assets stay resident and the gate is re-asked every frame).
 
 ## B-FRG2 Frigate under XBLA: what round frg3 left (OPEN 2026-10-06, #83)
 
@@ -44478,14 +44479,272 @@ measurement tooling.
   - *The vertex loop* is now the largest part of the pass. Its item box,
     nearest vertex and fog / depth statistics feed diagnostics only; an
     experiment that skipped them measured 0.4-0.8 ms of the pass in single
-    runs (Frigate 4.98 -> 4.52, Statue's start 3.65 -> 2.84 ms). Computing
-    them only for a census is the next exact step.
+    runs (Frigate 4.98 -> 4.52, Statue's start 3.65 -> 2.84 ms). Repaired
+    in v0.4 (the next entry); interleaved repeats measure less than that.
   - *The trace* (above) is still the first stage in Statue's dense views.
   - *The extra-frame budget* still charges an extra frame 1.15 times the
     regular walk (perf1's note stands); with the re-walk now cheaper than
     the walk at every Statue pose, it is what holds rooms 2-24 near 60.
     (Round perf3, below, measured this and found it does not: the rooms
     have no room for an extra frame under any charge.)
+- **Repaired (v0.4): the vertex loop's diagnostic statistics.** The item box
+  and the nearest vertex are read only by the SL_BG_WORLDBOX line, the fog /
+  depth summary only by the SL_BG_FOGTRACE line and the census report
+  (SL_DL_CENSUS); nothing drawn reads any of them (a search of src/). The
+  pass computes them only while one of those readers is on; every value a
+  draw reads is computed as before.
+  - *Same pixels.* Against the build before, at SL_FPS=20 with extra frames
+    at a fixed alpha, every regular and every matched extra present hashes
+    identically: the seven timing poses (still, turning, walking), Bunker 1's
+    shaft and hazard-strip wall, four Bunker 2 marks, three Frigate decal and
+    waterline marks, Surface's start, the ten frozen levels' starts, Statue
+    room 18 and Statue's start under ORIGINAL and COMMUNITY HD, SL_BG_VBO=0,
+    and with the three diagnostics on (15335 extra-frame keys matched; 7 and
+    12 present in one build only, a timing matter). Per-tick traces (Facility,
+    Statue room 2) are identical.
+  - *Same reports.* With the diagnostics on and no extra frames (SL_FPS=0)
+    every fogdepth, bgplaced, bglevelbox and census fog line is identical.
+    With extra frames the per-walk lines sample walks whose number depends on
+    timing, in the unchanged build against itself too; the lines of a frame
+    both runs sampled agree.
+  - *What it buys (two interleaved repeats, order alternated, background
+    pass of the regular walk, mean ms, before -> after, paced / unpaced).*
+    Statue room 2 1.62 -> 1.41 / 1.55 -> 1.42, room 18 1.63 -> 1.44 / 1.66 ->
+    1.38, room 24 1.62 -> 1.44 / 1.67 -> 1.42, Valentin's container 1.63 ->
+    1.46 / 1.61 -> 1.38, Statue's start 1.60 -> 1.44 / 1.49 -> 1.25, Frigate's
+    deck 2.52 -> 2.15 / 2.48 -> 2.14, the Dam's start 4.22 -> 3.82 / 4.09 ->
+    3.65 (the Dam's repeat spread is 0.2-0.4 ms, so its figure is marginal).
+    The whole regular walk is resolved shorter, paced and unpaced, at
+    Statue's start (-0.14 / -0.32 ms; presented frames a second +13.5 / +52)
+    and on Frigate's deck (-0.37 / -0.36 ms; +8.3 / +20.1). Paced, the dense
+    Statue rooms and the Dam change inside their repeat spreads; unpaced,
+    room 18 (-0.84 ms) and Valentin's container (-0.37 ms) fall outside them,
+    but room 18 by more than its pass saved (0.28 ms), so two repeats do not
+    attribute those to this change. In the dense rooms the benefit is the
+    pass's modest share (the trace dominates them). With the census on, Frigate's pass is still 0.20 ms shorter (the
+    box and nearest vertex are not computed for it). Two repeats on one
+    machine (1365x768 window, UNLIMITED, vsync off); no figure here predicts
+    another machine.
+- **Repaired (v0.4): the open-hole trace on two workers.** The trace is still
+  the first stage in Statue's dense views, and its inputs are all fixed when
+  `nf_frame` returns: the eye of either projection branch, the scale, and the
+  fill grid (rebuilt only by `sl_wa_fill_set`, from `nf_begin`). The hole
+  points come from `nf_registered`'s cache.
+  - *The mechanism* (`src/platform/sl_worker_pool.{c,h}`, the seam in
+    `sl_gfx_dl.c`): `nf_frame` predicts the walk's traces from the previous
+    walk's (projection branch, hole point) list, skips those the memo answers,
+    and publishes the rest as exact (eye, hole point, scale) keys to at most two
+    workers running the unchanged `sl_wa_fill_open`. At a memo miss the render
+    thread takes the answer for its exact key; with none, it traces as before.
+    The memo, the registration cache, every counter, every decision and every GL
+    call stay on the render thread, in the original order. No answer crosses
+    from one walk's eye to another.
+  - *The contract* (the pool's header): the grid is immutable from publication
+    to the drain that `nf_begin` and frame start perform. Workers load the
+    publisher's x87 control word and MXCSR (the library `sqrt` runs on the x87
+    under `-fno-builtin`; a worker on another environment gives other answers).
+    A take whose environment changed is answered inline. The claim queue is one
+    word changed only by compare-exchange, and its cursor never passes the batch
+    size. A stop frees the pool only when every thread is proven gone; otherwise
+    it keeps the threads and refuses a new pool until a reap proves them gone.
+  - *The default and its controls:* SL_FILL_WORKERS unset or `auto` gives two
+    workers when the process may run on at least four physical cores (logical
+    processors of one core count once), and none otherwise; an unknown topology
+    or another processor group also gives none. `0` disables (the inline trace),
+    `1` or `2` force a count, and anything else gives none, said once. The
+    workers start at the first frame that draws a replacement, so ORIGINAL,
+    COMMUNITY HD and a missing bundle start none. A failed or partial start runs
+    on what started, or inline. A build that is not Windows/x86 has no workers.
+    Counters print only in the census (`#88 fill queries`, SL_DL_CENSUS).
+  - *Same pixels, same queries.* Against the build before, at SL_FPS=20 with
+    extras at a fixed alpha, regular presents and matched extras hash
+    identically at the seven timing poses (still, turning, walking) for the
+    default, disabled, one- and two-worker paths. The same holds for ORIGINAL
+    and COMMUNITY HD, SL_BG_VBO=0, the ten sensitive poses and a refused worker
+    start. With no extra frames, a scratch digest of every trace computed at a
+    memo miss (inputs and answer) is identical to the build before in every
+    mode at every pose. Per-tick traces (Facility, Statue room 2) are
+    identical. Under process masks the default chose two workers at 0x55 and
+    0xff, and none at 0x0f (four logical processors on two cores), 0x03 and
+    0x01.
+  - *Tested in the gate* (`worldassettest.ps1`): physical against logical
+    cores and the SL_FILL_WORKERS rule; random batches (sizes 0 to 4096,
+    stealing, cancellation, floating-point environments, no write after a
+    drain, stop and restart); a partial start; a worker delayed across a drain;
+    the shutdown witness (a worker held past the stop's deadline); four fault
+    mutants, each required to fail; the no-worker build; and the workers over
+    fill grids rebuilt and emptied under them, adding the installed Statue,
+    Frigate and Dam backgrounds when SL_WORLDASSET_ROOT names them.
+  - *What it buys* (two interleaved repeats, order alternated, regular walk
+    mean ms, build before -> default; paced / unpaced). Statue room 2: 9.24 ->
+    5.03 / 8.84 -> 4.49. Room 18: 13.23 -> 6.13 / 12.98 -> 6.04. Room 24: 10.99
+    -> 5.53 / 10.92 -> 5.10. Valentin's container: 8.41 -> 4.63 / 8.12 -> 4.24.
+    - Unpaced presented frames a second: 108 -> 207, 74 -> 153, 88 -> 181 and
+      117 -> 215; unpaced 1% lows: 79 -> 150, 55 -> 120, 66 -> 129 and
+      85 -> 155.
+    - Turning and walking in rooms 2 and 18: -3.6 to -4.9 ms.
+    - In a process limited to one logical processor on each of four physical
+      cores (0x55, all on the 96 MB L3), paced: -3.55, -6.18, -5.12 and -3.70 ms.
+    - Statue's start, Frigate's deck and the Dam's start: within 0.4 ms, since
+      they publish few or no traces.
+    - The disabled path stays within run-to-run variation of the build before.
+  - *Limits.*
+    - It parallelises the work; it does not reduce it.
+    - Measured on a 16-core machine (four-core runs are an affinity budget on
+      it, not an older four-core CPU).
+    - A camera cut or teleport traces inline for one walk (no prediction yet).
+    - The render thread spin-waits on a key a worker is computing.
+    - An in-session stage or item switch has no harness here; the gate's grid
+      test covers the rebuild.
+    - A rare pacing tail on Statue's start under the four-core mask, seen once
+      with two workers, also appeared without them, cause unexplained.
+- **Repaired (v0.4): the background vertex loop on two threads.** The pass's
+  per-vertex loop (projection, far classification, the panorama shell, the
+  pushed two-sided positions) reads only the walk's fixed inputs and writes
+  each vertex's own slots, so the item splits into two contiguous ranges: the
+  render thread computes the lower half, one helper thread
+  (`src/platform/sl_bg_worker.{c,h}`) the upper half, and the render thread
+  joins before anything reads an output, grows an array or issues GL.
+  - *The mechanism* (`bg_vertex_range` and `bgv_run` in `sl_gfx_dl.c`): the
+    loop text is unchanged, moved into one kernel that both threads run over
+    their range with private reductions. The reductions merge in range order
+    with the loop's own rules (counts add; the largest w and each panorama
+    bin keep the first strictly larger value from the same 0.0f start), so
+    every array byte and every reduced value equals the single-threaded
+    loop's. Every input and output the helper touches is file-static.
+  - *The contract* (the helper's header): a job's completion is proven by a
+    generation the helper publishes after the job, re-checked after every
+    wake of a bounded wait on {done signal, thread}; a lost signal is still
+    proven by the generation, and a helper that ends without completing is
+    detected. Per job the helper loads the posting thread's x87 control word
+    and MXCSR and reads them back; when they did not take it runs nothing and
+    the render thread computes that range. Stop has one monotonic deadline
+    covering drain and exit; a stop that cannot prove the thread gone keeps
+    its handles and every referenced job, and refuses a new post or start.
+  - *Failure policy.* A post or join that cannot prove the helper's state is
+    fatal (`sl_fatalf`, exit 2): continuing would draw from, or later
+    release, memory a thread that never completed may still be writing. No
+    output of that walk is consumed and nothing is freed.
+  - *The default and its controls:* SL_BG_VERTEX_WORKER unset, `auto` or `1`
+    splits when the process may run on at least four physical cores (the
+    query workers' rule); `0` disables, and anything else disables, said
+    once. The render thread runs the loop alone with fewer than four allowed
+    physical cores or an unknown count, for an item under 2048 vertices,
+    under the level's fog band (fog_coord updates renderer counters), while
+    SL_BG_WORLDBOX, SL_BG_FOGTRACE or SL_DL_CENSUS reads the loop's
+    statistics, and when the helper could not start. A build that is not
+    Windows/x86 has no helper. With the two query workers, at most three
+    helper threads run beside the render thread. The census line
+    `#88 background vertices` names the state and why each walk ran alone.
+  - *Same pixels, same queries.* Against the build before (eafe8686), with
+    a scratch checker comparing every split walk byte for byte against the
+    original loop and against the serial kernel: regular presents and matched
+    extras hash identically at the seven timing poses, under ORIGINAL and
+    COMMUNITY HD, with SL_BG_VBO=0, at the ten sensitive poses, with the
+    helper disabled, under a one-processor mask, an unknown topology, a
+    refused start and a forced floating-point mismatch (200 upper ranges
+    recomputed on the render thread), and across an in-session Statue ->
+    Dam -> Statue asset swap. Fill-query digests are identical at the seven
+    poses; the census's deterministic lines are identical. Per-tick traces
+    (Facility, Statue room 2) are identical. A forced level-fog fixture runs
+    the loop alone through the real fog_coord and agrees with the original.
+  - *Tested in the gate* (`bgworkertest.ps1`): start failure, wait failure,
+    lost go and done signals, a helper that exits without completing, a stop
+    past its deadline (handles retained, no restart) and a stop draining a
+    job; the non-Windows stub; four fault mutants, each required to fail.
+  - *What it buys* (three interleaved repeats, order rotated, unpaced,
+    regular walk mean ms over pumped frames 600-3600, helper disabled ->
+    default, both with the two query workers; whole machine / one process
+    on four physical cores with SMT, mask 0xff).
+    - The Dam's start: 6.48 -> 5.48 / 5.53 -> 4.66; the background pass 3.65
+      -> 2.76 / 3.49 -> 2.62; presented frames a second 139.5 -> 162.5 /
+      160.7 -> 187.7. Every repeat is 0.72 to 1.35 ms shorter.
+    - Frigate's deck: 3.44 -> 3.15 / 2.87 -> 2.69; p99 5.47 -> 4.49 / 4.20
+      -> 3.33; presented frames a second 254.6 -> 275.6 / 297.1 -> 311.9;
+      1% lows 155 -> 185 / 197 -> 228.
+    - Statue room 18: the pass 1.85 -> 1.38 / 1.88 -> 1.48, but the walk is
+      unchanged (5.62 -> 5.62 / 5.64 -> 5.59): the time saved returns as
+      waiting on the fill queries (0.77 -> 1.25 / 0.89 -> 1.30 ms), which
+      remain the dense rooms' critical path.
+    - The disabled path against the build before (the same three repeats):
+      mean walk differences from -0.17 to +0.02 ms across the poses and
+      budgets. At Frigate's deck under both budgets and the Dam's start
+      under the mask, all three paired differences are negative (the Dam's
+      -0.14 to -0.20 ms), so a small code-generation, layout or session
+      effect is possible there; three repeats do not resolve its size or
+      cause. The other poses' differences change sign between repeats.
+  - *Limits.*
+    - It pays only where the vertex loop, not the fill-query trace, is the
+      critical path; in the dense Statue rooms it moves time from the pass
+      to the query wait.
+    - The split is n/2 by vertex count; it does not balance the ranges'
+      costs.
+    - Measured on a 16-core machine (four-core runs are an affinity budget on
+      it, not an older four-core CPU).
+    - Level fog, the diagnostics and small items run on the render thread.
+- **Repaired (v0.4): two debug settings read once.** A census of every
+  environment lookup in the game's own code (a scratch build that counts each
+  call by site and name) found 447 lookups per regular walk in Statue room 18
+  (259 walking). The census build timed them at about 1.1 ms of a 6 ms walk
+  (about 2.4 us a call, each a scan of the whole environment) - an
+  instrumented estimate that includes the census's own time reads; the saving
+  below comes from the separate paired A/B, not from it. 446 of them were two
+  settings that are never set in normal play: the SL_WORLD_ASSETS override in
+  `sl_wa_active` (398 a walk; it is asked per draw item and per draw) and
+  SL_SCISSOR_DBG in `sciss_gl_apply` (48 a walk; per scissor change).
+  - *The change.* `sl_wa_active` decodes the launch-time override once -
+    whether it is set and non-empty, and the word it names (`wa_set_word`'s
+    result, a string literal) - and keeps both. The presentation, its derived
+    set, the mixed-state notice and the generation are still evaluated on every
+    ask, so F5 and the options menu switch exactly as before; an empty value
+    still means no override and an unrecognised word still pins the empty set.
+    `sciss_gl_apply` keeps whether SL_SCISSOR_DBG was present at its first
+    call (getenv != NULL; the 40-line diagnostic cap and every GL call are
+    unchanged). Neither keeps getenv's pointer, which a write to any other
+    variable could invalidate.
+  - *Why this is exact.* Nothing in the tree writes either variable except the
+    SL_WA_SELFTEST fixture; the game's only environment writes are the startup
+    paths in `sl_run_open`. Both are first asked on the render thread at the
+    first frame, before any helper thread exists, and no other thread asks
+    them (counted). The world-asset self-test changes SL_WORLD_ASSETS
+    mid-process, so it rereads through `wa_override_reread` after each change
+    and now also checks the upper-case word, an unrecognised word under XBLA,
+    the mixed-state notices with and without an override, the presentation
+    staying live under an override, and that a change is not seen until the
+    reread.
+  - *Same pixels, same game.* Against the build before (with identical
+    scratch measurement patches), regular presents and fixed-alpha extras
+    hash identically at Statue room 18, the Dam's start and Frigate's deck
+    under XBLA and at room 18 under ORIGINAL and COMMUNITY HD (450 of 450
+    regular presents each, and every frame with extras in both builds). The
+    per-tick traces of Facility and Statue room 2 are byte-identical. A run
+    that switches ORIGINAL -> COMMUNITY HD -> XBLA -> ORIGINAL -> COMMUNITY HD
+    -> XBLA with the pad's presentation button presents identical frames and
+    prints the same switch and load lines. With SL_WORLD_ASSETS=xbla and
+    SL_SCISSOR_DBG=1 at launch, the mixed-state notice and the 40 scissor
+    diagnostic lines are identical.
+  - *What it buys* (three interleaved repeats, order rotated, unpaced,
+    regular walk mean ms over pumped frames 600-3600, build before -> after).
+    - Statue room 18: 6.09 -> 5.02 (every repeat 1.03 to 1.11 ms shorter);
+      presented frames a second 151 -> 182, 1% lows 119 -> 145. Walking and
+      turning there: 4.19 -> 3.44.
+    - Room 2: 4.65 -> 3.47 (walking 4.22 -> 3.08); room 24: 5.20 -> 4.27;
+      Valentin's container: 4.08 -> 3.47; Statue's start: 2.19 -> 1.91;
+      Frigate's deck: 3.67 -> 3.42. Each is shorter in every repeat.
+    - The Dam's start: 6.05 -> 5.94, changing sign between repeats (inside
+      its 0.57 ms spread); its p95 and p99 are 0.55-0.59 ms lower.
+    - In the Statue rooms the fill-query consumer time grows by 0.06-0.09 ms.
+      The render thread reaching the queries sooner, and so waiting longer, is
+      a plausible reading this campaign did not isolate.
+  - *Limits.*
+    - A launch-time value: setting SL_WORLD_ASSETS or SL_SCISSOR_DBG after the
+      first frame has no effect (nothing in the game does).
+    - In the measured census (Statue room 18, still and walking) the other
+      lookups were startup, once-per-frame or first-use reads - about one per
+      walk and 25 between walks. Other rooms and paths were not counted and
+      may hold further repeated lookups.
+    - Measured on one machine and one window path; the lookup cost scales with
+      the size of the environment, so the saving differs elsewhere.
 - **Where the presentation scheduler leaves time unused (round perf3,
   measured).** Every admission decision of the extra-frame scheduler logged
   (a scratch build: the time left to the VI, the charge, each extra frame's
@@ -44539,6 +44798,200 @@ measurement tooling.
   the extra frame's cost variance, which looks like the GPU's or the
   driver's queue (the walk's GPU span 10-14 ms on frames without an extra
   against a 6 ms CPU walk) - not isolated.
+- **The first GPU vertex transform (EXPERIMENTAL, DEFAULT OFF).**
+  `SL_BG_GPU_XFORM=1` selects a GLSL 4.00 compatibility vertex program for
+  eligible background meshes. It reads model positions from the existing
+  static vertex buffer, applies the room/clip transform and far clamp, and
+  forwards the existing vertex colours, texture matrices and CPU fog values.
+  Unset or `0` retains the current renderer. Missing capabilities or shader
+  setup failure falls back to that renderer; program state is invalidated at
+  GL context creation and teardown.
+  Eligibility follows rendering state, with no stage allowlist: late draws,
+  two-range far passes, panorama and displaced-vertex walks remain on the CPU
+  path; four-image materials, pulled decals and pushed coplanar meshes also
+  retain their existing draws. An eligible walk can contain both GPU and CPU
+  mesh draws. Submitted geometry is counted separately from eligibility.
+  *Validation.* The Windows i686 build compiles and links. At one Facility
+  pose on the tested driver, a scratch-only diagnostic produced one extra
+  presentation per ready frame at interpolation 0.5. OFF and ON matched on
+  all 450 regular-frame keys, all 447 extra-frame keys and three raw PPM
+  pairs. ON submitted 116 walks, 4,292 draw calls and 3,169,932 indices;
+  3,712 mesh draws in those walks used the CPU positions. Sampled foreground
+  and visible-window records exist for both arms; the supplementary desktop
+  PNG is missing for OFF, while its raw game images are present. Earlier
+  normal-pacing checks matched 1,350 regular-frame hashes and nine raw image
+  pairs across Facility, Dam and Statue; their variable-alpha extra frames
+  do not establish equal-input parity. Dam and Statue exercised fallback.
+  *Limits.* This is scoped Facility render equality, not full-campaign,
+  normal-pacing, other-driver or performance validation. The CPU vertex loop,
+  clipping/fog/panorama work and clip uploads still run in full, so eligible
+  transforms are duplicated; no speedup is claimed. The deterministic test
+  shim is scratch-only and is not part of the product change. Broader GPU
+  coverage and removal of duplicated CPU work remain separate increments.
+- **The far depth ranges on the GPU path (SOURCE, NOT YET VALIDATED).** The
+  two-range far walk (#78) is no longer refused at the walk predicate. The
+  program carries the depth as a uniform, because a shader computing its own
+  clip position cannot read the rewrites the pass makes to the clip array
+  between the two ranges: `SL_BGGPU_DEPTH_SINGLE` is the one-range frame's far
+  clamp as before, `FAR0` is the first range's `k1 * w - k2` in the blanket
+  rewrite's own order, and `FAR1` is the unclamped z the pass keeps per vertex
+  for the game's range. The pair is uploaded per MESH, not per range, so a
+  blended mesh takes the blend overlap's coefficients exactly where
+  `bg_far_rezero` would have rewritten its vertices; the depth uniform is set
+  on every eligible mesh draw, since one binding is shared by a run of meshes
+  and by both ranges. Every CPU array write, reduction, upload and the depth
+  clear between the ranges still run unchanged, because the meshes the walk
+  keeps on the clip positions draw from them. Still refused: late draws,
+  panorama-fade walks, displaced-vertex walks, walks without buffer objects,
+  and - new - the panorama shell on a two-range frame, which is drawn once and
+  whole under `GL_DEPTH_CLAMP` without the blended pair and is not one of the
+  ordinary far cases. Four-image materials, pulled decals and pushed coplanar
+  meshes retain their existing refusals.
+  *Census.* The submitted draw calls and indices are split across the three
+  depth cases at the same non-empty submission boundary as the existing
+  submitted counts. Zeros in the two far columns mean no far range was drawn
+  through the program, whatever the admitted columns say.
+  *Status.* Source only. Not compiled, not run, and no image, depth or
+  performance claim is made for it. The `precise` far-range expression has no
+  measurement of its own: the GPU/CPU component campaign behind the existing
+  program covered the four clip components before any depth selection, which
+  is what `FAR1` draws and what `FAR0`'s multiplicand is, but not the far
+  expressions themselves.
+- **The CPU vertex loop reduced where its outputs are not read (SOURCE,
+  default off, NOT COMPILED IN THIS TREE).** `SL_BG_GPU_BYPASS=1`, and only
+  together with `SL_BG_GPU_XFORM=1`, gives a background walk passing nine
+  frame-level terms a REDUCED vertex loop: for every vertex no mesh of that
+  walk can read the clip position of, the loop evaluates the two clip
+  components the near class reads (`sl_wa_near_class` reads `c[2]` and `c[3]`
+  and nothing else) and writes one byte of class, instead of the whole clip
+  position, the raw depth, the fog coordinate and the pushed position — 2 of
+  4 matrix rows and 1 of 41 bytes stored. Every other vertex, and every walk
+  failing a term, takes the loop as it ships. It is a REDUCTION and not a
+  skip because the near-cut fill consumes a per-vertex classification in the
+  same frame and no readback is permitted. The full record, with every term
+  and what it discharges, is `docs/decisions/gpu-background-loop-bypass.md`.
+  *The two components are the same value, bitwise.* They are the shipping
+  loop's own `j == 2` and `j == 3` expressions in its own left-to-right
+  order, and `src/gfx` is compiled `-msse2 -mfpmath=sse` with no `-march`
+  naming an FMA-capable target and none of `-ffast-math`,
+  `-funsafe-math-optimizations`, `-ffp-contract=fast` or `-flto`. That flag
+  set is a PRECONDITION of this path: a build adding any of them invalidates
+  the identity rather than merely changing the speed.
+  *Conservatism and fallback.* Marking a vertex that would not have been read
+  costs the saving, never the picture; the converse is counted
+  (`g_bgb_broken`), said once on stderr, and must be zero in any gate. A
+  refusal before the loop runs the full loop. A refusal by the GL admission
+  AFTER the reduced loop has run re-runs the loop over the whole item, so it
+  costs that walk's time and not its picture; repairs are counted. Per-mesh
+  unsupported geometry or state inside an eligible walk draws from the clip
+  array as before, its vertices having been computed whole.
+  *A refusal is observed, not inferred from silence.* The reduced-walk report
+  is guarded on having reduced something, and the per-item analysis line is
+  printed from the LAST term of the predicate, so a walk refused by any
+  earlier term reaches neither. A run in which every walk is refused — which
+  is what a fogged stage produces by design, and the case a fallback has to be
+  judged on — therefore printed nothing, and a missing line is
+  indistinguishable from the switch being unset or from a binary built without
+  this path. A second cumulative line states that case positively: how many
+  walks the predicate examined, that none was reduced, the per-term tally, and
+  which term refused the most. Its guard is the exact complement of the
+  reduced-walk line's, so the two are mutually exclusive by construction; it
+  is bounded in the unit it reports (the first refusal, then each new multiple
+  of 300 examined walks, the reduced report's own cadence) and prints
+  fixed-width counters only, so its volume does not grow with the scene.
+  Default off, it is silent: the examined counter is only ever incremented
+  inside the switch's own guard.
+  *Both reports are bounded by PROGRESS, not by a counter's value.* Each
+  prints at most once per distinct value of the counter it reports. The
+  distinction is load-bearing because the two counters advance differently: a
+  reduced-walk count does not move on a refused walk, so a cadence testing
+  only `count % 300 == 0` reprints on every frame while the count is parked -
+  which on a mixed item is most of them, and the duplicates are not even
+  identical, since the parked line's refusal tally keeps rising.
+  *Default off.* Unset, the walk's `need` pointer is `NULL` and the shipping
+  loop runs. The residual cost is one cached `getenv`, one loop-invariant
+  `need != NULL` test per vertex, one pointer store per walk and the guard
+  tests; the change deletes no existing line.
+  *Observed once, on a scratch build of this source, and qualified.* One
+  foreground ABBA quartet at one Frigate pose, 1365x768, vsync and pacing
+  off, census off: mean host present interval 2.7757 and 2.7776 ms with both
+  switches `=1` against 3.6834 and 3.4436 ms with both absent, three early
+  captures byte-identical across all four runs, and the path's own counters
+  reporting 82.4591% of accounted vertices reduced with zero repairs and zero
+  unsound mesh draws. Not shipping FPS, not GPU execution time, and NOT
+  attributable to this switch alone — both runs set both switches, and the
+  reduced loop is refused outright without the transform. The two baseline
+  runs differ by 0.2398 ms against a 0.2500 ms inconclusive cutoff fixed
+  before the runs, so the benefit rests on a baseline that barely qualified
+  and whose drift has an untested direction. Three frames at one pose on one
+  level is not a parity claim.
+  *Status.* Source only in this tree. Not compiled, not run and not measured
+  here; no adoption, default enablement or shipping-performance claim
+  follows. The scratch falsification mode (a second switch value that stored
+  a clip position behind the eye) is deliberately NOT carried into product:
+  the switch is a strict `1` test, the accepted measurement did not use that
+  mode, and a mode whose purpose is a deliberately wrong picture does not
+  belong in a shipped binary.
+- **Integrated (v0.4): the skydome pass's indexed submission and its float
+  colour carrier (OPT-IN, DEFAULT OFF).** Four validated source versions are
+  in the tree: `src/gfx/sl_gfx_skybatch.c` and `src/gfx/sl_gfx_skybatch.h`
+  (new, 77781 and 14869 bytes), 83 added caller lines in `src/gfx/sl_gfx_dl.c`
+  and 13 added lifecycle lines in `src/gfx/sl_gfx_sdl.c`. No line was removed
+  and no default, threshold, flag or arithmetic changed.
+  *The switches.* With both absent the skydome pass draws as it did before:
+  the batch path touches no GL, allocates nothing, queries nothing and uploads
+  nothing. The path is opt-in as `SL_SKY_BATCH=1` together with
+  `SL_SKY_BATCH_FLOAT_COLOR=prod`. The float switch alone enables nothing - it
+  is read only on a path that has already found `SL_SKY_BATCH` armed, and any
+  value but the exact strings `div` and `prod` keeps the byte upload call for
+  call. The experimental paths (`div`, and byte mode without a float mode)
+  remain as they were.
+  *The integrated source and its build.* The integrated files pass 1008 native
+  CPU checks with no failures. The isolated Windows build compiles 275 of 275
+  translation units, creates the three objects the seed did not contain (the
+  background GPU path, the profiler and the sky batch) and prunes three orphan
+  objects; its executable is 10,952,138 bytes,
+  `b370698665a198f5658cfd655fc9fd3ae8d6f25df367f5e20a2a2091257a3b16`. Against
+  the isolated r481 build's executable of the same size, exactly five bytes
+  differ, all of them inside the COFF TimeDateStamp and the optional header's
+  CheckSum: every section is identical - and so every code, data, resource,
+  import, IAT and relocation byte - and both staged DLLs are byte-identical.
+  The whole files are therefore NOT identical. The r481 runtime evidence below
+  carries to this executable under that recorded metadata-equivalence
+  qualification - the same program payload - and not through any measurement
+  of the integrated build, which has never been launched.
+  *What one Frigate series measured (DESCRIPTIVE).* 16 starts - 8 matched
+  warmups, unscored, and 8 measured runs of 3000 presentations each - in two
+  opposite-order blocks (ABBA and BAAB), A being both switches absent and B
+  the pair above. Both blocks qualified GAIN under the unchanged per-block
+  strict mean and tail rule: block 1's measured means 2.9054, 2.7158, 2.7148
+  and 2.8217 ms against a 2.7381 ms bar, its A arms 0.0837 ms apart, its
+  largest candidate p99 4.5610 against a 4.8860 ms bar; block 2's 2.8746,
+  2.6274, 2.6623 and 2.7956 ms against 2.7165 ms, its A arms 0.0791 ms apart,
+  p99 4.2010 against 4.6632 ms. All 48 captures - three sampled frames a run,
+  at the same capture identities - are byte-identical to the lane's one saved
+  ORIGINAL oracle. Over the 8 measured means, 2.8493 ms against 2.6801 ms:
+  5.94% lower frame time, about 350.96 against 373.12 presented frames a
+  second (+6.31%), and per block 5.18% and 6.71% lower. These are descriptive
+  figures from one pose on one level on one machine - not a significance test,
+  not pooled frames, and not a whole-game performance claim.
+  *The earlier qualified screens stand.* On the same binary the pair screened
+  NO_GAIN on Frigate: its two baseline runs were 0.430 ms apart, which put the
+  gain bar 0.430 ms below the lower baseline mean (2.4038 against 2.8340 ms)
+  and no candidate mean cleared it. Cradle screened NON_REGRESSION. In the
+  inert lanes Statue and Facility intact screened NON_REGRESSION, and
+  Facility's gas lane carries no timing verdict at all (DIAGNOSTIC): it takes
+  67 captures inside the timed window, so its means and p99 are evidence only.
+  Those runs' 292 captures include the gas progression's 67 an arm, and every
+  lane's images were exact at their sampled frames. Exact image coverage
+  throughout is sampled frames, never every frame of a run.
+  *Limits.* Why the baseline spread fell from 0.430 ms in the earlier screen
+  to 0.08 ms in the repeat series is not established; matched warmups preceded
+  every measured run of the series, but warmup and settle causality is
+  untested. Every runtime figure above was measured on the isolated r481
+  build, never on the integrated one: the carry rests on the byte comparison
+  above, not on a run of it. Nothing is adopted, no default is changed and no
+  performance promise is widened; both switches stay default off.
 
 ## B-ARC1 Archives under XBLA: what rounds arc1 and arc2 left (OPEN 2026-10-08, #89)
 
@@ -45058,3 +45511,351 @@ fight and the ending are not witnessed by it.
   165 units from the nearest trap pad, 164.9 at the closest step between two
   stones, against the trap's 90); it was not walked across room 19 in the
   game.
+
+## B-XSTAGE The world-asset selection latched on the first stage of a process (CLOSED 2026-11-01)
+
+- **Found:**  2026-11-01, on a v0.4.0 report that Facility under XBLA drew
+  Dam's terrain and water around Facility's own rooms, with Facility's
+  collision, audio and objectives live.
+- **Area:**   renderer, world-asset provider (#68)
+- **Where:**  `src/gfx/sl_gfx_dl.c`, `sky_frame_begin`
+- **Blocks:** nothing now; it blocked the release while open.
+
+`sky_frame_begin` resolved `g_bg_asset` and `g_sky_asset` only while the
+pointer was NULL, so the pair was selected on the FIRST stage in a process
+that had an item path and never again. Every later stage drew that stage's
+background and dome. The item path itself was always right, and so was
+everything keyed off the asset (the texture provider, the stage fog row, and
+every derived table in this file - each of those compares the asset pointer
+and rebuilds), which is why the picture was the wrong stage's geometry rather
+than a corrupted one.
+
+MEASURED, one process, XBLA, `SL_DL_CENSUS=1`, `SL_STAGE_SEQ=600:34` after a
+Dam boot: at the stage change the texture provider moved to stage 34 and the
+stage fog to environment row 34 on the same frame, while
+`#68 background resident` stayed at Dam's 150993 vertices for the rest of the
+run and `background/facility` was never opened. After the change the same run
+prints `stage item dam -> facility` and 23404 vertices.
+
+WHY THE EXISTING CHECKS MISSED IT. The level coverage runs and `test.ps1`
+reach one stage per process by direct boot, and a stage reached first was
+selected correctly in the runs measured. A player's session can reach a
+stage after another one: the campaign's own Dam-to-Facility flow does, and
+the title's attract demo plays a stage (measured once: a front end left alone
+entered stage 33 at frame 6582 and loaded `background/dam`). Whether a
+particular menu start inherits a stage depends on what that process loaded
+first; the exact route of the reported fresh launch was not measured. The
+defect is present in v0.3.0.
+
+The selection is now keyed on the item path it was made for
+(`g_bg_sel_item`, `g_sky_sel_item`), which also follows an item that changes
+WITHIN a stage (a borrowed dome tracks the game's environment row, D-031) and
+makes an absent asset cost one lookup instead of one per frame (measured on
+Facility, whose source holds no dome: the provider's lookup counter fell from
+~1320-2460 per 60 frames to 240).
+
+The measurement used a TEMPORARY diagnostic seam, `SL_STAGE_SEQ=<frame>:<stage>`
+(a small native helper that asked for the stage through the game's own
+`bossSetLoadedStage`, plus one hook in the platform frame pump). It reached a
+second stage in one process without driving the front end, whose
+pointer-driven menus were measured unreliable to drive by synthetic pad. It is
+NOT part of the delivered build: the helper and its hook were removed after
+the measurement, so the change ships as the renderer selection key alone. Its
+input parsing was not hardened (unchecked numeric overflow, partial input
+accepted, no stage validation), which is a reason not to ship it as it was. A
+multi-stage-in-one-process check remains a gap in the automated checks.
+
+## B-OPTROW OPTIMIZED RENDERING: the retained performance work behind one player row (OPEN 2026-11-01)
+
+- **Area:**   settings policy, renderer (skydome pass, background pass)
+- **Where:**  `src/platform/sl_perf.[ch]`, `src/platform/sl_settings.[ch]`,
+  `src/gfx/sl_gfx_skybatch.[ch]`, `src/gfx/sl_gfx_bggpu.[ch]`,
+  `src/gfx/sl_gfx_dl.c`, `src/native/sl_front_options.c`,
+  `src/game/options.[ch]`
+- **Blocks:** treating the row's ON position as qualified. The row and every
+  CPU check are in place; the evidence a live run owes is listed below.
+
+One persisted row, `optimized_rendering`, default 1, shown and edited by the
+front end's DISPLAY tab and the watch's GRAPHICS child. `sl_perf.h` owns the
+meaning and resolves it per subsystem, the way `sl_presentation.h` resolves the
+PRESENTATION row - nothing else holds a copy.
+
+WHAT THE ROW REACHES. The skydome pass's indexed submission with the PROD
+float-colour carrier; the background pass's GPU clip computation - the
+auxiliary-context transform-feedback prepass, not the vertex transform (see the
+next paragraph); and the per-vertex CPU loop reduction that depends on it. OFF
+is the original immediate / CPU path for those three.
+
+WHICH GPU CLIP COMPUTATION, AND WHY THE ROW MOVED TO IT (2026-11-14). The row
+admits a background walk through `sl_perf_bg_xform`, and that walk now takes
+the AUXILIARY-CONTEXT transform-feedback clip prepass on arm `GPU_SOURCE` with
+`FENCE` (`src/gfx/sl_gfx_bgtf.c`, `sl_bgtf_walk_admit`) rather than the vertex
+transform. The reason is an image, measured rather than argued: the vertex
+transform's frames and the MAIN-CONTEXT prepass's each read one blue value
+apart from the original renderer's at (71,113), 142 against 143, while the
+auxiliary `GPU_SOURCE` arm's were BYTE EXACT on the Runway, Frigate and
+Facility viewpoints recorded for this selection, including the 1920x1080
+witnesses. Those captures selected the arm with the developer selectors
+(`SL_PERF_OPT=1`, `SL_BG_GPU_XFORM=1`, `SL_BG_TF_CLIP=1`), not with the row,
+and they ran on an EARLIER CANDIDATE binary
+(`fda66e71e994ff39d22882e47576a82bd7aca6909761009417e9d385c408cad8`), so they
+are evidence about that path on that build. The row's own selection path has
+since been captured on the production executable at one resolution - see THE
+ROW'S OWN SELECTION PATH, IN AN IMAGE below.
+`src/gfx/sl_gfx_bggpu.c`'s program is NOT what the row resolves to. The row
+admits the auxiliary-context prepass first; the vertex transform is reached ONLY
+when a developer explicitly names it with `SL_BG_GPU_XFORM=1` before any menu
+press (`sl_perf_bg_xform_named`), where it is labelled a DIAGNOSTIC and a known
+mismatch where its frames are produced. What the row still shares with it is the
+admission predicate: a walk is admitted through `sl_perf_bg_xform` either way.
+
+THE WALK CHAIN HAS THREE ANSWERS AND THE DEFAULT IS THE CPU PATH
+(`src/gfx/sl_gfx_dl.c`). The prepass takes an admitted walk; a named vertex
+transform takes a walk on the launch that named it; and EVERYTHING ELSE draws
+the fully produced CPU clip and raster path — the row off, a pass predicate
+refusing, a prepass refusal, a developer selector that took the production
+selection away, and an unreadable selector. A walk the row admitted that
+neither GPU path took is counted as `g_bggpu_r_tfstand` and reported on its own
+selector-keyed line, so a census can tell it from "no walk this frame".
+
+THAT CHAIN IS A CORRECTION, RECORDED BECAUSE THE DEFECT IS THE INTERESTING
+PART. The first draft left the vertex transform as the chain's FALL-THROUGH, so
+with the row ON every walk the prepass did not admit reached the 142 arm —
+including a launch whose `SL_BG_TF_AUX_REAL` could not be read. A known
+mismatch reachable by a typo is the one outcome this selection exists to
+remove, and a comment claiming those walks drew the original renderer described
+code that did something else.
+
+The main-context arm stays reachable by name with `SL_BG_TF_CLIP=1`, labelled a
+diagnostic and a known mismatch where its frames are produced, because the A/B
+comparison this selection rests on needs it; the product cannot reach it by
+absence, by default or by a typo. An unreadable `SL_BG_TF_AUX_SYNC` fails the
+prepass CLOSED to the CPU clip path, and so does a missing auxiliary capability
+or any per-draw refusal.
+
+THE AUXILIARY CONTEXT IS ON THE DEFAULT PATH (corrected 2026-11-23). With the
+row ON and no selector naming an arm, the selected prepass creates and switches
+to the second, object-sharing context through `src/gfx/sl_gfx_sdl_aux.inc`
+(`sl_gl_aux_create` / `sl_gl_aux_make_current`, called from
+`src/gfx/sl_gfx_bgtf.c`). That file's header described the seam as developer
+diagnostic only and unreachable by default; that was no longer true once the
+row selected this arm, and the header now says so. The selector-named
+diagnostic arms (`SL_BG_TF_AUX_REAL`, `SL_BG_TF_AUX_SYNC`, `SL_BG_TF_AUX_EMPTY`)
+still reach the same functions. A context that cannot be created, a share that
+cannot be verified or a synchronisation that refuses leaves the main context
+current and lands the served draw on the CPU clip path, reported once per
+launch. A LOST state, in which the backend cannot establish which context is
+current, is not a fallback: the process is terminated without further GL.
+Source reachability is not live production image acceptance; the three 640x480
+viewpoints recorded below now cover that for those viewpoints, and the scenes,
+resolutions and second driver they do not reach remain owed.
+
+THE ROW'S OWN SELECTION PATH, IN AN IMAGE (2026-11-26). The pinned production
+executable (`852073d3c4e3c6b618f0ab03f77860a0eb22c14b7bb332739dfd51f9bf8d97bd`,
+11251550 bytes) was started SIX times, each start clean and accounted for, on
+one machine reporting GL `4.6.0 NVIDIA 621.24`: windowed 640x480, audio off,
+direct boot to the scene's stage, no menu walked and NO DEVELOPER SELECTOR in
+the captured arm definition. Three scenes - Runway (stage 35), Frigate (stage
+26), Facility (stage 34) - were captured twice each, once with
+`optimized_rendering=0` stored and once with `=1`, and each child's own stderr
+witnessed loading its OWN scratch configuration, resolving the row to that
+arm's value, with no other arm's row present. All NINE frame-matched OFF/ON
+moments are BYTE-IDENTICAL, 921615 bytes each, and the batch verdict is
+`ALL_THREE_SCENES_BYTE_EXACT_ACROSS_BOTH_ARMS`. Receipt
+`828d57e0ce60773abf26c98fc7587a002bf8ad6bb769821c51da4080f011e059`.
+
+WHAT THAT RUN DOES NOT ESTABLISH, which is why it closes one owed item and not
+the list. NO INTERNAL-PATH CENSUS was taken, so which arm the renderer actually
+took is read from source and from the row's resolution, never counted in the
+run. There is NO EXTERNAL REFERENCE IMAGE: the comparison is OFF against ON
+within the same build, and it does not say either image is the image a player
+should see. Only these three viewpoints at this one resolution are covered -
+other scenes, other resolutions, and the intermittent driver faults seen during
+this work, are all unproved. Each arm was started ONCE, so an intermittent
+difference could be missed. And NO TIMING FIGURE IS CARRIED: a read-back stalls
+the pipeline by construction, so every duration in the run is a stalled one,
+the receipt refuses to report a frame time or a frame rate, and no 1080p60
+claim follows from any of it.
+
+NO FRAME RATE IS PROMISED BY THE ROW, in either position, and that is a
+deliberate limit on the claim rather than an omission. No 1080p60 claim is
+made.
+
+THE ROW'S OWN RELATIVE TIMING, ON THE PRODUCTION EXECUTABLE (2026-11-26). The
+pinned production executable
+(`852073d3c4e3c6b618f0ab03f77860a0eb22c14b7bb332739dfd51f9bf8d97bd`) was started
+FOUR times at 640x480 on Runway in ABBA order OFF / ON / ON / OFF, each start
+clean, each reaching its 5200-frame survival marker, 1499 timed intervals per
+unit. Receipt
+`efb98bcd1037e828b3b5676cf6a075b8941644ed06221ccc10403f540bba945d`. Against the
+project's OWN ONE-BAR RELATIVE SCREEN the result is NO MATERIAL REGRESSION: p99
+nearest-rank 31.312 and 30.830 ms with the row OFF, 30.867 and 30.746 ms with it
+ON, against a p99 bar of 32.8535 ms; the ON one-percent-low intervals are 31.709
+and 31.473 ms, under a derived 33.5908 ms bar that has no separate product
+authority. All four means sit near 16.667 ms, which is the VI PACING LOCK and
+NOT A SPEED MEASURE - on this recipe the mean cannot carry a difference at all.
+THIS IS NOT A SPEED-UP CLAIM: the product `optimization_verdict` is
+NOT_EVALUATED, because the round declares a NARROW_SCREEN and takes no readiness
+plan, so it does not claim the product's timed branch. The screen's OVER_BUDGET
+label comes from an absolute 1080p60 target declared DESCRIPTIVE for this
+640x480 round; it is not a 640x480 absolute failure and it carries no
+frame-rate claim. WHAT THE SCREEN DOES NOT REACH: other scenes; other
+resolutions, including the 1920x1080 client; `FENCE` against `FINISH`; a second
+driver or GPU vendor; the OFF -> ON -> OFF menu transition at walk boundaries;
+the far-plane two-range path; an internal-path census through the row; any
+absolute frame-rate or 1080p60 figure; and any image claim - the round takes no
+read-back and reproduces no image.
+
+THE EARLIER relative timing screen (2026-11-14) was an ABBA
+A/B/B/A set of four 1499-interval Runway runs at 1920x1080, taken on the
+EARLIER CANDIDATE binary
+(`fda66e71e994ff39d22882e47576a82bd7aca6909761009417e9d385c408cad8`) with the
+developer selectors, not through the row and not on the production executable.
+It found NO MATERIAL REGRESSION against its one-bar policy screen, and BOTH
+arms missed the absolute budget: p99 nearest-rank 30.95 to 31.36 ms against a
+prospective 16.67 ms 60 Hz figure that the record itself labels a roadmap
+target rather than a qualified budget for this build, and its own optimization
+verdict is NOT_EVALUATED. The row's ON position is an EXACT-IMAGE selection.
+`FENCE` against
+`FINISH` has still not been benchmarked on one driver and scene, and the
+scenes the three recorded viewpoints do not reach are still uncovered - see
+NOT COVERED below.
+
+A FRAME-1 DRIVER FAULT SEEN DURING THIS WORK IS UNRESOLVED (2026-11-26), and it
+bears on the row only by having blocked the timing measurement, not by being a
+property of either position. On one machine reporting GL `4.6.0 NVIDIA 621.24`,
+some starts of the production executable die on their FIRST FRAME inside
+`nvoglv32.dll` (RVA `0x008f71a1`), dereferencing a null compiler-interface
+global on a DRIVER WORKER THREAD. Every observed fault was on the ORIGINAL path
+- the first OFF unit of a timing set - at 1920x1080 and at 640x480, so it is
+not resolution-specific and not specific to the row's ON position. THE
+INITIATING CAUSE IS UNKNOWN: an application trigger and an installation issue
+are both still open, and no mechanism has been measured. A CORRELATION, NOT A
+CAUSE: among the starts of this binary whose child environment has been
+audited, all eleven that carried the twelve Windows system names (`SystemRoot`,
+`windir`, `PATH` and the rest) were clean, one more that carried six of them
+under an apitrace wrapper was clean, and all three that carried none faulted at
+frame 1. The product reads none of those names - `grep -rn` for them
+over the whole of `src/` returns no hit - so no source-supported path explains
+the correlation and none is claimed.
+
+WHAT IT DOES NOT REACH, in either position: the conditional diagnostic
+statistics, the fill-query workers (AUTO, with their own core / topology / fog
+/ small-item / failure fallbacks), the background vertex helper, the cached
+renderer settings, and the older memo / SSE2 / buffer-object work. Those are
+compiled in and keep their own eligibility. No worker is started or stopped by
+the row, and OFF does not reconstruct an older executable.
+
+THREE THINGS THE EARLIER OPT-IN SHAPE MADE IMPOSSIBLE, each corrected here and
+each covered by an offline fixture:
+
+- `sl_skybatch_on` and `sl_bggpu_opt_in` read their switch ONCE into a static.
+  A row a player can move cannot be answered that way, so the cached part is
+  now the ENVIRONMENT (which cannot change inside a launch) and the live part
+  is an index into the settings table. No walk and no pass pays a getenv.
+- `skb_ready` and `sl_bggpu_ready` latched `-1` ("unavailable") when the switch
+  was off. With a runtime row that would mean the first frame drawn with the
+  row off decided for the whole launch: OFF -> ON would resolve no entry point
+  and compile no shader. An off selection now leaves the state UNTRIED; only a
+  real capability failure is cached, and that one is still never retried.
+- `skb_topology` returns immediately for an asset it already describes, so a
+  topology built while the carrier was byte carried no float staging and every
+  later pass was refused. The staging has one owner now,
+  `sl_skybatch_pass_begin`, which acquires it at the pass boundary; only an
+  allocation that FAILS refuses the pass, and that refusal is the original
+  immediate path with the GL bracket intact.
+
+THE BOUNDARY. `sl_skybatch_pass_begin` asks the policy once per pass and
+latches the carrier; `bg_draw_pass` asks once per walk and reads three locals
+at both the loop reduction and the program admission. A press therefore cannot
+split a pass or leave a walk reduced for a draw the program then declined. The
+repair in `bg_draw_pass` stays, for what a latch cannot cover: a context that
+went away between the reduction's cached answers and the admission's live ones.
+
+THE FAR WALK, AND WHY IT IS A GUARD RATHER THAN A VERDICT. The transform
+realises a two-range far frame's depth as a uniform pair
+(`SL_BGGPU_DEPTH_FAR0` / `_FAR1`). Those far-depth expressions are recorded in
+this file as source-only: no run has qualified their clamp or their ranges.
+`sl_perf_bg_far_admit` therefore answers 0 under the row and the walk draws
+through the original CPU path, counted on its own (`g_bggpu_r_far`) so a census
+can tell "no far walk this frame" from "the far walk was held back".
+`SL_PERF_BG_FAR=1` admits it with every other selection at the row's own
+values, which is the arm a qualification run uses. When the expressions are
+qualified, the default changes in one place.
+
+AND THE ONE-RANGE CASE IS NOT QUALIFIED EITHER — a claim corrected here rather
+than carried forward. The clip-component campaign exercised the program's CLIP
+COMPONENTS, which are computed before any depth case is selected; it evaluated
+no depth expression, so `SL_BGGPU_DEPTH_SINGLE`'s far clamp is as unqualified
+as the far pair. The two differ in TREATMENT, not in evidence: the pair carries
+its own source-only record and is guarded, SINGLE is selected by the row and is
+therefore the part of the row's ON position that is live on arithmetic no run
+has checked. Both are required rows of the qualification batch. The offline
+`bggputest` fixture does not close either: it drives `sl_bggpu_use_depth`
+directly and so establishes which uniform VALUES the API receives, not the
+production `bggpu_select` / `bg_draw_pass` dispatch and not what a driver
+computes from them.
+
+A STRUCTURAL FACT THAT CONSTRAINS THE BATCH. The loop reduction's predicate
+admits only FOGLESS walks, and a fogless walk's far clamp cannot fire, so
+`nfar` stays 0 and `farpass` with it. Reduced walks and FAR0/FAR1 submissions
+therefore cannot occur on the same walk, and no single arm can witness both.
+That is why the combined-mode evidence is split into separate arms rather than
+being read off one run.
+
+INACTIVE STORE. `sl_perf_opt` answers OFF whenever `sl_settings_active()` is
+false, before any environment is read. Trace replay, headless health and the
+matching build never call `sl_settings_init`, so the default cannot reach a
+recorded trace and those runs keep the paths they have always taken.
+
+CHECKED (`tools\windows\perfchecks.ps1`, one batch, per-row real exits and raw
+logs, PASS 8 / FAIL 0 / NOT_COVERED 7): the store's new row (default, missing,
+pre-key, malformed, out-of-range, write-on-change, reload, refused set); the
+policy (default ON in a session, OFF inactive, the `SL_PERF_OPT` override and
+the set that ends it, each subsystem switch governing only its own subsystem,
+the far arm, and the carrier - prod, never byte or div); the skydome pass
+against a synthetic GL stub (the row drives the path, OFF -> ON -> OFF -> ON on
+the SAME asset, record size / stride / offsets per carrier, one carrier latched
+per pass, allocation failure falling back with the bracket intact, context
+recreation, the state bracket, no sync point, one prepared record per unique
+referenced vertex); the background transform against a synthetic GL stub (the
+row drives it, OFF does not poison capability, a real failure is latched and
+never retried, context recreation, the walk uniforms, and the depth uniform
+following the mesh and the range across opaque / blended / opaque at FAR0
+without re-binding and across FAR1 and SINGLE). Each fixture was checked
+against mutants of the module it tests, so a passing run is not a vacuous one.
+
+NOT COVERED, and only a live run can close any of it: nonzero submitted calls
+AND indices for SINGLE / FAR0 / FAR1 with frame-matched OFF / ON images; the
+far-depth expressions as a driver evaluates them and the depth ordering that
+follows; the FAR0 -> FAR1 depth-buffer sequence in an image with geometry in
+front of the background; frame identity while turning and walking across the
+near / far transitions; the combined mode (workers + transform + reduction +
+sky PROD) in a clean arm, with reduced walks > 0 and zero unsound draws; both
+menu rows reachable by keyboard, controller and pointer with the label clearing
+its value column; and any ABSOLUTE frame-time or frame-rate figure, which is
+claimed nowhere - the two relative screens recorded above are the only timing
+evidence, and neither carries one.
+
+AND WHAT THE PRODUCTION CLIP PREPASS STILL OWES (updated 2026-11-26), none of
+which a source or CPU check can close: exact-image coverage of the scenes and
+the resolutions the three recorded 640x480 viewpoints do not reach; an
+internal-path census taken through the row, so the arm in force is COUNTED in
+the run rather than read from source; the OFF -> ON -> OFF menu transition
+observed at walk boundaries in a live session; the auxiliary context's
+creation, share verification and teardown on a second driver; the per-draw
+capability refusal observed landing on the CPU clip path in an image; and a
+controlled `FENCE` against `FINISH` benchmark on one driver and scene. A
+relative timing screen on the PRODUCTION executable through the row is NO LONGER
+OWED for Runway at 640x480 - see THE ROW'S OWN RELATIVE TIMING, ON THE
+PRODUCTION EXECUTABLE above - and what that screen does not reach is: the
+scenes and resolutions it did not cover, a readiness-suite verdict rather than a
+narrow screen, and any absolute figure. A run of the row's own selection path
+end to end is no longer owed for these three 640x480 viewpoints; see THE ROW'S
+OWN SELECTION PATH, IN AN IMAGE above.
+
+A CENSUS ARM CANNOT STAND IN FOR THE COMBINED MODE. `SL_DL_CENSUS=1` enables
+the diagnostic statistics, which is one of the readers the reduction's own
+predicate refuses on (`fstats`), so a census run reduces no walk and reports
+zeros for it. A census arm establishes which depth modes SUBMITTED; a clean arm
+establishes the combined mode. They are separate runs.

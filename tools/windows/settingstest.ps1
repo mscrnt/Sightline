@@ -23,12 +23,19 @@
     SL_MSYS2_ROOT environment variable does the same thing.
 #>
 [CmdletBinding()]
-param([string]$Msys2Root)
+param([string]$Msys2Root, [string]$OutDir)
 
 $ErrorActionPreference = 'Stop'
 
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$OUT  = Join-Path $repo 'build\win32'
+# -OutDir sends this fixture's executable somewhere other than build\win32.
+# The default is build\win32 exactly as before. Every fixture this test reads
+# is synthesised in code and lands under %TEMP% through SL_CONFIG, so the
+# executable is the only thing it puts in the repository, and an isolated
+# -OutDir makes the whole run leave the pinned binaries' directory alone.
+# Nothing here deletes or restores anything.
+if (-not $OutDir) { $OutDir = Join-Path $repo 'build\win32' }
+$OUT  = $OutDir
 
 if (-not $Msys2Root) { $Msys2Root = $env:SL_MSYS2_ROOT }
 $roots = @()

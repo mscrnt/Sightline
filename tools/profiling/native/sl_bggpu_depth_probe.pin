@@ -1,0 +1,10 @@
+# The pin for the background pass's production vertex program.
+# Written by sl_bggpu_depth_probe_pin.py --write-pin. The probe
+# REFUSES to build when the extracted GLSL or the uniform list no
+# longer hashes to these values, so a shader edit cannot reach a
+# driver run under an earlier measurement's name. source_sha256 is
+# provenance only: an unrelated edit to that file does not
+# invalidate a depth measurement, a shader-text edit does.
+glsl_sha256=ff78fea7b3c546ed0b196d96cc3f84d5db6a3b36dfe748a9149703fd46995318
+uniforms_sha256=6480022199a439ef6be4dd6c100365dc3dff5cdbc1ca355bf5d910a7d4a194b4
+source_sha256=e450bb2fb6ee58ba045024901c9dfd2d45c1a03e4c642b1f5d220e455709a575

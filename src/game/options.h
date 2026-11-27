@@ -131,6 +131,9 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
  *                                         visual selection - ORIGINAL / COMMUNITY HD /
  *                                         XBLA - which resolves every visual provider;
  *                                         lighting, #48, would resolve there too)
+ *                                       / optimized rendering  on (the one
+ *                                         performance selection, resolved per renderer
+ *                                         subsystem by src/platform/sl_perf.h)
  *                                       / back
  *                          gameplay  -> sprint  off on
  *                                       / sprint mode  hold toggle  (#56)
@@ -227,6 +230,41 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                                    * presented-frame counter in the game image's upper-right
                                    * corner, through sl_show_fps / _set (src/platform/sl_window.c);
                                    * the SDL backend reads it at every present */
+#define SL_WROW_VALUE_PERFOPT 26 /* OPTIMIZED RENDERING: the NAMED idiom - off / on right-aligned
+                                  * at SL_SIGHTLINE_X_BARVALUE, not the toggles' two cells, because
+                                  * the label is nineteen glyphs while the longest label on a
+                                  * toggle row in sl_watch_views is "invert mouse y" at fourteen;
+                                  * WORLD DETAIL's entry above records the same reason for the same
+                                  * choice. The latched LEFT / RIGHT and a click on the name flip
+                                  * the value - two values, so a step either way is the other one -
+                                  * through sl_perf_opt / _set (src/platform/sl_perf.c).
+                                  *
+                                  * THE ONE PLAYER-FACING PERFORMANCE SELECTION.
+                                  * src/platform/sl_perf.h owns its meaning and resolves the row
+                                  * into a selection for each renderer subsystem: the skydome
+                                  * pass's indexed submission with its validated float-colour
+                                  * carrier, the background pass's GPU CLIP COMPUTATION, and the
+                                  * per-vertex CPU loop reduction that depends on it. THAT CLIP
+                                  * COMPUTATION IS THE AUXILIARY-CONTEXT PREPASS - arm GPU_SOURCE
+                                  * with FENCE, admitted by sl_bgtf_walk_admit in
+                                  * src/gfx/sl_gfx_bgtf.c, which is the one arm whose frames were
+                                  * measured byte-exact against the original renderer's. The
+                                  * background VERTEX TRANSFORM is a DIFFERENT path - a labelled
+                                  * diagnostic, one blue value apart - admitted only when a
+                                  * developer names it explicitly (sl_perf_bg_xform_named); every
+                                  * other walk draws the CPU clip path (src/gfx/sl_gfx_dl.c).
+                                  * OFF is the original immediate / CPU paths for those three.
+                                  * The default is ON. The accepted CPU work is compiled in with
+                                  * its own eligibility and is not reached by this row in either
+                                  * position.
+                                  *
+                                  * The row prints the value IN FORCE - SL_PERF_OPT while that is
+                                  * set, until the row is changed - the SHOW FPS row's rule exactly.
+                                  * The front end's OPTIONS -> SETTINGS -> DISPLAY tab is the other
+                                  * view onto the same two calls, so the two views cannot disagree.
+                                  * A press applies at the next pass or frame boundary the renderer
+                                  * reaches, never halfway through an open pass; nothing in the
+                                  * simulation reads it. */
 /* The #56 mode rows: toggle rows with hold / toggle for their two cells. */
 #define SL_WROW_IS_MODE(k) ((k) == SL_WROW_TOGGLE_SMODE || (k) == SL_WROW_TOGGLE_CMODE)
 /* A value row of any kind: the same LEFT / RIGHT latch (a step down / up). */
@@ -235,7 +273,8 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
                              || (k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
                              || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
                              || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_PRESENTATION \
-                             || (k) == SL_WROW_VALUE_FPS || SL_WROW_IS_PAD_TUNE(k))
+                             || (k) == SL_WROW_VALUE_FPS || (k) == SL_WROW_VALUE_PERFOPT \
+                             || SL_WROW_IS_PAD_TUNE(k))
 /* The #51 controller tuning rows, and each one's id for sl_pad_tune_*. */
 #define SL_WROW_IS_PAD_TUNE(k) ((k) == SL_WROW_VALUE_PSENS || (k) == SL_WROW_VALUE_PDZ || (k) == SL_WROW_VALUE_MDZ)
 #define SL_WROW_PAD_TUNE_ID(k) ((k) == SL_WROW_VALUE_PSENS ? 0 : (k) == SL_WROW_VALUE_PDZ ? 1 : 2)
@@ -243,7 +282,7 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
 #define SL_WROW_IS_NAMED(k) ((k) == SL_WROW_VALUE_BLAYOUT || (k) == SL_WROW_VALUE_SLAYOUT \
                              || (k) == SL_WROW_VALUE_WMODE || (k) == SL_WROW_VALUE_RES \
                              || (k) == SL_WROW_VALUE_WDETAIL || (k) == SL_WROW_VALUE_PRESENTATION \
-                             || (k) == SL_WROW_VALUE_FPS)
+                             || (k) == SL_WROW_VALUE_FPS || (k) == SL_WROW_VALUE_PERFOPT)
 /* A row the cursor never rests on. */
 #define SL_WROW_IS_INERT(k) ((k) == SL_WROW_DIMMED || (k) == SL_WROW_INFO_PAD || (k) == SL_WROW_INFO_RES)
 /* The SLIDER rows (#50 requirement, 2026-09-19: "make them sliders like
@@ -274,7 +313,8 @@ typedef enum WATCH_GAME_OPTIONS_INDEX {
 #define SL_WVIEW_DISPLAY    2
 #define SL_WVIEW_CONTROLS   3
 #define SL_WVIEW_STICK      4   /* STICK TUNING (#51): CONTROLS' second-level child */
-#define SL_WVIEW_GRAPHICS   5   /* GRAPHICS (#43, 2026-09-21): world detail, back */
+#define SL_WVIEW_GRAPHICS   5   /* GRAPHICS (#43, 2026-09-21): world detail, presentation,
+                                 * optimized rendering, back */
 #define SL_WVIEW_COUNT      6
 #define SL_WVIEW_ROWS_MAX   9   /* CONTROLS: button layout, stick layout, stick tuning, controller, invert, two sensitivities, bindings, back (#63, #51) */
 #define SL_WVIEW_DEPTH_MAX  2   /* the back stack: SIGHTLINE -> CONTROLS -> STICK TUNING */

@@ -36,6 +36,9 @@
  *
  *         id    <hex>                          the payload id; names the cache
  *         file  <RESNAME> <relpath> <size> <sha256hex>
+ *         blob  <relpath> <offset> <size> <sha256hex>
+ *                                              a file carried in the APPENDED
+ *                                              payload, <offset> bytes into it
  *         cwd   <relpath>                      working directory for the core
  *         launch <relpath>                     the core to run
  *         env   <NAME> <VALUE>                 set for the child; {ROOT}
@@ -54,6 +57,29 @@
  *     against its recorded size and SHA-256 on every launch: a truncated
  *     write, a half-finished copy or a file someone edited is detected and
  *     replaced rather than run.
+ *
+ * THE APPENDED PAYLOAD (blob lines)
+ *     The prepared presentation sets - the texture packs and the XBLA world
+ *     assets - are about 1.4 GB in roughly a thousand files. As RCDATA they
+ *     would be part of the PE image, and the loader reserves address space for
+ *     the whole image in this 32-bit process; they would also be past the
+ *     64-entry file table above. So they travel AFTER the image instead,
+ *     where the loader never looks: the packager appends every blob back to
+ *     back, then a 24-byte trailer - the magic "SLPAYLD1", the payload's
+ *     start offset and its length, both little-endian u64 - as the last bytes
+ *     of the file. The bootstrap opens its own executable read-only, checks
+ *     that the trailer accounts for the file exactly, and streams each blob
+ *     out at its offset.
+ *
+ *     Verification is the same as for files, once: each blob is hashed while
+ *     it is copied out, the result is read back and hashed again, and only
+ *     when every blob has verified is <root>\blobs.ok written with the
+ *     payload id and the count. Later launches with that stamp in place check
+ *     each blob's SIZE only - re-hashing 1.4 GB would put seconds in front of
+ *     every start - and a blob whose size is wrong is extracted and verified
+ *     again. Without the stamp (a first run, or one that was interrupted) a
+ *     blob already on disk at the right size is hashed before it is reused.
+ *     A demo without blob lines behaves exactly as before.
  *
  * WHY BCrypt
  *     SHA-256 has to come from somewhere, and this project does not add
@@ -141,6 +167,20 @@ static wchar_t g_launch[SL_MAXPATH];
 static wchar_t g_cwd[SL_MAXPATH];
 
 static int     g_own_console;   /* this process is the console's only client */
+
+/* The appended payload's entries (blob lines). Grown as the manifest is read:
+ * there is one per prepared asset file, about a thousand today, and a fixed
+ * table sized for that would be wrong the day the sets grow. */
+typedef struct {
+    wchar_t            rel[SL_MAXPATH];
+    unsigned long long off;            /* from the start of the payload      */
+    unsigned long long size;
+    unsigned char      sha[32];
+} sl_blob;
+
+static sl_blob *g_blob;
+static int      g_nblob;
+static int      g_capblob;
 
 /* ------------------------------------------------------------- reporting -- */
 
@@ -442,6 +482,27 @@ static int sl_manifest_parse(const char *text, DWORD len)
             f->size = _strtoui64(size, NULL, 10);
             if (!sl_unhex(sha, f->sha, 32)) { ok = 0; break; }
             g_nfile++;
+        } else if (strcmp(kw, "blob") == 0) {
+            char *rel  = sl_tok(&cur);
+            char *off  = sl_tok(&cur);
+            char *size = sl_tok(&cur);
+            char *sha  = sl_tok(&cur);
+            sl_blob *b;
+            if (rel == NULL || off == NULL || size == NULL || sha == NULL
+                || strlen(sha) != 64) { ok = 0; break; }
+            if (g_nblob == g_capblob) {
+                int cap = g_capblob ? g_capblob * 2 : 256;
+                sl_blob *nb = (sl_blob *) realloc(g_blob, (size_t) cap * sizeof *nb);
+                if (nb == NULL) { ok = 0; break; }
+                g_blob = nb;
+                g_capblob = cap;
+            }
+            b = &g_blob[g_nblob];
+            if (!sl_widen(rel, b->rel, SL_MAXPATH)) { ok = 0; break; }
+            b->off  = _strtoui64(off, NULL, 10);
+            b->size = _strtoui64(size, NULL, 10);
+            if (!sl_unhex(sha, b->sha, 32)) { ok = 0; break; }
+            g_nblob++;
         } else if (strcmp(kw, "launch") == 0) {
             char *v = sl_tok(&cur);
             if (v == NULL || !sl_widen(v, g_launch, SL_MAXPATH)) { ok = 0; break; }
@@ -545,6 +606,225 @@ static int sl_write_file(const wchar_t *target, const void *data, DWORD len)
         return 0;
     }
     return 1;
+}
+
+/* ------------------------------------------------------ appended payload -- */
+
+static HANDLE             g_self = INVALID_HANDLE_VALUE;
+static unsigned long long g_ovl_off;   /* where the payload starts in this file */
+static unsigned long long g_ovl_len;
+
+static unsigned long long sl_u64le(const unsigned char *p)
+{
+    unsigned long long v = 0;
+    int i;
+    for (i = 7; i >= 0; i--) v = (v << 8) | p[i];
+    return v;
+}
+
+static int sl_read_at(unsigned long long off, void *buf, DWORD n)
+{
+    LARGE_INTEGER li;
+    unsigned char *p = (unsigned char *) buf;
+
+    li.QuadPart = (LONGLONG) off;
+    if (!SetFilePointerEx(g_self, li, NULL, FILE_BEGIN)) return 0;
+    while (n > 0) {
+        DWORD got = 0;
+        if (!ReadFile(g_self, p, n, &got, NULL) || got == 0) return 0;
+        p += got;
+        n -= got;
+    }
+    return 1;
+}
+
+/* Open this executable read-only and find the payload through its trailer.
+ * The trailer must account for the file exactly - payload start + length +
+ * the 24 trailer bytes = the file's size - so a truncated copy of the demo is
+ * refused here rather than unpacked into something that half works. */
+static int sl_overlay_open(void)
+{
+    wchar_t me[SL_MAXPATH];
+    DWORD n = GetModuleFileNameW(NULL, me, SL_MAXPATH);
+    LARGE_INTEGER sz;
+    unsigned char t[24];
+
+    if (n == 0 || n >= SL_MAXPATH) return 0;
+    g_self = CreateFileW(me, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (g_self == INVALID_HANDLE_VALUE) return 0;
+    if (!GetFileSizeEx(g_self, &sz) || sz.QuadPart < 24) return 0;
+    if (!sl_read_at((unsigned long long) sz.QuadPart - 24, t, 24)) return 0;
+    if (memcmp(t, "SLPAYLD1", 8) != 0) return 0;
+    g_ovl_off = sl_u64le(t + 8);
+    g_ovl_len = sl_u64le(t + 16);
+    return g_ovl_off + g_ovl_len + 24 == (unsigned long long) sz.QuadPart;
+}
+
+/* The size of a file on disk, or -1 when there is none. */
+static long long sl_file_size(const wchar_t *path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &a)) return -1;
+    if (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) return -1;
+    return ((long long) a.nFileSizeHigh << 32) | a.nFileSizeLow;
+}
+
+/*
+ * Copy one blob out of the payload: hashed while it is read, written to
+ * <target>.part, the hash compared with the manifest's, and only then moved
+ * over the target - the same no-half-written-file rule as sl_write_file.
+ * Returns 0 on success, 1 when the payload could not be read, 2 when its
+ * bytes do not hash to the recorded value, 3 when the target could not be
+ * written.
+ */
+static int sl_extract_blob(const sl_blob *b, const wchar_t *target, unsigned char *buf)
+{
+    wchar_t tmp[SL_MAXPATH];
+    HANDLE  h;
+    sl_hash hs;
+    unsigned char got[32];
+    unsigned long long done = 0;
+
+    if (b->off + b->size > g_ovl_len) return 1;
+    if (wcslen(target) + 6 >= sizeof tmp / sizeof tmp[0]) return 3;
+    wcscpy(tmp, target);
+    wcscat(tmp, L".part");
+    sl_mkdir_for(target);
+
+    h = CreateFileW(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return 3;
+    if (!sl_hash_begin(&hs)) { CloseHandle(h); DeleteFileW(tmp); return 3; }
+
+    while (done < b->size) {
+        unsigned long long left = b->size - done;
+        DWORD chunk = (left > (1u << 20)) ? (1u << 20) : (DWORD) left;
+        DWORD wrote = 0;
+        if (!sl_read_at(g_ovl_off + b->off + done, buf, chunk)) {
+            sl_hash_end(&hs, got); CloseHandle(h); DeleteFileW(tmp); return 1;
+        }
+        if (!sl_hash_feed(&hs, buf, chunk)
+            || !WriteFile(h, buf, chunk, &wrote, NULL) || wrote != chunk) {
+            sl_hash_end(&hs, got); CloseHandle(h); DeleteFileW(tmp); return 3;
+        }
+        done += chunk;
+    }
+    if (!sl_hash_end(&hs, got) || memcmp(got, b->sha, 32) != 0) {
+        CloseHandle(h); DeleteFileW(tmp); return 2;
+    }
+    FlushFileBuffers(h);
+    if (!CloseHandle(h)) { DeleteFileW(tmp); return 3; }
+    if (!MoveFileExW(tmp, target, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(tmp);
+        return 3;
+    }
+    return 0;
+}
+
+/* <root>\blobs.ok holds "<payload id> <blob count>" once every blob has been
+ * extracted and verified; see THE APPENDED PAYLOAD at the top of this file. */
+static void sl_stamp_text(char *out, size_t cap)
+{
+    _snprintf(out, cap - 1, "%s %d\n", g_id, g_nblob);
+    out[cap - 1] = '\0';
+}
+
+static int sl_stamp_ok(const wchar_t *root)
+{
+    wchar_t path[SL_MAXPATH];
+    char want[192], have[192];
+    HANDLE h;
+    DWORD got = 0;
+
+    sl_join(path, SL_MAXPATH, root, L"blobs.ok");
+    h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    if (!ReadFile(h, have, sizeof have - 1, &got, NULL)) got = 0;
+    CloseHandle(h);
+    have[got] = '\0';
+    sl_stamp_text(want, sizeof want);
+    return strcmp(have, want) == 0;
+}
+
+static int sl_stamp_write(const wchar_t *root)
+{
+    wchar_t path[SL_MAXPATH];
+    char text[192];
+
+    sl_join(path, SL_MAXPATH, root, L"blobs.ok");
+    sl_stamp_text(text, sizeof text);
+    return sl_write_file(path, text, (DWORD) strlen(text));
+}
+
+/* Bring every blob into the cache. Returns 0 when all are present and
+ * verified, otherwise the sl_fail result. */
+static int sl_blobs(const wchar_t *root)
+{
+    int i, stamped, extracted = 0, reused = 0;
+    unsigned long long bytes = 0, total = 0;
+    unsigned char *buf;
+
+    if (g_nblob == 0) return 0;
+    if (!sl_overlay_open())
+        return sl_fail(L"this executable's appended payload is missing or "
+                       L"damaged - the file may be an incomplete copy.");
+    for (i = 0; i < g_nblob; i++) total += g_blob[i].size;
+    buf = (unsigned char *) malloc(1u << 20);
+    if (buf == NULL) return sl_fail(L"out of memory.");
+
+    stamped = sl_stamp_ok(root);
+    for (i = 0; i < g_nblob; i++) {
+        const sl_blob *b = &g_blob[i];
+        wchar_t path[SL_MAXPATH];
+        long long have;
+        int r;
+
+        sl_join(path, SL_MAXPATH, root, b->rel);
+        if (path[0] == L'\0') { free(buf); return sl_fail(L"path too long for %ls", b->rel); }
+
+        have = sl_file_size(path);
+        if (have >= 0 && (unsigned long long) have == b->size) {
+            unsigned char sha[32];
+            unsigned long long n = 0;
+            if (stamped || (sl_sha_file(path, sha, &n) && n == b->size
+                            && memcmp(sha, b->sha, 32) == 0)) {
+                reused++;
+                continue;
+            }
+        }
+        if (extracted == 0)
+            sl_say(L"SightlineDemo: unpacking the presentation assets (%llu MB, first "
+                   L"run only)...\n", total >> 20);
+
+        r = sl_extract_blob(b, path, buf);
+        if (r == 1) { free(buf); return sl_fail(L"could not read %ls from the appended payload.", b->rel); }
+        if (r == 2) { free(buf); return sl_fail(L"%ls does not match its recorded hash in the "
+                                                L"appended payload.", b->rel); }
+        if (r == 3) { free(buf); return sl_fail(L"could not write %ls", path); }
+        {
+            unsigned char sha[32];
+            unsigned long long n = 0;
+            if (!sl_sha_file(path, sha, &n) || n != b->size || memcmp(sha, b->sha, 32) != 0) {
+                free(buf);
+                return sl_fail(L"%ls did not verify after extraction.", path);
+            }
+        }
+        extracted++;
+        bytes += b->size;
+        if (extracted % 100 == 0)
+            sl_say(L"SightlineDemo: unpacked %d file(s), %llu MB\n", extracted, bytes >> 20);
+    }
+    free(buf);
+    CloseHandle(g_self);
+    g_self = INVALID_HANDLE_VALUE;
+
+    if ((!stamped || extracted > 0) && !sl_stamp_write(root))
+        return sl_fail(L"could not write the unpack stamp under %ls", root);
+    sl_say(L"SightlineDemo: assets   %d blob(s) - %d extracted, %d reused%ls\n",
+           g_nblob, extracted, reused, stamped ? L" (size-checked)" : L" and verified");
+    return 0;
 }
 
 /* --------------------------------------------------------------- the run -- */
@@ -700,6 +980,8 @@ int main(void)
     }
     sl_say(L"SightlineDemo: payload  %d file(s) - %d extracted, %d reused and "
            L"verified\n", g_nfile, extracted, reused);
+
+    if (sl_blobs(root) != 0) return 1;
 
     sl_join(exe, SL_MAXPATH, root, g_launch);
     if (g_cwd[0] != L'\0') sl_join(cwd, SL_MAXPATH, root, g_cwd);

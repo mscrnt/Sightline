@@ -14,6 +14,11 @@
 #include "../platform/sl_input.h"
 #include "../platform/sl_display.h"     /* #45: the aspect selection drives the window's width */
 #include "../platform/sl_window.h"      /* #52: WINDOW MODE / RESOLUTION / VSYNC - the request seam */
+#include "sl_gfx_bggpu.h"               /* v0.4: its program belongs to the context below */
+#include "sl_gfx_bgtf.h"                /* v0.4: so do the clip prepass's program and buffers */
+#include "sl_gfx_skybatch.h"            /* v0.4: its buffers belong to the context below */
+#include "sl_gfx_profile.h"             /* SL_RENDER_PROFILE: opt-in, default off */
+#include "sl_gfx_gldebug.h"             /* SL_GL_DEBUG_DIAG: opt-in, default off */
 #include <SDL2/SDL.h>
 #include <GL/gl.h>
 #include <stdio.h>
@@ -160,6 +165,112 @@ static void sl_fbo16_create(int w, int h)
             w, h);
 }
 
+/* ---- SL_GL_DEBUG_DIAG: this backend's half of the GL debug diagnostic ----
+ *
+ * src/gfx/sl_gfx_gldebug.c holds every decision and makes no SDL or GL call of
+ * its own; these six wrappers are the calls. Keeping them here is what lets the
+ * diagnostic's logic be driven on a CPU with no driver by
+ * tools/profiling/native/test_sl_gfx_gldebug.c - and it keeps the SL_GL_* token
+ * for the one GL 3.0 enum involved beside the other locally defined ones above.
+ *
+ * SL_GL_CONTEXT_FLAGS: mingw32/include/GL/glext.h:897, GL_CONTEXT_FLAGS 0x821E. */
+#define SL_GL_CONTEXT_FLAGS 0x821Eu
+
+static int sl_gldebug_sdl_get(int *flags)
+{
+    return SDL_GL_GetAttribute(SDL_GL_CONTEXT_FLAGS, flags);
+}
+
+static int sl_gldebug_sdl_set(int flags)
+{
+    return SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, flags);
+}
+
+/* The context's OWN flags, and whether it would answer at all. A context below
+ * GL 3.0 does not know GL_CONTEXT_FLAGS: the query raises GL_INVALID_ENUM and
+ * writes nothing, so a zero would be indistinguishable from "asked and told
+ * no". The pending-error queue is drained first and the error read after, which
+ * is what makes the difference reportable.
+ *
+ * DRAINING TAKES NO ERROR AWAY FROM ANOTHER READER. A read consumes the state,
+ * so that has to be established rather than assumed. Every glGetError reader in
+ * this tree brackets its OWN calls and starts from a drained queue of its own:
+ * grep -rn 'glGetError' src/ finds them in src/gfx/sl_gfx_sdl.c:1133 and :1519
+ * (each preceded by its own "start from clean" drain), src/gfx/sl_gfx_profile.c
+ * (:473, the same drain), src/gfx/sl_gfx_bgtf.c and src/gfx/sl_gfx_dl.c
+ * (per-call brackets), and nowhere else - no reader anywhere expects to find an
+ * error raised before it ran. This drain also happens under the selector only,
+ * once, immediately after context creation, before this backend has issued any
+ * GL of its own. */
+static int sl_gldebug_gl_get(unsigned int *bits)
+{
+    GLint v = 0;
+
+    while (glGetError() != GL_NO_ERROR) { }
+    glGetIntegerv(SL_GL_CONTEXT_FLAGS, &v);
+    if (glGetError() != GL_NO_ERROR) return -1;
+    *bits = (unsigned int) v;
+    return 0;
+}
+
+/* ENABLE, THEN PROVE IT. glEnable returns nothing, so the call succeeding is
+ * not an observation: a context that does not know the capability raises
+ * GL_INVALID_ENUM, and one that accepts the call may still leave the capability
+ * off. Both halves are therefore read - glGetError for the first, glIsEnabled
+ * (GL 1.0 core, declared at mingw32/include/GL/gl.h:827) for the second - and
+ * the codes are kept distinct so the refusal can say which half failed.
+ *
+ * The error queue is drained before the enable for the reason given above
+ * sl_gldebug_gl_get: every glGetError reader in this tree starts from its own
+ * drain, so nothing here can take an error away from one of them, and this runs
+ * under the selector only. */
+static int sl_gldebug_gl_enable_verified(unsigned int cap)
+{
+    GLboolean on;
+
+    while (glGetError() != GL_NO_ERROR) { }
+    glEnable((GLenum) cap);
+    if (glGetError() != GL_NO_ERROR) return SL_GLDEBUG_EN_ERROR;
+    on = glIsEnabled((GLenum) cap);
+    if (glGetError() != GL_NO_ERROR) return SL_GLDEBUG_EN_UNKNOWN;
+    return on == GL_TRUE ? SL_GLDEBUG_EN_OK : SL_GLDEBUG_EN_OFF;
+}
+
+/* The readback alone, for the re-proof after the callback is bound. Non-zero
+ * means the query itself could not be trusted, which is not the same answer as
+ * "off" and is not allowed to read like one. */
+static int sl_gldebug_gl_is_enabled(unsigned int cap, int *on)
+{
+    GLboolean v;
+
+    while (glGetError() != GL_NO_ERROR) { }
+    v = glIsEnabled((GLenum) cap);
+    if (glGetError() != GL_NO_ERROR) return -1;
+    *on = (v == GL_TRUE);
+    return 0;
+}
+
+static void sl_gldebug_gl_disable(unsigned int cap) { glDisable((GLenum) cap); }
+
+static void sl_gldebug_say(const char *line)
+{
+    fprintf(stderr, "%s\n", line);
+}
+
+/* The lookup goes through sl_gl_proc below rather than straight to
+ * SDL_GL_GetProcAddress, for its guard: it answers NULL while `ctx` is NULL,
+ * so a resolve attempted without a context cannot return a pointer that is
+ * only valid against one. On Windows GL entry points are context-specific
+ * (https://wiki.libsdl.org/SDL2/SDL_GL_GetProcAddress), which is why the
+ * diagnostic resolves per context and caches nothing across one. */
+void *sl_gl_proc(const char *name);
+
+static const struct sl_gldebug_host sl_gldebug_platform = {
+    sl_gldebug_sdl_get, sl_gldebug_sdl_set, sl_gldebug_gl_get,
+    sl_gl_proc, sl_gldebug_gl_enable_verified, sl_gldebug_gl_is_enabled,
+    sl_gldebug_gl_disable, sl_gldebug_say
+};
+
 static int sdl_init(int w, int h, const char *title)
 {
 #ifdef SDL_MAIN_HANDLED
@@ -204,6 +315,15 @@ static int sdl_init(int w, int h, const char *title)
      * the redraw path stays off when none came. */
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    /* SL_GL_DEBUG_DIAG=1 only. HERE, because a context flag has effect only if
+     * it is requested before the window and the context exist
+     * (https://wiki.libsdl.org/SDL2/SDL_GL_SetAttribute). Absent or explicitly
+     * off this makes no SDL call and prints nothing, so the attributes above
+     * and the log below are what they were; armed, it OR-s the debug bit into
+     * SDL_GL_CONTEXT_FLAGS and says REQUESTED - a request, never a grant.
+     * src/gfx/sl_gfx_gldebug.h documents why a run under this selector is not
+     * evidence about a default launch. */
+    (void) sl_gldebug_arm(getenv("SL_GL_DEBUG_DIAG"), &sl_gldebug_platform);
     s_launch_w = w; s_launch_h = h;
     s_windowed_w = w; s_windowed_h = h;
     {
@@ -278,6 +398,39 @@ static int sdl_init(int w, int h, const char *title)
         SDL_Quit();
         return 0;
     }
+    /* SL_GL_DEBUG_DIAG: HERE, because the context now exists and
+     * SDL_GL_CreateContext left it current, which is what both the
+     * GL_CONTEXT_FLAGS query and a per-context entry-point resolve require. It
+     * verifies the flag the driver GRANTED - a request that was declined is
+     * reported REFUSED, never ACTIVE - and the messages it then enables cover
+     * the rest of this init, the diagnostic FBO arm included. One int test in a
+     * launch that did not arm it. */
+    (void) sl_gldebug_install(&sl_gldebug_platform);
+    /* v0.4: the background pass's GPU vertex program is owned by a context, so
+     * a context that has just been created owns none. Dropping the cached
+     * answer here is what makes the readiness check run again against THIS
+     * context instead of trusting a name that belonged to an earlier one; until
+     * it succeeds the background draws its own clip positions, which is the
+     * path that ships. The call is cheap and unconditional, so no opt-in
+     * ordering can leave a stale program behind. */
+    sl_bggpu_invalidate();
+    /* v0.4: and the clip prepass candidate's program, uniform locations,
+     * resolved entry points and slot BUFFER NAMES, for the same reason and on
+     * the same terms - it makes no GL call either, so a context that is
+     * already unusable is not called into. The buffer names matter as much as
+     * the program here: a name from a dead context must never be bound. */
+    sl_bgtf_invalidate();
+    /* The skydome pass's attribute and element buffers belong to a context
+     * too, so a context that has just been created owns none. It makes no GL
+     * call of its own - the names it drops belonged to the context being
+     * left, where neither using nor deleting one is legal any more - and the
+     * next sky pass creates its buffers against THIS context. Unconditional
+     * and cheap: a no-op unless SL_SKY_BATCH armed the path. */
+    sl_skybatch_context_invalidate();
+    /* And the metric producer's query objects belong to a context too, so a
+     * context that has just been created owns none. Unconditional and cheap:
+     * a no-op unless SL_RENDER_PROFILE named a destination. */
+    sl_gfx_profile_context_invalidate();
     SDL_GL_SetSwapInterval(0);          /* replay sets the pace, not vsync (the #52 VSYNC
                                          * setting is applied below, read back, and
                                          * defaults to exactly this) */
@@ -328,6 +481,22 @@ void *sl_gl_proc(const char *name)
     if (ctx == NULL) return NULL;
     return SDL_GL_GetProcAddress(name);
 }
+
+/* ---- v0.4 THE AUXILIARY GL CONTEXT, developer diagnostic only -----------
+ *
+ * The seam the one diagnostic in src/gfx/sl_gfx_bgtf.c needs - five functions
+ * over a second, object-sharing GL context on this window - is included here
+ * TEXTUALLY rather than written here, so that the same text can be compiled by
+ * tools/profiling/native/test_sl_gfx_sdl_aux.c against an SDL whose answers a
+ * test chooses. It uses `win` and `ctx` above, which is why it has to be part of
+ * this translation unit, and it is included at this point so that `sl_gl_proc`
+ * above it and the window state below it read in the order they always did. The
+ * include changes no behaviour: the product compiles exactly one copy of this
+ * text, with the same statics and the same linkage it had inline.
+ *
+ * Every contract, every failure semantic and the terminate primitive's
+ * justification are documented in the file itself. */
+#include "sl_gfx_sdl_aux.inc"
 
 /* #45 / #52. THE WINDOW'S STATE: MODE, SIZE, VSYNC - and the aspect's width.
  *
@@ -702,6 +871,14 @@ static void sdl_begin(void)
     /* N64 framebuffer is 320x240; the viewport is set to the window for now. */
     int w, h;
     sdl_apply_display(0);                /* #45 / #52: the selection sets the window */
+    /* SL_RENDER_PROFILE: the whole-frame scope opens here - after the display
+     * transition, so a mode change is never inside the span, and before the
+     * viewport and the clear, which are this frame's first GPU work. Also the
+     * point at which a previous frame's GPU result is collected, without
+     * waiting. The span reaches to this frame's present and therefore
+     * contains the pacing and game work the frame loop runs in between; see
+     * sl_gfx_profile.h. A no-op when the producer is off. */
+    sl_gfx_profile_frame_begin();
     SDL_GetWindowSize(win, &w, &h);
     /* B-124 arm only: the whole frame - scene, HUD, readbacks - happens
      * inside the 16-bit-depth FBO; sdl_end blits the colour to the window.
@@ -1264,8 +1441,16 @@ static void sdl_end(void)
         sl_run_mark_full(sl_mark_shot_bmp, sl_mark_centre_probe);
     }
     sdl_shot();                       /* before the swap: back buffer is live */
-    if (hold)                         /* a cap below the VI rate: not shown */
+    if (hold) {                       /* a cap below the VI rate: not shown */
+        /* This frame submitted its GPU work whether or not it is presented,
+         * and a scope left open would hold its ring slot and its query
+         * objects for the rest of the run. The HELD end: sl_ultra_shim.c
+         * notes a regular present only when the swap was not held (1434),
+         * so this row belongs to the frame-held series and not to the
+         * regular-present grid. */
+        sl_gfx_profile_frame_end_held();
         return;
+    }
     /* B-124: present the FBO's colour. Blit AFTER every readback above, so
      * the mark/shot instruments read the same rasterization the player sees;
      * bind back to the window so the swap presents it, and sdl_begin re-binds
@@ -1277,6 +1462,11 @@ static void sdl_end(void)
                            GL_COLOR_BUFFER_BIT, GL_NEAREST);
         sl_BindFramebuffer(SL_GL_FRAMEBUFFER, 0);
     }
+    /* The scope closes with the frame's last submitted GPU work - the present
+     * blit above - and before the swap, so the span ends at the present and
+     * not after the driver's presentation wait. The frame identity is read
+     * here, which is the counter value the regular present is recorded at. */
+    sl_gfx_profile_frame_end();
     sdl_swap();
 }
 
@@ -1566,6 +1756,58 @@ static int sdl_poll(void)
 static void sdl_shutdown(void)
 {
     sl_input_live_shutdown();          /* drop the pointer grab before SDL_Quit */
+    /* v0.4: and the program goes with the context being deleted, so the cached
+     * answer must not outlive it. Before the delete, not after: a later walk
+     * that found the old name ready would bind a program this process no longer
+     * owns. */
+    sl_bggpu_invalidate();
+    /* v0.4: and the one object the clip prepass candidate OWNS rather than
+     * leaves to the context - the neutral-program diagnostic's program
+     * (SL_BG_TF_NEUTRAL_PROG). BEFORE the invalidation below and before
+     * SDL_GL_DeleteContext, which is the only instant a delete is legal: the
+     * owning context is still current here, while the invalidation hook calls no
+     * GL by contract and DROPS the name and the resolved entry point, so a
+     * delete issued after it would have neither. A launch that created no
+     * neutral program pays one integer test.
+     *
+     * AND THE AUXILIARY-CONTEXT DIAGNOSTIC'S SECOND GL CONTEXT
+     * (SL_BG_TF_AUX_EMPTY), released through sl_gl_aux_destroy from inside that
+     * same call. This is the right instant for it for a stronger reason than the
+     * delete's: the window and the main context must both still exist AND the
+     * main context must be current, all three of which are true here and none of
+     * which is true after the two calls at the end of this function. A launch
+     * that created no auxiliary context pays one pointer test. */
+    sl_bgtf_shutdown();
+    /* v0.4: the clip prepass candidate, on the same terms - its program and
+     * its slot buffers belong to the context being torn down. */
+    sl_bgtf_invalidate();
+    /* Before SDL_GL_DeleteContext, for the same reason the two calls around
+     * it run here: the skydome pass's buffer names can only be DELETED while
+     * the context that owns them is current, and this is the last point where
+     * that is true. It also prints the pass's counts, if it ran. */
+    sl_skybatch_shutdown();
+    /* Before SDL_GL_DeleteContext, for the same reason: the metric
+     * producer's last availability pass, its pending rows, the deletion of
+     * every query name it owns and the close of its CSV all need a current
+     * context, and none of them may wait. */
+    sl_gfx_profile_shutdown();
+    /* SL_GL_DEBUG_DIAG, LAST of the pre-delete steps and still before the
+     * delete. Last because every shutdown above it issues GL, and those calls
+     * are exactly the ones a debug run wants reported; before the delete
+     * because clearing the callback and disabling debug output both need the
+     * owning context CURRENT, and after SDL_GL_DeleteContext neither is legal.
+     * It clears the callback first and disables afterwards, so no instant
+     * exists in which the implementation holds a pointer into a module that has
+     * stopped expecting calls. A no-op unless the diagnostic reported ACTIVE.
+     *
+     * The AUXILIARY context (src/gfx/sl_gfx_sdl_aux.inc, SL_BG_TF_AUX_EMPTY) is
+     * deliberately left untouched by this diagnostic: debug output is
+     * per-context state and entry points resolved on Windows are
+     * context-specific, so nothing installed here is valid there and nothing
+     * stale can be inherited. A launch that wants messages from that context
+     * would have to install against it, which this diagnostic does not do -
+     * it is the MAIN context's. */
+    sl_gldebug_shutdown(&sl_gldebug_platform);
     if (ctx) SDL_GL_DeleteContext(ctx);
     if (win) SDL_DestroyWindow(win);
     SDL_Quit();

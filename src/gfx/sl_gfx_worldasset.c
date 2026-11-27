@@ -828,16 +828,44 @@ static void wa_mixed_notice(const char *over, const char *derived, int presentat
  * finds the same cache slot and the same upload. */
 static unsigned g_wa_gen;
 
+/* THE OVERRIDE, READ ONCE (v0.4, B-PERF1). sl_wa_active is asked per draw
+ * item and per draw - measured 398 times a walk in Statue room 18, each one a
+ * getenv scan of the whole environment (about 2.4 us in the game process) -
+ * yet the game binary never writes SL_WORLD_ASSETS: its only writer in the
+ * tree is the SL_WA_SELFTEST fixture below. So the
+ * launch-time value is decoded at the first ask and kept: whether an override
+ * is present (set and non-empty) and the word it names (wa_set_word's result,
+ * a string literal - never getenv's pointer, which a later write to any other
+ * variable may invalidate). Everything else stays live per ask: the
+ * presentation, its derived set, the mixed-state notice and the generation.
+ * The first ask is on the render thread at the first frame, before any helper
+ * thread exists, and no other thread asks (measured), so a plain flag is
+ * enough. The self-test, which changes the variable mid-process, rereads it
+ * through wa_override_reread after each change. */
+static int g_wa_ov_read;                  /* the launch-time override has been decoded */
+static int g_wa_ov_present;               /* SL_WORLD_ASSETS set and non-empty */
+static const char *g_wa_ov_word = "";     /* wa_set_word of it: "xbla" or "" */
+
+static void wa_override_decode(void)
+{
+    const char *e = getenv("SL_WORLD_ASSETS");
+    g_wa_ov_present = (e != NULL && e[0] != '\0');
+    g_wa_ov_word = g_wa_ov_present ? wa_set_word(e) : "";
+    g_wa_ov_read = 1;
+}
+#ifdef SL_WA_SELFTEST
+static void wa_override_reread(void) { g_wa_ov_read = 0; }
+#endif
+
 int sl_wa_active(void)
 {
-    const char *e;
     const char *want;
     int p = sl_presentation();
     const char *derived = wa_set_word(sl_presentation_world_set(p));
 
-    e = getenv("SL_WORLD_ASSETS");
-    if (e != NULL && e[0] != '\0') {
-        want = wa_set_word(e);
+    if (!g_wa_ov_read) wa_override_decode();
+    if (g_wa_ov_present) {
+        want = g_wa_ov_word;
         if (strcmp(want, derived) != 0) wa_mixed_notice(want, derived, p);
     } else {
         want = derived;
@@ -915,11 +943,34 @@ static unsigned g_slots;
 static void summary_once(void)
 {
     static int done;
+    const char *root;
     if (done) return;
     done = 1;
+    /* THE ROOT IS RESOLVED BEFORE THE FLAG IS READ, and the sequence point
+     * between these two statements is the whole of this line's correctness.
+     *
+     * It used to be one fprintf taking `wa_root()` and `g_root_from_env` as
+     * two arguments. C leaves the evaluation order of function arguments
+     * UNSPECIFIED, so the flag could legally be read before the call that
+     * sets it (wa_root, above: g_root_from_env = 1 on the environment path).
+     * The flag has static storage and so reads 0 before then, which is the
+     * "player data" label - and that is what a startup line said while the
+     * root it printed beside it was the one SL_WORLDASSET_ROOT had named.
+     *
+     * MEASURED: both roots resolved to the same explicit path and both assets
+     * loaded from it (background/runway 28216 and skydome/runway 2622
+     * vertices), and every later report said root(env), while THIS line said
+     * player data. So the defect was only ever in the label, never in the
+     * resolution - which is exactly why it had to be corrected rather than
+     * explained: a provenance line that can disagree with the provenance is
+     * worse than no line, because a reader trusts it.
+     *
+     * Assigning the call's result to a local first makes the order a fact of
+     * the language rather than of the compiler. */
+    root = wa_root();
     fprintf(stderr,
             "sl_worldasset: set=%s root=%s (%s)\n",
-            g_set, wa_root(), g_root_from_env ? "SL_WORLDASSET_ROOT" : "player data");
+            g_set, root, g_root_from_env ? "SL_WORLDASSET_ROOT" : "player data");
 }
 
 static struct sl_wa_asset *load_file(const char *file, unsigned cls,
@@ -2938,6 +2989,12 @@ static int fill_simd_on(void)
     return g_fill_simd;
 }
 
+void sl_wa_fill_flags_init(void)
+{
+    (void) fill_boxes_on();
+    (void) fill_simd_on();
+}
+
 __attribute__((target("sse2")))
 static float fill_run_scan(const struct sl_wa_asset *a, unsigned start, unsigned count, const float *p,
                            float best, const float *n)
@@ -3087,12 +3144,27 @@ void sl_wa_report(FILE *f)
         }
     {
         const char *e = getenv("SL_WORLD_ASSETS");
+        /* THE SAME ORDERING RULE AS summary_once, for the same reason. This
+         * line carries the identical pair - the call that resolves the root and
+         * the flag that says where it came from - and C does not order two
+         * arguments of one call relative to each other.
+         *
+         * Unlike summary_once this site has not been observed to print the
+         * wrong label, and the reason is only that it runs LATE: the census
+         * report is reached long after the first lookup has already called
+         * wa_root(), so g_root_done is set and the flag is already true
+         * whichever order the compiler picks. That makes it a latent hazard
+         * rather than a live defect - it depends on a call ordering elsewhere
+         * in the program staying as it is. Resolved into a local here too, so
+         * the guarantee is local to the line instead of resting on what ran
+         * before it. */
+        const char *root = wa_root();
         fprintf(f, "#68 worldasset: set=%s (%s) root=%s (%s) lookups=%u loaded=%u "
                    "missing=%u invalid=%u resident verts=%u tris=%u\n",
                 g_set,
                 (e != NULL && e[0] != '\0') ? "SL_WORLD_ASSETS override"
                                             : "from the presentation",
-                wa_root(), g_root_from_env ? "env" : "player-data",
+                root, g_root_from_env ? "env" : "player-data",
                 g_lookups, g_loaded, g_missing, g_invalid, verts, tris);
     }
 }
@@ -3100,8 +3172,11 @@ void sl_wa_report(FILE *f)
 /* =========================================================================
  * SELF-TEST (-DSL_WA_SELFTEST). Every fixture is SYNTHETIC: this file writes
  * the bytes it then reads, under a scratch directory it makes and removes.
- * No source, no prepared asset and no ROM is opened, so CI can run it with
- * nothing installed - which is the point.
+ * No source and no ROM is opened, so CI can run it with nothing installed -
+ * which is the point. One part may also READ installed backgrounds: the
+ * fill-query workers' grid test (st_pool_grid) adds the Statue, Frigate and
+ * Dam backgrounds when SL_WORLDASSET_ROOT names a tree that has them, and
+ * runs on its synthetic grids alone when it does not.
  * ========================================================================= */
 #ifdef SL_WA_SELFTEST
 
@@ -3131,6 +3206,138 @@ static void ck(int cond, const char *fmt, ...)
 }
 
 const char *sl_asset_override_dir(void) { return t_dir; }
+
+/* v0.4 THE FILL-QUERY WORKERS ON THE GRID'S OWN LIFETIME (src/platform/
+ * sl_worker_pool.c). A sequence of grids - synthetic ones always, and the
+ * installed Statue, Frigate and Dam backgrounds read-only when
+ * SL_WORLDASSET_ROOT names a tree that has them (skipped, and said so, when
+ * not) - each built after a drain, as nf_begin does; per grid, batches of
+ * random eye / hole points published to two workers, part of each taken in a
+ * random order and compared with the trace computed inline, part left queued
+ * or in flight when the next grid is built. A job records the grid epoch at its
+ * start and end; one that spans a rebuild is counted. */
+#include "../platform/sl_worker_pool.h"
+static char st_pool_root[600];             /* SL_WORLDASSET_ROOT as the caller set it */
+static volatile long st_epoch, st_cross;
+static long st_job_epoch[SL_POOL_MAX_JOBS];
+static int st_pool_fn(const float *eye, const float *hq, float sc)
+{
+    const struct sl_pool_job *jb = sl_pool_jobs();
+    const long e0 = st_epoch;
+    const int r = sl_wa_fill_open(eye, hq, sc);
+    const char *p = (const char *) eye, *b = (const char *) jb;
+    if (p >= b && p < b + sizeof(struct sl_pool_job) * SL_POOL_MAX_JOBS) {
+        const unsigned i = (unsigned) ((p - b) / (long) sizeof(struct sl_pool_job));
+        if (e0 != st_job_epoch[i] || st_epoch != st_job_epoch[i]) st_cross++;
+    }
+    return r;
+}
+static unsigned st_prs = 81u;
+static float st_pu(void) { st_prs = st_prs * 1103515245u + 12345u; return (float) (st_prs >> 8) / 16777216.0f; }
+static void st_pool_grid(void)
+{
+    static const char *names[3] = { "statuepark", "frigate", "dam" };
+    static const float nsc[3] = { 0.0075f, 0.8214f, 4.2801f };
+    static struct sl_wa_asset real[3], syn;
+    static struct sl_wa_vertex sv[64];
+    static unsigned si[96];
+    const struct sl_wa_asset *seq[12];
+    float seqsc[12];
+    unsigned long checked = 0, bad = 0, inl = 0;
+    int nseq = 0, nreal = 0, i, s, workers;
+    unsigned k, b, j;
+    const char *root = st_pool_root[0] ? st_pool_root : NULL;
+    /* synthetic: eight quads in a 4 x 2 strip at rising heights */
+    memset(&syn, 0, sizeof syn);
+    for (k = 0; k < 8; k++) {
+        const float x = (float) (k % 4u) * 100.0f, y = (float) (k / 4u) * 100.0f, z = (float) k * 7.0f;
+        sv[4 * k + 0].x = x;          sv[4 * k + 0].y = y;          sv[4 * k + 0].z = z;
+        sv[4 * k + 1].x = x + 100.0f; sv[4 * k + 1].y = y;          sv[4 * k + 1].z = z;
+        sv[4 * k + 2].x = x + 100.0f; sv[4 * k + 2].y = y + 100.0f; sv[4 * k + 2].z = z + 3.0f;
+        sv[4 * k + 3].x = x;          sv[4 * k + 3].y = y + 100.0f; sv[4 * k + 3].z = z + 3.0f;
+        si[6 * k + 0] = 4 * k; si[6 * k + 1] = 4 * k + 1; si[6 * k + 2] = 4 * k + 2;
+        si[6 * k + 3] = 4 * k; si[6 * k + 4] = 4 * k + 2; si[6 * k + 5] = 4 * k + 3;
+    }
+    syn.vertices = sv; syn.vertex_count = 32; syn.indices = si; syn.index_count = 48;
+    syn.material_count = 1; syn.materials[0].blend = SL_WA_BLEND_OPAQUE;
+    syn.mesh_count = 1; syn.meshes[0].material = 0; syn.meshes[0].first_index = 0; syn.meshes[0].index_count = 48;
+    syn.bounds_min[0] = -50.0f; syn.bounds_min[1] = -50.0f; syn.bounds_min[2] = -20.0f;
+    syn.bounds_max[0] = 450.0f; syn.bounds_max[1] = 250.0f; syn.bounds_max[2] = 80.0f;
+    for (i = 0; i < 3 && root != NULL; i++) {
+        char p[sizeof st_pool_root + 64];
+        FILE *f;
+        long n;
+        unsigned char *buf;
+        snprintf(p, sizeof p, "%s/xbla/background/%s.slwa", root, names[i]);
+        f = fopen(p, "rb");
+        if (f == NULL) continue;
+        fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
+        buf = (unsigned char *) malloc((size_t) n);
+        if (buf != NULL && fread(buf, 1, (size_t) n, f) == (size_t) n
+            && sl_wa_parse(buf, (unsigned long) n, &real[i]) == SL_WA_OK) nreal++;
+        else real[i].vertex_count = 0;
+        fclose(f);
+    }
+    seq[nseq] = &syn; seqsc[nseq++] = 1.0f;
+    for (i = 0; i < 3; i++) if (real[i].vertex_count) { seq[nseq] = &real[i]; seqsc[nseq++] = nsc[i]; }
+    seq[nseq] = &syn; seqsc[nseq++] = 2.0f;                  /* a scale change */
+    seq[nseq] = NULL; seqsc[nseq++] = 1.0f;                  /* the empty grid */
+    if (real[0].vertex_count) { seq[nseq] = &real[0]; seqsc[nseq++] = 0.015f; }
+    seq[nseq] = &syn; seqsc[nseq++] = 1.0f;
+    sl_wa_fill_flags_init();
+    workers = sl_pool_start(2, st_pool_fn);
+    ck(workers == 2 || sl_pool_allowed_physical_cores() == -1, "the fill-query pool starts two workers");
+    for (s = 0; s < nseq; s++) {
+        const struct sl_wa_asset *a = seq[s];
+        const float sc = seqsc[s];
+        struct sl_pool_job *jb = sl_pool_jobs();
+        sl_pool_drain();                                        /* nf_begin's order */
+        st_epoch++;
+        (void) sl_wa_fill_set(a, a ? 16.0f * SL_WA_FILL_REGISTER / sc : 0.0f);
+        for (b = 0; b < 12u; b++) {
+            const unsigned n = (b == 0u) ? SL_POOL_MAX_JOBS : (b == 1u) ? 1u + b : 64u + (st_prs % 700u);
+            unsigned take, ord[SL_POOL_MAX_JOBS];
+            for (j = 0; j < n; j++) {
+                for (k = 0; k < 3; k++) {
+                    const float lo = a ? a->bounds_min[k] : -1000.0f, hi = a ? a->bounds_max[k] : 1000.0f;
+                    jb[j].eye[k] = lo + (hi - lo) * st_pu();
+                    jb[j].hq[k] = lo + (hi - lo) * st_pu();
+                }
+                jb[j].sc = sc; jb[j].by = 0; jb[j].result = 0; jb[j].state = 1;
+                st_job_epoch[j] = st_epoch;
+                ord[j] = j;
+            }
+            sl_pool_publish(n);
+            for (j = n; j > 1; j--) { unsigned q = (unsigned) (st_pu() * (float) j) % j, t = ord[j - 1]; ord[j - 1] = ord[q]; ord[q] = t; }
+            take = (b % 4u == 3u) ? (n < 8u ? n : 8u) : n;
+            for (j = 0; j < take; j++) {
+                int r = 0, how;
+                const unsigned q = ord[j];
+                checked++;
+                if (!sl_pool_take(q, &r, &how)) { inl++; continue; }   /* answered inline by the caller */
+                if (r != sl_wa_fill_open(jb[q].eye, jb[q].hq, jb[q].sc)) bad++;
+            }
+            if (b == 7u) {                                      /* a rebuild with jobs queued and in flight */
+                sl_pool_drain();
+                st_epoch++;
+                (void) sl_wa_fill_set(NULL, 0.0f);
+                st_epoch++;
+                (void) sl_wa_fill_set(a, a ? 16.0f * SL_WA_FILL_REGISTER / sc : 0.0f);
+                continue;
+            }
+            sl_pool_drain();
+        }
+    }
+    ck(bad == 0 && checked > 0, "the workers' fill answers equal the inline trace over %d grids (%d installed "
+       "background%s%s; %lu checked, %lu wrong)", nseq, nreal, nreal == 1 ? "" : "s",
+       nreal ? "" : ", SL_WORLDASSET_ROOT names none - synthetic only", checked, bad);
+    ck(st_cross == 0, "no fill query spans a grid rebuild (%ld did)", (long) st_cross);
+    ck(workers == 0 || inl == 0, "with workers, no answer falls back for a floating-point environment change (%lu did)", inl);
+    ck(sl_pool_stop(5000) == 1, "the fill-query pool stops, every worker proven gone");
+    (void) sl_wa_fill_set(NULL, 0.0f);
+    printf("  fill-query pool: %d worker(s), %d grids (%d installed backgrounds), %lu answers checked\n",
+           workers, nseq, nreal, checked);
+}
 
 static void put_u32(unsigned char *p, unsigned v)
 {
@@ -3473,6 +3680,10 @@ int main(void)
     char sub[640], file[768];
     const char *tmp;
 
+    /* the caller's installed tree, for st_pool_grid: the loader tests below
+     * point SL_WORLDASSET_ROOT at their own fixtures */
+    tmp = getenv("SL_WORLDASSET_ROOT");
+    if (tmp != NULL) snprintf(st_pool_root, sizeof st_pool_root, "%s", tmp);
     tmp = getenv("TEMP");
     if (tmp == NULL || tmp[0] == '\0') tmp = getenv("TMP");
     if (tmp == NULL || tmp[0] == '\0') tmp = ".";
@@ -4557,26 +4768,63 @@ int main(void)
     }
 
     /* THE DIAGNOSTIC OVERRIDE pins THIS provider ahead of the presentation,
-     * in both directions, and says so on stderr when it disagrees. */
+     * in both directions, and says so on stderr when it disagrees. The
+     * override is decoded once per process (wa_override_decode), so every
+     * change here is followed by wa_override_reread - the fixture exercises
+     * the same cached path the game runs. */
     putenv((char *) "SL_WORLD_ASSETS=off");
+    wa_override_reread();
     ck(sl_wa_active() == 0,
        "the override pins the provider dark under PRESENTATION XBLA");
+    ck(g_mixed_said && strcmp(g_mixed_said_over, "") == 0 && strcmp(g_mixed_said_derived, "xbla") == 0,
+       "and the mixed state (override none, presentation xbla) is reported");
     sl_presentation_set(SL_PRESENTATION_ORIGINAL);
     putenv((char *) "SL_WORLD_ASSETS=xbla");
+    wa_override_reread();
     ck(sl_wa_active() == 1,
        "the override pins the provider lit under PRESENTATION ORIGINAL");
+    ck(strcmp(g_mixed_said_over, "xbla") == 0 && strcmp(g_mixed_said_derived, "") == 0,
+       "and the new mixed state (override xbla, presentation none) is reported");
+    {   /* the presentation stays live under an override: the derived set and
+         * the notice follow it, the pinned selection and its generation do not */
+        unsigned g0 = sl_wa_generation();
+        sl_presentation_set(SL_PRESENTATION_XBLA);
+        ck(sl_wa_active() == 1 && sl_wa_generation() == g0,
+           "override xbla, PRESENTATION XBLA: still lit, no generation bump");
+        sl_presentation_set(SL_PRESENTATION_COMMUNITY);
+        ck(sl_wa_active() == 1 && sl_wa_generation() == g0
+           && strcmp(g_mixed_said_over, "xbla") == 0 && strcmp(g_mixed_said_derived, "") == 0,
+           "override xbla, PRESENTATION COMMUNITY: still lit, the mixed state reported for the live presentation");
+        sl_presentation_set(SL_PRESENTATION_ORIGINAL);
+    }
+    putenv((char *) "SL_WORLD_ASSETS=XBLA");
+    wa_override_reread();
+    ck(sl_wa_active() == 1 && strcmp(sl_wa_set(), "xbla") == 0,
+       "the upper-case word XBLA names the same set");
     putenv((char *) "SL_WORLD_ASSETS=");
+    wa_override_reread();
     ck(sl_wa_active() == 0,
        "an EMPTY override is no override: the presentation decides again");
     putenv((char *) "SL_WORLD_ASSETS=nonsense");
+    wa_override_reread();
     ck(sl_wa_active() == 0,
        "an unrecognised override word leaves the provider dark, never guessing a set");
+    sl_presentation_set(SL_PRESENTATION_XBLA);
+    ck(sl_wa_active() == 0 && sl_wa_set()[0] == '\0',
+       "an unrecognised word still pins the empty set under PRESENTATION XBLA - it does not fall back to the presentation");
+    /* THE ONCE-PER-PROCESS READ, observed: a change without the reread is not
+     * seen, and the reread sees it. */
+    putenv((char *) "SL_WORLD_ASSETS=xbla");
+    ck(sl_wa_active() == 0, "a mid-process change is not re-read on its own: the launch-time value stands");
+    wa_override_reread();
+    ck(sl_wa_active() == 1, "and the reread takes the new value");
 
     /* ---- the provider, against files ---------------------------------- */
     /* The rest of the fixture needs the provider lit; the coordinated path
      * and the override agree here, so no mixed-state line is printed. */
     sl_presentation_set(SL_PRESENTATION_XBLA);
     putenv((char *) "SL_WORLD_ASSETS=xbla");
+    wa_override_reread();
     ck(sl_wa_active() == 1, "PRESENTATION XBLA and the override agreeing: the set is selected");
 
     snprintf(sub, sizeof sub, "%s\\wa", t_dir);           MKDIR(sub);
@@ -4694,6 +4942,7 @@ int main(void)
 
         /* And the PRESENTATION gates it exactly as it gates the skydome. */
         putenv((char *) "SL_WORLD_ASSETS=");
+        wa_override_reread();
         sl_presentation_set(SL_PRESENTATION_ORIGINAL);
         ck(sl_wa_active() == 0 && sl_wa_lookup(SL_WA_CLASS_BACKGROUND, "silo") == NULL,
            "PRESENTATION ORIGINAL: no background is offered, so nothing is suppressed");
@@ -6260,6 +6509,7 @@ int main(void)
         wr(file, g_fix, vl);
 
         putenv((char *) "SL_WORLD_ASSETS=");
+        wa_override_reread();
         sl_presentation_set(SL_PRESENTATION_ORIGINAL);
         ck(sl_wa_lookup(SL_WA_CLASS_CHAR, "testguard") == NULL,
            "PRESENTATION ORIGINAL never consumes a character item");
@@ -6491,6 +6741,8 @@ int main(void)
            "PRESENTATION COMMUNITY HD never consumes a view model");
         sl_presentation_set(SL_PRESENTATION_XBLA);
     }
+
+    st_pool_grid();
 
     sl_wa_report(stderr);
     printf("%s: %d passed, %d failed\n", t_fail ? "WORLDASSET SELFTEST FAILED"

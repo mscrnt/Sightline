@@ -99,6 +99,14 @@ static void sl_dump_pc_chain(unsigned long ip, unsigned long bp)
 int sl_pager_fault(unsigned long addr);
 void sl_pager_init(void);
 
+/* SL_EARLY_FAULT_DIAG: the opt-in early first-chance observer, which covers the
+ * interval between sl_crash_open below and the product handler's registration -
+ * an interval no handler of this program's reaches today. Its whole surface
+ * here is two calls and the emit definition beside sl_say; every decision, every
+ * line of its text and every Win32 call it makes live in
+ * src/platform/sl_early_fault.c. */
+#include "sl_early_fault.h"
+
 /* Async-signal-safe enough: write(2) only, no allocation, no stdio locks. The
  * report goes to a FILE as well as stderr because a crash in a windowed
  * session usually takes the terminal's scrollback with it. */
@@ -801,6 +809,17 @@ static void sl_say(const char *s)
     if (g_crash_fd >= 0 && write(g_crash_fd, s, n) < 0) { }
 }
 
+/* SL_EARLY_FAULT_DIAG's sink. The early observer reuses THIS write path rather
+ * than implementing a second one: it is already the async-safe route this file
+ * relies on under a fault - write(2) plus the crash fd, no stdio, no
+ * allocation, no locks - and a diagnostic that needed its own would be a second
+ * thing to get right. Deliberately literal-free: all of that diagnostic's text
+ * is assembled in src/platform/sl_early_fault.c. */
+void sl_early_fault_emit(const char *s)
+{
+    sl_say(s);
+}
+
 #ifdef SL_ALHEAP_TRACE
 /* EVERYTHING below is measurement scaffolding - the reporters AND their
  * storage. It was previously unguarded: all ten symbols, including four
@@ -1318,22 +1337,253 @@ static int sl_win_readable(const void *p, unsigned long n)
     return 1;
 }
 
-static int sl_win_image_range(unsigned long *lo, unsigned long *hi)
+/* NO LOADER CALL ON THE FAULT PATH. Everything this reporter does while
+ * handling an access violation is either a memory read or a VirtualQuery.
+ *
+ * WHY THE RULE EXISTS. GetModuleHandle and GetModuleFileName acquire the
+ * loader lock ("Dynamic-Link Library Best Practices", Microsoft Win32 docs,
+ * which lists GetModuleHandle among the calls that take it). A fault raised
+ * while any thread holds that lock would then stall the reporter in the middle
+ * of the report it exists to produce - the same failure mode as the 2026-09-02
+ * second-fault bug above, with a hang instead of a crash. The handler must
+ * therefore name modules without asking the loader anything.
+ *
+ * WHAT REPLACES IT. The memory manager already answers the only question that
+ * matters: VirtualQuery of any address inside a mapped image returns that
+ * image's AllocationBase, which for a PE mapping is its base address. Asking
+ * about this function's own address yields this image's base without naming
+ * it. VirtualQuery is a memory-management call, and this handler's entire
+ * readability discipline (sl_win_readable) already rests on it.
+ *
+ * The header walk below is bounds-checked at every step, because a crash
+ * report that faults while parsing headers is worth less than no header walk
+ * at all. sizeof(IMAGE_NT_HEADERS32) spans the whole 16-entry DataDirectory,
+ * so one readability probe on the NT headers covers every directory entry
+ * read by callers. */
+static IMAGE_NT_HEADERS32 *sl_win_pe_nt(const unsigned char *base)
 {
-    unsigned char *base = (unsigned char *) GetModuleHandleA(NULL);
     IMAGE_DOS_HEADER *dos;
-    IMAGE_NT_HEADERS *nt;
-    if (base == NULL)
-        return 0;
+    IMAGE_NT_HEADERS32 *nt;
+    unsigned long lfa;
+
+    if (base == NULL || !sl_win_readable(base, sizeof *dos))
+        return NULL;
     dos = (IMAGE_DOS_HEADER *) base;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE)
-        return 0;
-    nt = (IMAGE_NT_HEADERS *) (base + dos->e_lfanew);
+        return NULL;
+    /* Unsigned, so a negative e_lfanew becomes a huge value and is rejected by
+     * the upper bound rather than indexing backwards from the base. */
+    lfa = (unsigned long) dos->e_lfanew;
+    if (lfa < sizeof *dos || lfa > 0x1000ul)   /* inside the header page */
+        return NULL;
+    nt = (IMAGE_NT_HEADERS32 *) (base + lfa);
+    if (!sl_win_readable(nt, sizeof *nt))
+        return NULL;
     if (nt->Signature != IMAGE_NT_SIGNATURE)
+        return NULL;
+    if (nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+        return NULL;
+    return nt;
+}
+
+static int sl_win_image_range(unsigned long *lo, unsigned long *hi)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    const unsigned char *base;
+    IMAGE_NT_HEADERS32 *nt;
+
+    /* This function's own address, not GetModuleHandle(NULL): see above. */
+    if (VirtualQuery((void *) &sl_win_image_range, &mbi, sizeof mbi) != sizeof mbi)
+        return 0;
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_IMAGE ||
+        mbi.AllocationBase == NULL)
+        return 0;
+    base = (const unsigned char *) mbi.AllocationBase;
+    nt = sl_win_pe_nt(base);
+    if (nt == NULL)
         return 0;
     *lo = (unsigned long) base;
     *hi = *lo + nt->OptionalHeader.SizeOfImage;
     return 1;
+}
+
+/* WHERE THE FAULTING PC ACTUALLY LIVES, and which module owns it.
+ *
+ * MEASURED, and the reason this exists: a RUNWAY access violation reported
+ * eip 0x65139441, which lies outside this executable's own preferred image
+ * interval (PE ImageBase 0x00400000, SizeOfImage 0x02280000) and outside both
+ * shipped DLLs' preferred intervals. The report named the fault address's
+ * region but said nothing about the pc's, so it established no module at all -
+ * and the Ebp walk printed below was then read as evidence about game source
+ * the faulting instruction may not belong to. An Ebp chain cannot answer
+ * "whose code is this"; the kernel can, for one VirtualQuery.
+ *
+ * HOW THE MODULE IS NAMED, AND WHY NOT THE OBVIOUS WAY. The obvious call is
+ * GetModuleHandleEx + GetModuleFileName, and it is wrong here: both acquire
+ * the loader lock ("Dynamic-Link Library Best Practices", Microsoft Win32
+ * docs), so a fault raised while any thread holds that lock would stall this
+ * reporter mid-report. Instead the name comes from the mapped image itself -
+ * the export directory's Name field, which the PE specification defines as
+ * "the address of the ASCII string that contains the name of the DLL"
+ * (Microsoft PE Format, Export Directory Table). Reaching it is memory reads
+ * plus VirtualQuery probes and no loader API at all.
+ *
+ * WHAT THAT NAME IS AND IS NOT. It is the name the module was LINKED with, not
+ * the file it was loaded from, and it exists only for images that export
+ * something - so most executables resolve to "no export Name" and say so. The
+ * printed line states its provenance for that reason. A name is still decisive
+ * evidence for the question this block exists to answer: whether the faulting
+ * pc belongs to this executable, to a shipped DLL, or to a third-party module
+ * mapped into the process.
+ *
+ * BOUNDED ON PURPOSE:
+ *   - no heap allocation, no loader call, no full path, no environment value,
+ *     and no unbounded read. Every header and name byte is probed with the
+ *     handler's own readability predicate first and bounded by the image's own
+ *     SizeOfImage, so a corrupt or partially unmapped image yields an
+ *     unresolved line rather than a second fault.
+ *   - a name is REFUSED, never truncated, when it does not fit the buffer;
+ *     when it is not printable ASCII; and when it contains a path separator,
+ *     which also makes it impossible for a directory to reach the report.
+ *   - every unconditional fault field - addr, access, eip, esp, ebp and the
+ *     region at addr - is written before this runs, so no outcome here can
+ *     remove, reorder or hide the fault itself. Each way of failing prints its
+ *     own explicit "unresolved" line and returns; none is silent.
+ *
+ * Same style and the same terms as the region-at-addr block in sl_win_veh. */
+static void sl_win_pc_evidence(unsigned long pc)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    char b[220];
+
+    if (VirtualQuery((void *) pc, &mbi, sizeof mbi) != sizeof mbi) {
+        sl_say("  region at eip: VirtualQuery failed\n");
+        sl_say("  eip offset from alloc base: unresolved - no region "
+               "information for eip\n");
+        sl_say("  module at eip: unresolved - no region information for eip\n");
+        return;
+    }
+    snprintf(b, sizeof b,
+             "  region at eip: base 0x%08lx alloc 0x%08lx size 0x%08lx"
+             " state %s protect 0x%lx type 0x%lx\n",
+             (unsigned long) mbi.BaseAddress,
+             (unsigned long) mbi.AllocationBase,
+             (unsigned long) mbi.RegionSize,
+             mbi.State == MEM_FREE ? "FREE" :
+             mbi.State == MEM_RESERVE ? "RESERVE (not committed - a read faults)" :
+             mbi.State == MEM_COMMIT ? "COMMIT" : "?",
+             (unsigned long) mbi.Protect, (unsigned long) mbi.Type);
+    sl_say(b);
+    /* The offset a disassembler needs: a pc is only comparable with a map once
+     * it is expressed relative to where the mapping actually landed. */
+    if (mbi.AllocationBase != NULL && pc >= (unsigned long) mbi.AllocationBase)
+        sl_say_hex("  eip offset from alloc base ",
+                   pc - (unsigned long) mbi.AllocationBase);
+    else
+        sl_say("  eip offset from alloc base: unresolved - the region at eip "
+               "has no allocation base\n");
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_IMAGE) {
+        sl_say("  module at eip: unresolved - the region at eip is not a "
+               "committed mapped image\n");
+        return;
+    }
+    {
+        /* Static, not stack. This runs on the faulting thread's stack and the
+         * report writers above keep their buffers off it for that reason; the
+         * handler is not reentrant either way. */
+        static char name[64];
+        const unsigned long max = sizeof name - 1;   /* storable characters */
+        const unsigned char *base = (const unsigned char *) mbi.AllocationBase;
+        IMAGE_NT_HEADERS32 *nt = sl_win_pe_nt(base);
+        IMAGE_EXPORT_DIRECTORY *exp;
+        unsigned long size, erva, nrva, o;
+
+        if (nt == NULL) {
+            sl_say("  module at eip: unresolved - no readable PE headers at "
+                   "the allocation base\n");
+            return;
+        }
+        size = (unsigned long) nt->OptionalHeader.SizeOfImage;
+        if (nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_EXPORT) {
+            sl_say("  module at eip: unresolved - the image at eip has no "
+                   "export data directory\n");
+            return;
+        }
+        erva = (unsigned long)
+            nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+                .VirtualAddress;
+        /* Subtraction, not addition: erva + sizeof could wrap, and a wrapped
+         * bound is how a bounds check becomes decoration. */
+        if (erva == 0 || erva >= size || size - erva < sizeof *exp) {
+            sl_say("  module at eip: unresolved - the image at eip has no "
+                   "export directory inside its own image\n");
+            return;
+        }
+        exp = (IMAGE_EXPORT_DIRECTORY *) (base + erva);
+        if (!sl_win_readable(exp, sizeof *exp)) {
+            sl_say("  module at eip: unresolved - the export directory at eip "
+                   "is not readable\n");
+            return;
+        }
+        nrva = (unsigned long) exp->Name;
+        if (nrva == 0 || nrva >= size) {
+            sl_say("  module at eip: unresolved - the image at eip has no "
+                   "export Name\n");
+            return;
+        }
+        for (o = 0; o < max && o < size - nrva; o++) {
+            const unsigned char *q = base + nrva + o;
+            unsigned c;
+            if (!sl_win_readable(q, 1)) {
+                sl_say("  module at eip: unresolved - the export Name at eip "
+                       "is not readable\n");
+                return;
+            }
+            c = (unsigned) *q;
+            if (c == 0)
+                break;
+            if (c < 0x20 || c >= 0x7f) {
+                sl_say("  module at eip: unresolved - the export Name is not "
+                       "printable ASCII\n");
+                return;
+            }
+            if (c == '\\' || c == '/' || c == ':') {
+                /* A directory must not reach the report, so a name carrying a
+                 * separator is refused rather than trimmed to its tail. */
+                sl_say("  module at eip: unresolved - the export Name is not a "
+                       "bare file name\n");
+                return;
+            }
+            name[o] = (char) c;
+        }
+        if (o >= size - nrva) {
+            sl_say("  module at eip: unresolved - the export Name runs past "
+                   "the end of the image\n");
+            return;
+        }
+        if (o == 0) {
+            sl_say("  module at eip: unresolved - the export Name is empty\n");
+            return;
+        }
+        if (o >= max) {
+            /* The buffer holds max characters and no terminator was seen
+             * inside them. ONE more bounded probe separates a name of exactly
+             * max bytes - which is valid and must be reported - from a longer
+             * one, which is REFUSED. Truncating here would print a name that
+             * is not the module's, which is worse than printing none. */
+            const unsigned char *q = base + nrva + o;
+            if (!sl_win_readable(q, 1) || *q != 0) {
+                snprintf(b, sizeof b, "  module at eip: unresolved - the "
+                         "export Name is longer than %d bytes\n", (int) max);
+                sl_say(b);
+                return;
+            }
+        }
+        name[o] = 0;
+        snprintf(b, sizeof b, "  module at eip: %s (PE export Name at the "
+                 "allocation base, not the loaded file name)\n", name);
+        sl_say(b);
+    }
 }
 
 /* A frame-pointer chain is worthless once Ebp is not a frame. Scanning the
@@ -1533,6 +1783,337 @@ static void sl_on_alarm(int sig, siginfo_t *si, void *uc_)
  * the watchdog must SuspendThread the pump first: GetThreadContext on a
  * running thread returns nothing meaningful.
  */
+
+/* ---- WHICH THREAD FAULTED -------------------------------------------------
+ *
+ * WHAT WAS MISSING. The fault report named the address, the access, the
+ * registers, the region at the address and the module at the pc, but never
+ * said which thread raised the exception. A report whose pc lies outside this
+ * image is then ambiguous between two different defects: this program driving
+ * a library into a bad access on its own thread, and an access violation
+ * raised on a thread this program never created. The register and module
+ * fields cannot separate those; the thread id can, at the cost of one TEB
+ * read.
+ *
+ * WHY THE HANDLER'S OWN ID IS THE FAULTING THREAD'S. A vectored exception
+ * handler is called on the thread that raised the exception, so
+ * GetCurrentThreadId inside it is that thread's id - it is not derived from
+ * the context record and needs no walk.
+ *
+ * WHY A PLAIN STATIC AND NO SYNCHRONISATION. The id is written once, by the
+ * thread that entered main, before this program creates any thread of its own
+ * (the hang watchdog at the end of main, the worker pool, the background
+ * vertex worker - all later), so no write can race a read. A lock would be
+ * worse than useless: the handler must not block, and a lock the faulting
+ * thread already held would deadlock the report that explains the fault.
+ *
+ * UNKNOWN IS A RESULT, NOT A GAP. When the recording did not run, the handler
+ * says so and makes no comparison. A fabricated "no" would be indistinguishable
+ * from the measurement this exists to take.
+ *
+ * BOUNDARY. This says which thread faulted. It does not say what that thread
+ * was doing, which thread owns any GL context, or whose stack esp belongs to.
+ */
+static volatile DWORD g_main_tid;        /* GetCurrentThreadId() of main's thread */
+static volatile int   g_main_tid_set;    /* 0 until the id above is recorded */
+
+static void sl_win_mark_main_thread(void)
+{
+    g_main_tid = GetCurrentThreadId();
+    g_main_tid_set = 1;                  /* after the id, so a reader sees both */
+}
+
+/* Decimal, because every tool a reader would compare a thread id with - a
+ * debugger's thread list, Task Manager - prints it in decimal. Hand formatted
+ * for the same reason sl_say_hex is: no stdio, no allocation and no locale on
+ * the fault path. The buffer holds any 32-bit value: ten digits, a newline and
+ * a terminator inside 32 bytes. */
+static void sl_say_dec(const char *label, unsigned long v)
+{
+    char b[32];
+    int i = (int) sizeof b - 1;
+    b[i--] = 0;
+    b[i--] = '\n';
+    if (v == 0)
+        b[i--] = '0';
+    while (v > 0) { b[i--] = (char) ('0' + (int) (v % 10UL)); v /= 10UL; }
+    sl_say(label);
+    sl_say(&b[i + 1]);
+}
+
+/* The three lines, written as a boundary that TAKES its inputs rather than
+ * reading them, so the three outcomes - a fault on main, a fault on another
+ * thread, and an unrecorded main id - can each be exercised off the fault
+ * path, where a real access violation cannot be staged safely. */
+static void sl_win_say_thread_identity(unsigned long faulting,
+                                       unsigned long main_id, int have_main)
+{
+    sl_say_dec("  faulting thread id: ", faulting);
+    if (!have_main) {
+        sl_say("  main thread id: UNKNOWN\n");
+        sl_say("  faulting thread is main: UNKNOWN\n");
+        return;
+    }
+    sl_say_dec("  main thread id: ", main_id);
+    sl_say(faulting == main_id ? "  faulting thread is main: yes\n"
+                               : "  faulting thread is main: no\n");
+}
+
+/* ---- WHERE THE FAULTING THREAD BEGAN, AND WHICH IMAGES ARE MAPPED ----------
+ *
+ * WHAT WAS MISSING. The thread lines above say WHETHER the faulting thread is
+ * the one that entered main. When it is not, the report still cannot say what
+ * that thread is: an id is a number the kernel hands out, and names nothing.
+ * The thread's start routine does - the address its creator passed to the
+ * thread-creation call - and the image that address lies in says which code
+ * the thread was created to run.
+ *
+ * HOW THE START ADDRESS IS READ. NtQueryInformationThread with the
+ * ThreadQuerySetWin32StartAddress class "returns the start address of the
+ * thread" into a PVOID-sized buffer (Microsoft Learn, NtQueryInformationThread,
+ * winternl.h). The class is entry 9 of THREADINFOCLASS, counted from
+ * ThreadBasicInformation = 0 in the toolchain's own declaration
+ * (mingw32 include/winternl.h and include/ddk/ntddk.h); the value is spelled
+ * here because the enum's declaration is not included by this file. The
+ * function has no import library, so it is resolved from ntdll ONCE, in main,
+ * early in main, before this program initialises its graphics backend,
+ * installs the fault handler or creates any thread of its own. That is the
+ * only ordering this program controls: the runtime or a library may already
+ * run threads it does not know about. The resolution takes the loader lock
+ * and must never happen on the fault path.
+ * The handler only calls through the saved pointer, with the current-thread
+ * pseudo-handle, which needs no open and no close.
+ *
+ * WHAT THE IMAGE LINES ARE. For the image at eip and the image holding the
+ * start address, the PE file header's TimeDateStamp and the optional header's
+ * SizeOfImage and CheckSum, read from the MAPPED headers at the allocation
+ * base. They are a LIMITED FINGERPRINT, not a hash of the image's contents:
+ * the linker sets them, the loader copies them into the mapping, and they do
+ * not change when code bytes do - so different builds can share them, a file
+ * can be altered without touching them, and a mapping can be patched at run
+ * time. A file on disk whose headers carry the same three values is a
+ * candidate for the same linked version, which supports attributing the
+ * loaded image to that version; it does not prove that a disassembly of the
+ * file shows the exact bytes that were executing. A mismatch does rule the
+ * file out.
+ *
+ * BOUNDARY. A start address says where the thread's routine lives. It does not
+ * say who called the creation function, what the thread was doing when it
+ * faulted, or why the state it read was bad. A routine inside a library's
+ * image is consistent with that library having created the thread and does
+ * not prove it; a routine in a system image (a thread-pool worker, for
+ * instance) names the pool, not its client. Every failure is reported as an
+ * explicit UNKNOWN with its reason, and no line is ever derived from a guess.
+ *
+ * DISCIPLINE. Same as sl_win_pc_evidence: no allocation, no loader call, no
+ * full path; every header and name byte is probed with sl_win_readable first
+ * and bounded by the image's own SizeOfImage; static buffers, because this
+ * runs on the faulting thread's stack and the handler is not reentrant. */
+#define SL_THREAD_QUERY_SET_WIN32_START_ADDRESS 9UL
+
+typedef LONG (NTAPI *sl_win_ntqit_fn)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+static sl_win_ntqit_fn g_win_ntqit;      /* NULL until resolved in main */
+
+static void sl_win_resolve_thread_query(void)
+{
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    FARPROC p = nt != NULL ? GetProcAddress(nt, "NtQueryInformationThread")
+                           : NULL;
+    g_win_ntqit = (sl_win_ntqit_fn) (void *) p;
+}
+
+/* The export directory's Name, by the same rules as sl_win_pc_evidence:
+ * bounded by SizeOfImage, probed byte by byte, refused rather than truncated,
+ * refused when not printable ASCII or when it carries a path separator.
+ * Returns NULL and fills name on success, or returns the reason it could not. */
+static const char *sl_win_export_name(const unsigned char *base,
+                                      IMAGE_NT_HEADERS32 *nt,
+                                      char *name, unsigned long cap)
+{
+    const unsigned long max = cap - 1;          /* storable characters */
+    unsigned long size, erva, nrva, o;
+    IMAGE_EXPORT_DIRECTORY *exp;
+
+    size = (unsigned long) nt->OptionalHeader.SizeOfImage;
+    if (nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_EXPORT)
+        return "the image has no export data directory";
+    erva = (unsigned long)
+        nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+            .VirtualAddress;
+    if (erva == 0 || erva >= size || size - erva < sizeof *exp)
+        return "the image has no export directory inside its own image";
+    exp = (IMAGE_EXPORT_DIRECTORY *) (base + erva);
+    if (!sl_win_readable(exp, sizeof *exp))
+        return "the export directory is not readable";
+    nrva = (unsigned long) exp->Name;
+    if (nrva == 0 || nrva >= size)
+        return "the image has no export Name";
+    for (o = 0; o < max && o < size - nrva; o++) {
+        const unsigned char *q = base + nrva + o;
+        unsigned c;
+        if (!sl_win_readable(q, 1))
+            return "the export Name is not readable";
+        c = (unsigned) *q;
+        if (c == 0)
+            break;
+        if (c < 0x20 || c >= 0x7f)
+            return "the export Name is not printable ASCII";
+        if (c == '\\' || c == '/' || c == ':')
+            return "the export Name is not a bare file name";
+        name[o] = (char) c;
+    }
+    if (o >= size - nrva)
+        return "the export Name runs past the end of the image";
+    if (o == 0)
+        return "the export Name is empty";
+    if (o >= max) {
+        const unsigned char *q = base + nrva + o;
+        if (!sl_win_readable(q, 1) || *q != 0)
+            return "the export Name is longer than the report's name buffer";
+    }
+    name[o] = 0;
+    return NULL;
+}
+
+/* One line, "<label>TimeDateStamp .. SizeOfImage .. CheckSum ..", for the image
+ * mapped at an allocation base, or "<label>UNKNOWN - <reason>". */
+static void sl_win_say_pe_identity(const char *label, const unsigned char *base)
+{
+    static char b[200];
+    IMAGE_NT_HEADERS32 *nt = sl_win_pe_nt(base);
+
+    if (nt == NULL) {
+        snprintf(b, sizeof b, "%sUNKNOWN - no readable PE headers at the "
+                 "allocation base\n", label);
+        sl_say(b);
+        return;
+    }
+    snprintf(b, sizeof b, "%sTimeDateStamp 0x%08lx SizeOfImage 0x%08lx "
+             "CheckSum 0x%08lx\n", label,
+             (unsigned long) nt->FileHeader.TimeDateStamp,
+             (unsigned long) nt->OptionalHeader.SizeOfImage,
+             (unsigned long) nt->OptionalHeader.CheckSum);
+    sl_say(b);
+}
+
+/* The image identity line for the image that holds an address. */
+static void sl_win_say_image_at(const char *label, unsigned long addr)
+{
+    static char b[200];
+    MEMORY_BASIC_INFORMATION mbi;
+
+    if (VirtualQuery((void *) addr, &mbi, sizeof mbi) != sizeof mbi) {
+        snprintf(b, sizeof b, "%sUNKNOWN - no region information\n", label);
+        sl_say(b);
+        return;
+    }
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_IMAGE ||
+        mbi.AllocationBase == NULL) {
+        snprintf(b, sizeof b, "%sUNKNOWN - the address is not in a committed "
+                 "mapped image\n", label);
+        sl_say(b);
+        return;
+    }
+    sl_win_say_pe_identity(label, (const unsigned char *) mbi.AllocationBase);
+}
+
+/* The four thread-start lines. Takes the query function as an argument - the
+ * handler passes the pointer saved in main - so that a missing function, a
+ * failing query and a successful one can each be exercised off the fault
+ * path. Always writes the same four labels, each with a value or UNKNOWN. */
+static void sl_win_say_thread_start(sl_win_ntqit_fn query)
+{
+    static char b[220];
+    static char name[64];
+    MEMORY_BASIC_INFORMATION mbi;
+    void *start = NULL;
+    unsigned long s;
+    const char *why = NULL;
+
+    if (query == NULL) {
+        why = "NtQueryInformationThread was not resolved at startup";
+        sl_say("  faulting thread start address: UNKNOWN - NtQueryInformationThread "
+               "was not resolved at startup\n");
+    } else {
+        LONG st = query(GetCurrentThread(),
+                        (ULONG) SL_THREAD_QUERY_SET_WIN32_START_ADDRESS,
+                        &start, (ULONG) sizeof start, NULL);
+        if (st < 0) {
+            why = "the start-address query failed";
+            snprintf(b, sizeof b, "  faulting thread start address: UNKNOWN - "
+                     "the query failed with status 0x%08lx\n", (unsigned long) st);
+            sl_say(b);
+        } else if (start == NULL) {
+            why = "the start-address query returned no address";
+            sl_say("  faulting thread start address: UNKNOWN - the query returned "
+                   "no address\n");
+        }
+    }
+    if (why != NULL) {
+        snprintf(b, sizeof b, "  thread start region: UNKNOWN - %s\n", why);
+        sl_say(b);
+        snprintf(b, sizeof b, "  module at thread start: UNKNOWN - %s\n", why);
+        sl_say(b);
+        snprintf(b, sizeof b, "  image at thread start: UNKNOWN - %s\n", why);
+        sl_say(b);
+        return;
+    }
+    s = (unsigned long) start;
+    snprintf(b, sizeof b, "  faulting thread start address: 0x%08lx\n", s);
+    sl_say(b);
+    if (VirtualQuery(start, &mbi, sizeof mbi) != sizeof mbi) {
+        sl_say("  thread start region: UNKNOWN - no region information\n");
+        sl_say("  module at thread start: UNKNOWN - no region information\n");
+        sl_say("  image at thread start: UNKNOWN - no region information\n");
+        return;
+    }
+    if (mbi.AllocationBase != NULL && s >= (unsigned long) mbi.AllocationBase)
+        snprintf(b, sizeof b, "  thread start region: alloc 0x%08lx offset "
+                 "0x%08lx state %s type 0x%lx\n",
+                 (unsigned long) mbi.AllocationBase,
+                 s - (unsigned long) mbi.AllocationBase,
+                 mbi.State == MEM_FREE ? "FREE" :
+                 mbi.State == MEM_RESERVE ? "RESERVE" :
+                 mbi.State == MEM_COMMIT ? "COMMIT" : "?",
+                 (unsigned long) mbi.Type);
+    else
+        snprintf(b, sizeof b, "  thread start region: alloc 0x%08lx offset "
+                 "UNKNOWN state %s type 0x%lx\n",
+                 (unsigned long) mbi.AllocationBase,
+                 mbi.State == MEM_FREE ? "FREE" :
+                 mbi.State == MEM_RESERVE ? "RESERVE" :
+                 mbi.State == MEM_COMMIT ? "COMMIT" : "?",
+                 (unsigned long) mbi.Type);
+    sl_say(b);
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_IMAGE ||
+        mbi.AllocationBase == NULL) {
+        sl_say("  module at thread start: UNKNOWN - the start address is not in "
+               "a committed mapped image\n");
+        sl_say("  image at thread start: UNKNOWN - the start address is not in "
+               "a committed mapped image\n");
+        return;
+    }
+    {
+        const unsigned char *base = (const unsigned char *) mbi.AllocationBase;
+        IMAGE_NT_HEADERS32 *nt = sl_win_pe_nt(base);
+        if (nt == NULL) {
+            sl_say("  module at thread start: UNKNOWN - no readable PE headers at "
+                   "the allocation base\n");
+        } else {
+            why = sl_win_export_name(base, nt, name, sizeof name);
+            if (why != NULL)
+                snprintf(b, sizeof b, "  module at thread start: UNKNOWN - %s\n",
+                         why);
+            else
+                snprintf(b, sizeof b, "  module at thread start: %s (PE export "
+                         "Name at the allocation base, not the loaded file "
+                         "name)\n", name);
+            sl_say(b);
+        }
+        sl_win_say_pe_identity("  image at thread start: ", base);
+    }
+}
+
 static LONG CALLBACK sl_win_veh(EXCEPTION_POINTERS *ep)
 {
     unsigned long addr;
@@ -1543,6 +2124,16 @@ static LONG CALLBACK sl_win_veh(EXCEPTION_POINTERS *ep)
     if (sl_pager_fault(addr))
         return EXCEPTION_CONTINUE_EXECUTION;
     sl_say_hex("\nsightline native: ACCESS VIOLATION addr ", addr);
+    /* FIRST AFTER THE HEADER, and before any writer that reads foreign memory,
+     * because this one cannot fail: the handler's own thread id is a TEB read
+     * and the saved id is a plain load. A probe-based writer below that is cut
+     * short must not be able to take the thread identity with it.
+     *
+     * ON THIS PATH ONLY. A pager fault has already returned
+     * EXCEPTION_CONTINUE_EXECUTION above and writes nothing, so these lines
+     * appear for a genuine unhandled access violation and for nothing else. */
+    sl_win_say_thread_identity((unsigned long) GetCurrentThreadId(),
+                               (unsigned long) g_main_tid, g_main_tid_set);
 
     {
         /* ExceptionInformation[0] is the ONE field that distinguishes a bad
@@ -1582,6 +2173,18 @@ static LONG CALLBACK sl_win_veh(EXCEPTION_POINTERS *ep)
                 sl_say("  region at addr: VirtualQuery failed\n");
             }
         }
+        /* AND WHAT WINDOWS SAYS ABOUT THE FAULTING PC. Placed here, directly
+         * after the fault's own fields, because this reports on eip - which
+         * was printed three lines up and, when it lies outside this image,
+         * leaves every frame below it unattributable. See sl_win_pc_evidence
+         * for what it writes, what it refuses to write, and its bounds. */
+        sl_win_pc_evidence((unsigned long) ep->ContextRecord->Eip);
+        /* AFTER the eip module, so every field above keeps its place: the
+         * loaded image's identity at eip, then where the faulting thread
+         * began. See sl_win_say_thread_start for the bounds and the meaning. */
+        sl_win_say_image_at("  image at eip: ",
+                            (unsigned long) ep->ContextRecord->Eip);
+        sl_win_say_thread_start(g_win_ntqit);
         /* On an EXECUTE fault the target instruction never ran, so the CALL's
          * pushed return address is still sitting exactly at [esp]. That IS the
          * call site - the one thing an Ebp chain cannot give here, because Ebp
@@ -1649,6 +2252,18 @@ int main(void)
     const char *hang = getenv("SL_HANG_SECONDS");
 
 #ifdef _WIN32
+    /* THE THREAD THAT ENTERED MAIN, recorded first, before this program can
+     * create a thread of its own, so the fault handler can say whether an
+     * access violation was raised on it. See the comment above
+     * sl_win_mark_main_thread for why no synchronisation is involved. */
+    sl_win_mark_main_thread();
+    /* And the start-address query the fault handler calls through, resolved
+     * here - before the graphics backend, the fault handler and this
+     * program's own threads exist - because resolving it takes the loader
+     * lock, which the fault path must never take. Threads started by the
+     * runtime or a library are outside this ordering. */
+    sl_win_resolve_thread_query();
+
     /* SDL WINDOWS MAIN - the decision, recorded where it is made.
      *
      * SDL2 on Windows normally redirects main() to SDL_main via SDL2main,
@@ -1694,6 +2309,18 @@ int main(void)
     signal(SIGUSR1, sl_on_mark_signal);
 #endif
     sl_crash_open();
+#ifdef _WIN32
+    /* SL_EARLY_FAULT_DIAG=1 only. HERE, because the crash log is now open and
+     * nothing of the graphics stack has run: this is the start of the interval
+     * that AddVectoredExceptionHandler(1, sl_win_veh) below does not cover. The
+     * observer only observes and always returns CONTINUE_SEARCH, so it changes
+     * no exception's disposition; it never calls sl_pager_fault, which could not
+     * be reached safely here in any case because sl_pager_init runs later still.
+     * Absent or explicitly off: no registration call, no line, no state. */
+    (void) sl_early_fault_arm(getenv("SL_EARLY_FAULT_DIAG"),
+                              sl_early_fault_platform(),
+                              (unsigned long) g_main_tid, g_main_tid_set);
+#endif
     sl_shim_configure();
     /* Window FIRST: SDL/X11/GL install their own mappings, and the skeleton's
      * pager reserves address space PROT_NONE while its SIGSEGV handler owns
@@ -1702,6 +2329,14 @@ int main(void)
     if (sl_gfx_init())
         sl_gfx_begin_frame();
 #ifdef _WIN32
+    /* SL_EARLY_FAULT_DIAG's observer comes OUT immediately before the product
+     * handler goes in, so the two never coexist. Once the pager is live the game
+     * demand-pages the cartridge by taking access violations inside the kseg2
+     * window, which sl_pager_fault handles and continues; an observer still
+     * armed would record every one of those as a first-chance event and bury the
+     * interesting line under routine paging. A no-op unless the selector armed
+     * it, and a removal that fails is reported rather than assumed. */
+    (void) sl_early_fault_disarm(sl_early_fault_platform());
     /* First handler in the chain, so the pager sees the fault before SDL or
      * the GL driver installs anything of its own. */
     AddVectoredExceptionHandler(1, sl_win_veh);

@@ -206,3 +206,28 @@ SightlineDemo.exe
 #                 SL_WORLDASSET_ROOT. Derived from the source above, so it
 #                 inherits its boundary exactly.
 /worldassets/
+
+# Background draw snapshots (sl_bgsnap_write.c). The SAME boundary as the three
+# trees above, and for the same reason: a snapshot is one frame of the
+# background pass's real inputs, read out of the user's own extracted world
+# asset, so it is ROM-derived and is not ours to distribute. The writer is an
+# off-by-default diagnostic and the files it writes are evidence for an offline
+# comparison, never a build input and never committed.
+#
+#   bgsnapshots/  what src/gfx/sl_bgsnap_write.c WRITES when SL_BGSNAP selects
+#                 a frame: bgsnap-<read>-<frame>-<cloud>.bin, the default
+#                 SL_BGSNAP_DIR.
+/bgsnapshots/
+
+# Production buffer diagnostic records (src/gfx/sl_gfx_bgtf.c, SL_BG_TF_DUMP).
+# The SAME boundary again: a record holds one background draw's actual
+# transform-feedback clip pool and the CPU clip pool beside it, both computed
+# from the user's own extracted world asset, so it is ROM-derived and is not
+# ours to distribute. The writer is off by default, writes once per process, and
+# never replaces a record already on disk.
+#
+#   bgtfdumps/    what it WRITES when SL_BG_TF_DUMP selects a draw:
+#                 tfclip-<read>-<frame>-<cloud>-m<mesh>-t<material>-d<dmode>
+#                 .gpuclip.bin, .cpuclip.bin, .idx.bin and .json - the default
+#                 SL_BG_TF_DUMP_DIR.
+/bgtfdumps/

@@ -2752,6 +2752,17 @@ s32 interface_menu05_fileselect(void)
         frontUpdateControlStickPosition();
     }
 
+#ifndef __sgi
+    /* Automated route seam (src/native/sl_autoroute_hook.c). Inert unless
+     * SL_AUTO_ROUTE names a route. Placed after the picker and before the
+     * advance test below, which is the only window in which a folder number
+     * survives the consume block at :2604-2619. */
+    {
+        extern void sl_autoroute_file_select(void);
+        sl_autoroute_file_select();
+    }
+#endif
+
     if (selected_folder_num >= FOLDER1)
     {
         frontChangeMenu(MENU_MODE_SELECT, FALSE);
@@ -3215,6 +3226,12 @@ void interface_menu06_modesel(void)
     {
         extern void sl_front_witness(s32 menu, s32 row, s32 col);
         sl_front_witness(MENU_MODE_SELECT, tab_prev_highlight ? -1 : (s32) mission_difficulty_highlighted, -1);
+    }
+    /* Automated route seam (src/native/sl_autoroute_hook.c). Inert unless
+     * SL_AUTO_ROUTE names a route. */
+    {
+        extern void sl_autoroute_mode_select(void);
+        sl_autoroute_mode_select();
     }
 #endif
     frontUpdateControlStickPosition();
@@ -3848,6 +3865,15 @@ void interface_menu07_missionsel(void)
         sndPlaySfx((struct ALBankAlt_s *) g_musicSfxBufferPtr, DOOR_METAL_CLOSE2_SFX, NULL);
     }
 
+#ifndef __sgi
+    /* Automated route seam (src/native/sl_autoroute_hook.c). Inert unless
+     * SL_AUTO_ROUTE names a route. */
+    {
+        extern void sl_autoroute_mission_select(void);
+        sl_autoroute_mission_select();
+    }
+#endif
+
     frontUpdateControlStickPosition();
 
     if (tab_next_selected != 0)
@@ -4047,6 +4073,15 @@ void interface_menu08_difficulty(void)
         tab_prev_selected = TRUE;
         sndPlaySfx(g_musicSfxBufferPtr, DOOR_METAL_CLOSE2_SFX, NULL);
     }
+
+#ifndef __sgi
+    /* Automated route seam (src/native/sl_autoroute_hook.c). Inert unless
+     * SL_AUTO_ROUTE names a route. */
+    {
+        extern void sl_autoroute_difficulty(void);
+        sl_autoroute_difficulty();
+    }
+#endif
 
     frontUpdateControlStickPosition();
 
@@ -7286,6 +7321,15 @@ void interface_menu0A_briefing(void)
     set_item_visibility_in_objinstance(walletinst[0], SW_PAPER, 1);
     set_item_visibility_in_objinstance(walletinst[0], SW_OHMSS, 1);
     set_item_visibility_in_objinstance(walletinst[0], SW_CLASSIFIED, 1);
+#ifndef __sgi
+    /* Automated route seam (src/native/sl_autoroute_hook.c). Inert unless
+     * SL_AUTO_ROUTE names a route. The last confirm on the route: the test
+     * below is what calls frontChangeMenu(MENU_RUN_STAGE, TRUE). */
+    {
+        extern void sl_autoroute_briefing(void);
+        sl_autoroute_briefing();
+    }
+#endif
     frontUpdateControlStickPosition();
     if (tab_next_selected)
     {

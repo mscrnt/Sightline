@@ -52,6 +52,22 @@
                        disk rather than named, so an asset added later needs
                        no edit here.
 
+      the presentation sets
+                       -TexturesRoot (default: the checkout's texpacks\) and
+                       -WorldRoot (default: the checkout's worldassets\) - the
+                       folders prepare-all.ps1 writes. Every file under each is
+                       carried, so COMMUNITY HD and XBLA work on a machine that
+                       has never prepared anything. About 1.4 GB for the whole
+                       campaign, so they travel as a payload APPENDED to the
+                       executable rather than as resources (the loader would
+                       reserve address space for resources in this 32-bit
+                       process); see THE APPENDED PAYLOAD in
+                       sl_demo_bootstrap.c. They unpack on the first run only.
+                       A default root that does not exist is skipped with a
+                       note (that presentation then looks like ORIGINAL); a
+                       root named explicitly must exist. -NoPresentationAssets
+                       leaves both out.
+
     WHAT COMES OUT
         A manifest is printed - every item with its size and SHA-256, plus the
         aggregate payload id and the output path - and only then is the
@@ -71,6 +87,19 @@
     cannot tell a demo build from a normal one by looking at it, which is why
     rebuilding is the default.
 
+.PARAMETER TexturesRoot
+    The prepared texture-pack root to carry (its community\ and xbla\ sets).
+    Default: texpacks\ in this checkout. Lets the demo be built from a
+    different checkout than the one the sets were prepared in.
+
+.PARAMETER WorldRoot
+    The prepared XBLA world-asset root to carry. Default: worldassets\ in this
+    checkout.
+
+.PARAMETER NoPresentationAssets
+    Carry neither root: the demo then has ORIGINAL artwork only, as it did
+    before the presentation sets existed.
+
 .PARAMETER Msys2Root
     Where MSYS2 lives, if it is not in one of the usual places. SL_MSYS2_ROOT
     does the same thing. Same probe as build.ps1: nothing here is a hardcoded
@@ -86,6 +115,9 @@ param(
     [Parameter(Mandatory = $true)][string]$Rom,
     [Parameter(Mandatory = $true)][string]$OutFile,
     [switch]$SkipBuild,
+    [string]$TexturesRoot,
+    [string]$WorldRoot,
+    [switch]$NoPresentationAssets,
     [string]$Msys2Root
 )
 
@@ -178,6 +210,29 @@ if (-not (Test-Path -LiteralPath $Rom)) {
     exit 1
 }
 $Rom = (Resolve-Path -LiteralPath $Rom).Path
+
+# The presentation roots, resolved before anything is built for the same
+# reason as -OutFile below. A root named explicitly must exist; a default one
+# that does not is a checkout that has prepared nothing for that set, which is
+# a valid demo (the presentation falls back to ORIGINAL) and is said so.
+$blobRoots = New-Object System.Collections.Generic.List[object]
+if (-not $NoPresentationAssets) {
+    foreach ($r in @(
+            [pscustomobject]@{ Name = 'texpacks';    Env = 'SL_TEXPACK_ROOT';    Given = $TexturesRoot; Default = (Join-Path $repo 'texpacks') },
+            [pscustomobject]@{ Name = 'worldassets'; Env = 'SL_WORLDASSET_ROOT'; Given = $WorldRoot;    Default = (Join-Path $repo 'worldassets') })) {
+        $p = $r.Given
+        if (-not $p) { $p = $r.Default }
+        if (Test-Path -LiteralPath $p -PathType Container) {
+            $blobRoots.Add([pscustomobject]@{ Name = $r.Name; Env = $r.Env; Path = (Resolve-Path -LiteralPath $p).Path })
+        } elseif ($r.Given) {
+            Write-Error "package-demo.ps1: no $($r.Name) root at '$p'."
+            exit 1
+        } else {
+            Write-Host ("package-demo: note - no prepared $($r.Name) root at $p; the demo " +
+                        "carries none (run prepare-all.ps1 first to include it).")
+        }
+    }
+}
 
 # Resolved before anything is built, so a bad -OutFile fails in a second
 # rather than after a full compile.
@@ -287,10 +342,32 @@ if ($assetN -eq 0) {
     exit 1
 }
 
+# THE PRESENTATION SETS, as blobs in the appended payload. Read off disk like
+# the assets above, in a fixed order (sorted by path) so the same sets always
+# produce the same payload. Each lands at assets\<root name>\<its own path>,
+# beside the boot models, and the runtime is pointed at each root by name.
+$blobs = New-Object System.Collections.Generic.List[object]
+$blobOff = [long]0
+foreach ($br in $blobRoots) {
+    $n = 0
+    foreach ($f in (Get-ChildItem -LiteralPath $br.Path -Recurse -File | Sort-Object FullName)) {
+        $rel = 'assets\' + $br.Name + '\' + $f.FullName.Substring($br.Path.Length).TrimStart('\')
+        $blobs.Add([pscustomobject]@{ Root = $br.Name; Source = $f.FullName; Rel = $rel; Size = [long]$f.Length; Offset = $blobOff; Sha = $null })
+        $blobOff += $f.Length
+        $n++
+    }
+    $br | Add-Member -NotePropertyName Count -NotePropertyValue $n
+}
+
 # A space in any of these would break the manifest's one-space field split,
 # and the bootstrap would read a truncated path. Refuse loudly here rather
 # than ship something that fails on the target machine.
-foreach ($it in $items) {
+# (One list built explicitly: `+` on two generic lists is an ArgumentException
+# in Windows PowerShell 5.1.)
+$everything = New-Object System.Collections.Generic.List[object]
+$everything.AddRange($items)
+$everything.AddRange($blobs)
+foreach ($it in $everything) {
     if ($it.Rel -match '\s') { throw "package-demo.ps1: '$($it.Rel)' contains whitespace." }
 }
 
@@ -303,12 +380,16 @@ foreach ($it in $items) {
     $it | Add-Member -NotePropertyName ResName -NotePropertyValue ("PAYLOAD_$i")
     $i++
 }
+if ($blobs.Count -gt 0) {
+    Write-Host ("package-demo: hashing {0} presentation file(s), {1:N0} MB" -f $blobs.Count, ($blobOff / 1MB))
+    foreach ($b in $blobs) { $b.Sha = Get-Sha256 $b.Source }
+}
 
 # THE PAYLOAD ID: a SHA-256 over the canonical listing of everything packaged.
 # Any changed byte in any file, any renamed destination, any added or removed
 # entry produces a different id, therefore a different cache directory, so an
 # old extraction can never be mistaken for a new one.
-$canon = ($items | Sort-Object Rel |
+$canon = ($everything | Sort-Object Rel |
           ForEach-Object { "{0}`n{1}`n{2}`n" -f $_.Rel, $_.Size, $_.Sha }) -join ''
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try {
@@ -356,10 +437,20 @@ foreach ($it in $items) {
     # -f argument list into four separate arguments to Add().
     $lines.Add(("file {0} {1} {2} {3}" -f $it.ResName, $it.Rel, $it.Size, $it.Sha))
 }
+foreach ($b in $blobs) {
+    $lines.Add(("blob {0} {1} {2} {3}" -f $b.Rel, $b.Offset, $b.Size, $b.Sha))
+}
 $lines.Add('launch core\sightline.exe')
 $lines.Add('cwd core')
 $lines.Add('env SL_ROM {ROOT}\rom\baserom.z64')
 $lines.Add('env SL_ASSET_OVERRIDE_DIR {ROOT}\assets')
+# SL_TEXPACK_ROOT / SL_WORLDASSET_ROOT: sl_gfx_texprov.c and
+# sl_gfx_worldasset.c, the same two variables play.ps1 hands a checkout
+# launch. The defaults would already resolve under SL_ASSET_OVERRIDE_DIR;
+# naming them keeps the demo's roots readable in its own launch log.
+foreach ($br in $blobRoots) {
+    $lines.Add(("env {0} {{ROOT}}\assets\{1}" -f $br.Env, $br.Name))
+}
 $lines.Add('env SL_WINDOW 1')
 $lines.Add('env SL_WINDOW_SIZE 960x720')
 
@@ -371,6 +462,11 @@ Write-Host ''
 foreach ($it in $items) {
     Write-Host ("  {0,-10} {1,-34} {2,10}  {3}" -f $it.Logical, $it.Rel, $it.Size, $it.Sha)
     Write-Host ("  {0,-10} {1}" -f '', $it.Source)
+}
+foreach ($br in $blobRoots) {
+    $sz = ($blobs | Where-Object { $_.Root -eq $br.Name } | Measure-Object -Property Size -Sum).Sum
+    Write-Host ("  {0,-10} {1,-34} {2,10}  {3} file(s), appended" -f 'set', ('assets\' + $br.Name + '\'), $sz, $br.Count)
+    Write-Host ("  {0,-10} {1}" -f '', $br.Path)
 }
 Write-Host ''
 Write-Host ("  payload id   $payloadId   (sha256 $idFull)")
@@ -446,6 +542,42 @@ if (-not (Test-Path -LiteralPath $tmpExe)) {
     throw 'package-demo.ps1: the link reported success but produced no file.'
 }
 
+# THE APPENDED PAYLOAD. Every blob back to back after the linked image, then
+# the 24-byte trailer the bootstrap finds it by: "SLPAYLD1", the payload's
+# start and its length, little-endian u64. Each file is hashed again as it is
+# copied, so a set that changed after the hashing pass above fails HERE, not
+# on the other machine.
+if ($blobs.Count -gt 0) {
+    Write-Host ("package-demo: appending {0} file(s), {1:N0} MB" -f $blobs.Count, ($blobOff / 1MB))
+    $fs = [System.IO.File]::Open($tmpExe, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write)
+    $buf = New-Object byte[] (1MB)
+    try {
+        $start = $fs.Position
+        foreach ($b in $blobs) {
+            $in = [System.IO.File]::OpenRead($b.Source)
+            $h = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+                    [void]$h.TransformBlock($buf, 0, $n, $null, 0)
+                    $fs.Write($buf, 0, $n)
+                }
+                [void]$h.TransformFinalBlock($buf, 0, 0)
+                $got = ($h.Hash | ForEach-Object { $_.ToString('x2') }) -join ''
+            } finally { $in.Dispose(); $h.Dispose() }
+            if ($got -ne $b.Sha) {
+                throw "package-demo.ps1: $($b.Source) changed while packaging (sha256 $got, hashed as $($b.Sha))."
+            }
+        }
+        $len = $fs.Position - $start
+        if ($len -ne $blobOff) { throw "package-demo.ps1: appended $len bytes, expected $blobOff." }
+        $trailer = New-Object byte[] 24
+        [System.Text.Encoding]::ASCII.GetBytes('SLPAYLD1').CopyTo($trailer, 0)
+        [System.BitConverter]::GetBytes([UInt64]$start).CopyTo($trailer, 8)
+        [System.BitConverter]::GetBytes([UInt64]$len).CopyTo($trailer, 16)
+        $fs.Write($trailer, 0, 24)
+    } finally { $fs.Dispose() }
+}
+
 # REPLACE ONLY NOW. Everything above can fail; the destination is untouched
 # until there is a finished executable to put there.
 Copy-Item -Force -LiteralPath $tmpExe -Destination $OutFile
@@ -457,6 +589,11 @@ Write-Host ("  {0}" -f $fi.FullName)
 Write-Host ("  {0} bytes" -f $fi.Length)
 Write-Host ("  sha256 {0}" -f (Get-Sha256 $OutFile))
 Write-Host ''
+if ($blobs.Count -gt 0) {
+    Write-Host ("  The first run unpacks {0:N0} MB to %LOCALAPPDATA%\sightline\demo\runtime\$payloadId;" -f ($blobOff / 1MB))
+    Write-Host '  later runs start at once. PRESENTATION (F5) has COMMUNITY HD and XBLA.'
+    Write-Host ''
+}
 Write-Host '  PRIVATE AND LOCAL. This file contains your ROM and assets derived'
 Write-Host '  from it. Keep it to yourself; it is not redistributable.'
 Write-Host ''

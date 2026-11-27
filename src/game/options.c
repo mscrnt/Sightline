@@ -165,6 +165,14 @@ extern void        sl_world_detail_step(int dir);
 extern int         sl_presentation(void);
 extern const char *sl_presentation_name(int presentation);
 extern void        sl_presentation_step(int dir);
+/* The GRAPHICS child's OPTIMIZED RENDERING: the value in force (0 or 1) and
+ * the setter, which refuses any other value and persists. The front end's
+ * OPTIONS -> SETTINGS -> DISPLAY tab calls the same pair, so the two views
+ * cannot disagree. The performance policy (src/platform/sl_perf.c) owns the
+ * meaning and resolves the row into a selection for each renderer subsystem;
+ * no copy here. */
+extern int         sl_perf_opt(void);
+extern void        sl_perf_opt_set(int on);
 #endif
 
 #define WATCH_BACKGROUND_VERTEX_COUNT 30
@@ -1153,10 +1161,15 @@ static const struct sl_watch_view sl_watch_views[SL_WVIEW_COUNT] = {
                           { "back\n",             SL_WROW_BACK, 0 } }, 4 },
     /* #43 (2026-09-21): the render-visibility profile, the front end's
      * DISPLAY tab's WORLD DETAIL row - here under GRAPHICS, the child the
-     * specified menu structure reserved for it. */
+     * specified menu structure reserved for it. OPTIMIZED RENDERING joins it
+     * as the one renderer performance selection, after the two content rows
+     * and before BACK: four rows with no bar, well inside the face (CONTROLS
+     * holds nine with two). All three are NAMED value rows, their values
+     * right-aligned in one column. */
     { "graphics\n",  { { "world detail\n",   SL_WROW_VALUE_WDETAIL, 0 },   /* #43: original / enhanced */
                        { "presentation\n",   SL_WROW_VALUE_PRESENTATION, 0 },  /* #68: original / community hd / xbla */
-                       { "back\n",           SL_WROW_BACK, 0 } }, 3 },
+                       { "optimized rendering\n", SL_WROW_VALUE_PERFOPT, 0 },  /* off / on */
+                       { "back\n",           SL_WROW_BACK, 0 } }, 4 },
 };
 
 static s32 sl_wview;              /* the view in force (SL_WVIEW_*) */
@@ -4373,6 +4386,20 @@ static void sl_sightline_value_step(s32 kind, s32 dir)
             fprintf(stderr, "sightline watch: frame rate step dir=%d -> %d(%s)\n",
                     (int) dir, sl_render_fps(), sl_render_fps_name(sl_render_fps()));
     }
+    else if (kind == SL_WROW_VALUE_PERFOPT)
+    {
+        /* The other value (two values: a step either way is the other one).
+         * The performance policy answers each renderer subsystem from the row,
+         * so the press is taken at the next pass or frame boundary the
+         * renderer reaches and never halfway through an open pass; nothing in
+         * the simulation reads it. Setting the row also ends the SL_PERF_OPT
+         * launch override, which is why the row keeps printing the value in
+         * force. */
+        sl_perf_opt_set(!sl_perf_opt());
+        if (getenv("SL_INPUT_DEBUG") != NULL)
+            fprintf(stderr, "sightline watch: optimized rendering step dir=%d -> %d\n",
+                    (int) dir, sl_perf_opt());
+    }
     else if (SL_WROW_IS_NAMED(kind))
     {
         /* #63: BUTTON LAYOUT steps through the presets (a step off CUSTOM
@@ -4442,6 +4469,7 @@ void sl_sightline_click(s32 row, s32 value)
     case SL_WROW_VALUE_WDETAIL:
     case SL_WROW_VALUE_PRESENTATION:
     case SL_WROW_VALUE_FPS:
+    case SL_WROW_VALUE_PERFOPT:
         if (value < 0) { watch_play_beep_sound(); break; }
         sl_sightline_value_step(kind, value == 0 ? -1 : +1);
         break;
@@ -4609,6 +4637,15 @@ const char *sl_sightline_row_value_name(s32 row)
         return sl_presentation_name(sl_presentation());
     if (kind == SL_WROW_VALUE_FPS)             /* #87: ORIGINAL / 30 .. 240 / UNLIMITED */
         return sl_render_fps_name(sl_render_fps());
+    /* OPTIMIZED RENDERING: OFF / ON, the value in force. Bare and LF-free like
+     * every other name answered here (sl_world_detail_name "ORIGINAL",
+     * sl_render_fps_name "UNLIMITED") - sl_draw_sightline_named and the
+     * pointer layer's own copy of that loop each lowercase the name and append
+     * the LF themselves, so the text table's LF-terminated off / on strings
+     * would arrive with two, and textMeasure counts a second '\n' as a second
+     * line. The lowercase wording is the table's own convention. */
+    if (kind == SL_WROW_VALUE_PERFOPT)
+        return sl_perf_opt() ? "on" : "off";
     if (kind == SL_WROW_VALUE_RES || kind == SL_WROW_INFO_RES)
     {
         int w = 0, h = 0;
@@ -4801,6 +4838,7 @@ Gfx *sl_draw_watch_sightline_page(Gfx *gdl, Mtx *param_2)
             case SL_WROW_VALUE_WDETAIL:
             case SL_WROW_VALUE_PRESENTATION:
             case SL_WROW_VALUE_FPS:
+            case SL_WROW_VALUE_PERFOPT:
                 gdl = sl_draw_sightline_named(gdl, i, y, label);
                 break;
             case SL_WROW_INFO_PAD:

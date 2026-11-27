@@ -1983,8 +1983,14 @@ void sl_wa_far_range(float from, float to, float *k1, float *k2);
 #define SL_WA_FILL_LARGE   8u         /* cells: a wider triangle goes to the next level, or the list */
 #define SL_WA_FILL_LEVELS  3u         /* grid levels: cell, cell x 16, cell x 256 */
 #define SL_WA_FILL_COARSEN 16u        /* each level's cell over the one before */
+/* The grid is read by the fill-query workers (src/platform/sl_worker_pool.h)
+ * between a batch's publication and its drain: a caller that may rebuild it
+ * drains the pool first (sl_gfx_dl.c nf_begin does). */
 int   sl_wa_fill_set(const struct sl_wa_asset *a, float cell);
 float sl_wa_fill_distance(const float *p, float limit);
+/* Read the grid's two lazily-read switches (SL_WA_FILL_BOXES, SL_WA_FILL_SIMD)
+ * now, on the render thread, before any worker can run a query. */
+void  sl_wa_fill_flags_init(void);
 /* #83 THE REPRODUCTION IS IN THE TRIANGLE'S OWN PLANE. sl_wa_fill_distance
  * counting only the replacement's triangles whose plane lies within
  * SL_WA_FILL_ALIGN of the unit normal `n` (either facing). A room triangle

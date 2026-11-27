@@ -131,7 +131,17 @@ static const struct sl_setting_row s_rows[SL_SET_COUNT] = {
     /* SHOW FPS (#87): 0 = off (the default), 1 = the presented-frame
      * counter in the game image's upper-right corner (sl_gfx_sdl.c). No
      * version bump: an older file lacks the key and reads 0. */
-    { "show_fps",          0, 0, 1 }
+    { "show_fps",          0, 0, 1 },
+    /* OPTIMIZED RENDERING: 0 = the original immediate / CPU render paths,
+     * 1 = the selected ones - which for the background is the exact-image
+     * auxiliary-context GPU clip prepass, not the vertex transform
+     * (src/platform/sl_perf.h, which owns the meaning and the boundary; no
+     * frame rate is promised by this row).
+     * THE ONE ROW WHOSE DEFAULT IS 1: sl_perf.c answers OFF for every
+     * question while this store is inactive, so a replay, a headless run and
+     * the matching build are unaffected by it. No version bump: an older file
+     * lacks the key and reads 1, which is the row's default for a player. */
+    { "optimized_rendering", 1, 0, 1 }
     /* RETIRED 2026-09-20 (#63): control_style, pad_button_mode and
      * controller_profile. A file still carrying them reads them as unknown
      * keys - ignored, and dropped on the next write-on-change. */
@@ -1598,6 +1608,50 @@ int main(void)
     reset_store();
     sl_settings_init();
     ck(sl_settings_get(SL_SET_SHOW_FPS) == 0, "a file without show_fps reads 0");
+
+    /* 21. OPTIMIZED RENDERING: the ONE row whose default is 1 - on a missing
+     *     file, on a file that predates the key, and on a file whose value is
+     *     malformed or out of range. 0 is written on change and reloaded (so
+     *     an OFF choice is not read back as the default), 2 / -1 are refused,
+     *     and the row sits beside the rest without disturbing them. The
+     *     POLICY over this row - including the fact that an inactive store
+     *     answers OFF whatever this value is - is sl_perf.c's own fixture. */
+    remove(path);
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 1,
+       "optimized_rendering default 1 on a missing file");
+    sl_settings_set(SL_SET_OPTIMIZED_RENDERING, 0);
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 0
+       && file_has(path, "optimized_rendering=0\n"),
+       "optimized_rendering=0 written on change");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 0,
+       "optimized_rendering=0 reloaded as 0, not as the default");
+    sl_settings_set(SL_SET_OPTIMIZED_RENDERING, 2);
+    sl_settings_set(SL_SET_OPTIMIZED_RENDERING, -1);
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 0,
+       "optimized_rendering 2 / -1 refused (stays 0)");
+    sl_settings_set(SL_SET_OPTIMIZED_RENDERING, 1);
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 1
+       && file_has(path, "optimized_rendering=1\n"),
+       "back to ON: optimized_rendering=1 written");
+    write_text(path, "version=1\noptimized_rendering=7\nvsync=1\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 1 && sl_settings_get(SL_SET_VSYNC) == 1,
+       "out-of-range optimized_rendering=7 -> 1, vsync=1 read beside it");
+    write_text(path, "version=1\noptimized_rendering=x\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 1,
+       "a malformed optimized_rendering=x reads 1");
+    write_text(path, "version=1\nshow_fps=1\n");
+    reset_store();
+    sl_settings_init();
+    ck(sl_settings_get(SL_SET_OPTIMIZED_RENDERING) == 1 && sl_settings_get(SL_SET_SHOW_FPS) == 1,
+       "a file written before the key existed reads 1 beside its own rows");
 
     remove(path);
     printf("sl_settings selftest: %d checks, %d failed\n", g_checks, g_fail);

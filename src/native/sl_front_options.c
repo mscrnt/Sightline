@@ -20,6 +20,7 @@
  *                                  ASPECT RATIO  4:3  16:9  21:9  32:9   (#45)
  *                                  FIELD OF VIEW  -  <h16>  +      [bar] (#45, #50)
  *                                  WORLD DETAIL  ORIGINAL ENHANCED       (#43)
+ *                                  OPTIMIZED RENDERING  OFF ON
  *                        PAD       BUTTON LAYOUT  <preset>              (#63)
  *                                  STICK LAYOUT   <layout>              (#63)
  *                                  LOOK SENSITIVITY -  <pct>%  + [bar] (#51)
@@ -157,6 +158,25 @@
  *       changed - and the SDL backend reads it at every present, so the
  *       counter appears or goes on the next presented frame. The watch's
  *       DISPLAY child is the other view, same calls.
+ *   OPTIMIZED RENDERING -> the ONE player-facing performance selection,
+ *       through sl_perf_opt / _set (src/platform/sl_perf.h), which owns the
+ *       meaning and resolves the row into a selection for each renderer
+ *       subsystem: the skydome pass's indexed submission with its validated
+ *       float-colour carrier, the background pass's GPU clip computation -
+ *       the auxiliary-context prepass whose frames were measured byte-exact
+ *       against the original renderer's, not the vertex transform - and the
+ *       per-vertex CPU loop reduction that depends on it. OFF is the
+ *       original immediate / CPU paths for those three, and ON promises an
+ *       exact image rather than any frame rate. The row prints the
+ *       value IN FORCE - SL_PERF_OPT when set, until the row is changed - the
+ *       SHOW FPS row's rule exactly, so what is displayed is what the policy
+ *       is resolving. Default ON: the accepted CPU work is compiled in with
+ *       its own eligibility and is not reached by this row in either
+ *       position, so OFF selects the original paths of those three passes and
+ *       switches nothing else off. The watch's SIGHTLINE -> GRAPHICS child is
+ *       the other view, the same two calls, so the two views cannot disagree.
+ *       Nineteen glyphs, the page's longest label, so its OFF / ON sit in the
+ *       short-value columns (SET_X_VAL3_1 / _2) rather than a two-value row's.
  *   THE RESOLUTION LIST (#52 follow-up, requirement 2026-09-20: a drop-down
  *       instead of clicking through each of the resolutions):
  *       a press on the row's LABEL or its VALUE opens the current mode's
@@ -233,6 +253,7 @@
 #include "../platform/sl_settings.h"
 #include "../platform/sl_display.h"
 #include "../platform/sl_window.h"       /* #52: the request seam and the applied state */
+#include "../platform/sl_perf.h"         /* the one performance selection and its policy */
 
 /* front.c helpers with no header prototype - all non-static there; declared
  * here rather than in a decomp header this file has no business editing
@@ -542,11 +563,13 @@ static s32 set_row_y(s32 slot);
 #define SET_COL_BAR    3                     /* the bar, in s_set_col */
 #define SET_TAB_Y     0x30
 #define SET_TAB_X(i)  (SET_X_LABEL + (i) * 0x5A)
-#define SET_SLOTS     10                     /* slots per tab, BACK included: 5 until #46
+#define SET_SLOTS     11                     /* slots per tab, BACK included: 5 until #46
                                               * added the BINDINGS row, 6 until #50 added
                                               * the two sensitivity rows, 8 until #87 added
                                               * FRAME RATE to DISPLAY, 9 until #87 added
-                                              * SHOW FPS; slot 7 sits at
+                                              * SHOW FPS, 10 until OPTIMIZED RENDERING
+                                              * took the eleventh slot for DISPLAY's BACK;
+                                              * slot 7 sits at
                                               * y 0x130, inside the bindings editor's own
                                               * footer / message band (0x122 / 0x134). A
                                               * tab of more than eight slots packs its rows
@@ -563,6 +586,16 @@ static s32 set_row_y(s32 slot);
                                               * a row's highlight box spans y - 1 ..
                                               * y + 0xE, and the RESOLUTION list's
                                               * own pitch is 0x14 */
+#define SET_PITCH_11  0x15                   /* an eleven-slot tab's: DISPLAY (ten rows, one
+                                              * slider) puts BACK at 0x50 + 9 * 0x15 + 0x20
+                                              * = 301 - nine pitches below the first slot
+                                              * plus the slider row's own 0x20 - inside the
+                                              * cursor's reach (front.c clamps at y 310);
+                                              * 0x16 lands BACK at exactly 310, the clamp
+                                              * itself, so 0x15 is the widest pitch that
+                                              * keeps it reachable. A row's highlight box
+                                              * spans y - 1 .. y + 0xE, so at this pitch the
+                                              * gap between two boxes is 6 */
 #define SET_ROW_BACK_MIN 5                   /* BACK's slot on a tab of up to five rows -
                                               * the accepted GAMEPLAY / DISPLAY layout;
                                               * a longer tab's BACK follows its last row
@@ -587,7 +620,8 @@ enum { SR_NONE = 0, SR_LOOK, SR_AIM, SR_MINV, SR_SPRINT, SR_BINDINGS, SR_ASPECT,
        SR_WDETAIL,      /* #43: WORLD DETAIL - ORIGINAL / ENHANCED, a two-value row (sl_world_detail) */
        SR_PRESENTATION, /* #68: PRESENTATION - one value cell, advancing (ORIGINAL / COMMUNITY HD / XBLA) */
        SR_FPS,          /* #87: FRAME RATE - `-` <rate> `+` (ORIGINAL / 30 .. 240 / UNLIMITED, wrapping) */
-       SR_SHOWFPS };    /* #87: SHOW FPS - OFF / ON, a two-value row (sl_show_fps) */
+       SR_SHOWFPS,      /* #87: SHOW FPS - OFF / ON, a two-value row (sl_show_fps) */
+       SR_PERFOPT };    /* OPTIMIZED RENDERING - OFF / ON in the short-value columns (sl_perf_opt) */
 
 /* THE TAB LIST. Adding a tab = one entry: its label and its content rows in
  * slot order (BACK takes the slot after the last row, SET_ROW_BACK_MIN at
@@ -617,7 +651,16 @@ static const struct sl_settings_tab s_tabs[] = {
      * together, then SHOW FPS, which reads what they produce - nine rows,
      * the one tab using all SET_SLOTS slots, so it packs at SET_PITCH_10 and
      * its BACK stays inside the cursor's reach. */
-    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_FPS, SR_SHOWFPS, SR_ASPECT, SR_FOV, SR_WDETAIL, SR_PRESENTATION } },  /* #52, #87, #45, #43, #68 */
+    /* OPTIMIZED RENDERING LAST, after PRESENTATION - ten rows, still the one
+     * tab using all SET_SLOTS slots, now packing at SET_PITCH_11 with BACK at
+     * y 301. Appending it is what keeps every accepted row at the slot index
+     * it already had: only the pitch moves them, so no row changes its
+     * neighbours and nothing above it has to be re-checked. Last is also
+     * where it belongs by reading order - the rows above choose WHAT is
+     * drawn (the window, the pacing, the frustum, the content), this one
+     * chooses by WHICH PATH the renderer draws it, which is the only row on
+     * the tab a player can leave alone without changing what they see. */
+    { "DISPLAY\n",  { SR_WMODE, SR_RES, SR_VSYNC, SR_FPS, SR_SHOWFPS, SR_ASPECT, SR_FOV, SR_WDETAIL, SR_PRESENTATION, SR_PERFOPT } },  /* #52, #87, #45, #43, #68 */
     /* #63: the pad's own tab (a fourth tab: CONTROL was full when it landed,
      * and the accepted rows do not move; three glyphs, so the strip's fourth
      * slot at x 0x145 clears the PREVIOUS tab at 390): the two layouts, the
@@ -922,14 +965,16 @@ static s32 set_row_kind(s32 slot)
 
 /* A slot's text y: 0x50 + slot * 0x20 on every tab of up to eight slots (the
  * accepted layouts, unchanged); a longer tab packs at SET_PITCH_9 (nine
- * slots) or SET_PITCH_10 (ten) below a non-slider row and 0x20 below a
- * slider row, whose bar ends at y + SET_BAR_BOTTOM. */
+ * slots), SET_PITCH_10 (ten) or SET_PITCH_11 (eleven) below a non-slider row
+ * and 0x20 below a slider row, whose bar ends at y + SET_BAR_BOTTOM. The
+ * pitch is chosen by BACK's slot alone, so a tab's layout depends only on how
+ * many rows it carries. */
 static s32 set_row_y(s32 slot)
 {
     s32 y = 0x50, k, back = set_row_back(), pitch;
     if (back < 8)
         return 0x50 + slot * 0x20;
-    pitch = back == 8 ? SET_PITCH_9 : SET_PITCH_10;
+    pitch = back == 8 ? SET_PITCH_9 : back == 9 ? SET_PITCH_10 : SET_PITCH_11;
     for (k = 0; k < slot; k++)
         y += set_row_is_slider(set_row_kind(k)) ? 0x20 : pitch;
     return y;
@@ -1054,6 +1099,15 @@ static void set_activate(s32 row, s32 col)
              * counter appears or goes on the next presented frame. */
             sl_show_fps_set(col < 0 ? !sl_show_fps() : col);
             break;
+        case SR_PERFOPT:
+            /* The SHOW FPS rule: a value cell sets OFF (0) / ON (1), the
+             * label flips. Each renderer subsystem asks the policy
+             * (src/platform/sl_perf.h) at the next pass or frame boundary it
+             * reaches, so the selection applies there and never mid pass -
+             * the pass that is already submitting keeps the path it started
+             * on. The setter persists it and ends any SL_PERF_OPT override. */
+            sl_perf_opt_set(col < 0 ? !sl_perf_opt() : col);
+            break;
         case SR_VSYNC:
             /* #52: a value cell asks for OFF (0) / ON (1), the label flips;
              * the backend reads the swap interval back before it is stored. */
@@ -1132,7 +1186,7 @@ static void set_activate(s32 row, s32 col)
         int wm = 0, ww = 0, wh = 0, wv = 0, sw = 0, sh = 0;
         sl_window_state(&wm, &ww, &wh, &wv);
         sl_window_size_shown(&sw, &sh);
-        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d fps=%d(%s) showfps=%d wdetail=%d(%s) textures=%d(%s)\n",
+        fprintf(stderr, "sightline options: tab=%d row=%d col=%d -> look=%d aim=%d minv=%d sprint=%d aspect=%d(%s) fov=%d(h16=%d) msens=%d ssens=%d buttons=%s sticks=%s family=%s psens=%d pdz=%d mdz=%d smode=%d cmode=%d wmode=%d(%s) res=%dx%d(%s) vsync=%d req=%d fps=%d(%s) showfps=%d wdetail=%d(%s) textures=%d(%s) perfopt=%d\n",
                 (int) s_set_tab, (int) row, (int) col,
                 sl_settings_get(SL_SET_LOOK_UPDOWN),
                 sl_settings_get(SL_SET_AIM_CONTROL), sl_mouse_invert_y_get(),
@@ -1149,7 +1203,8 @@ static void set_activate(s32 row, s32 col)
                 wv, sl_window_request_pending(),
                 sl_render_fps(), sl_render_fps_name(sl_render_fps()), sl_show_fps(),
                 sl_world_detail(), sl_world_detail_name(sl_world_detail()),
-                sl_presentation(), sl_presentation_name(sl_presentation()));
+                sl_presentation(), sl_presentation_name(sl_presentation()),
+                sl_perf_opt());
     }
 }
 
@@ -1300,6 +1355,18 @@ void sl_interface_menu_settings(void)
                     else if (SET_COL_TOP(SET_X_VAL3_3) <= cursor_h_pos)    s_set_col = 2;
                     else if (SET_COL_TOP(SET_X_VAL3_1) <= cursor_h_pos)    s_set_col = 1;
                     else if (SET_COL_TOP(SET_X_VAL0) <= cursor_h_pos)      s_set_col = 0;
+                }
+                else if (set_row_kind(s_set_row) == SR_PERFOPT)
+                {
+                    /* Two values in the LAST pair of short-value columns,
+                     * resolved from the right: a nineteen-glyph label needs
+                     * the room, so OFF sits at SET_X_VAL3_2 and ON at
+                     * SET_X_VAL3_3 (see the draw case). This branch sits above
+                     * the generic two-value one, which would otherwise claim
+                     * the row at SET_X_VAL0 / SET_X_VAL1 - bands the row draws
+                     * nothing in. */
+                    if (SET_COL_TOP(SET_X_VAL3_3) <= cursor_h_pos)         s_set_col = 1;
+                    else if (SET_COL_TOP(SET_X_VAL3_2) <= cursor_h_pos)    s_set_col = 0;
                 }
                 else if (set_row_kind(s_set_row) != SR_BLAYOUT && set_row_kind(s_set_row) != SR_SLAYOUT
                     && set_row_kind(s_set_row) != SR_BINDINGS && set_row_kind(s_set_row) != SR_WMODE
@@ -1465,6 +1532,7 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
     static char l_vsync[] = "VSYNC\n";
     static char l_fps[]   = "FRAME RATE\n";      /* #87 */
     static char l_showfps[] = "SHOW FPS\n";      /* #87 */
+    static char l_perfopt[] = "OPTIMIZED RENDERING\n";
     static char v_fps[16];
     static char l_wdetail[]  = "WORLD DETAIL\n"; /* #43 */
     static char v_original[] = "ORIGINAL\n";
@@ -1637,6 +1705,37 @@ Gfx *sl_constructor_menu_settings(Gfx *DL)
             /* #87: OFF / ON, the value in force. */
             DL = set_two_value_row(DL, i, l_showfps, v_off, v_on, sl_show_fps() ? 1 : 0);
             break;
+        case SR_PERFOPT:
+        {
+            /* OFF / ON, the value in force (sl_perf_opt: the stored row, or
+             * SL_PERF_OPT until the row is changed) - read here, never
+             * cached, so the page shows what the policy is resolving and
+             * cannot disagree with the watch's GRAPHICS child.
+             *
+             * NOT set_two_value_row, AND NOT THE SLIDER ROWS' COLUMNS EITHER.
+             * This label is NINETEEN glyphs from SET_X_LABEL (55), the longest
+             * on the page. set_two_value_row's first column opens its hit band
+             * at SET_COL_TOP(SET_X_VAL0) = 173, which leaves 118 for the
+             * label; the slider rows' first column opens at
+             * SET_COL_TOP(SET_X_VAL3_1) = 224, which leaves 169 and is
+             * recorded there as clearing an EIGHTEEN-glyph label (SCOPED
+             * SENSITIVITY). Nineteen glyphs past an eighteen-glyph bound is
+             * not a margin, and the font's widths are read out of the ROM at
+             * run time so they cannot be measured here - so the cells take the
+             * NEXT pair of short-value columns, SET_X_VAL3_2 (281) and
+             * SET_X_VAL3_3 (332). The label then has 220 to SET_COL_TOP(281)
+             * = 275, and ON at 332 ends near 345, inside the clearance
+             * SET_X_VAL3_3 is already recorded as having against the PREVIOUS
+             * tab at 390. The colour rule stays set_two_value_row's: the
+             * current value in SHADE_ON, the other in 0xFF, the box on
+             * whichever element the cursor is over. */
+            s32 cur = sl_perf_opt() ? 1 : 0;
+            on = s_set_row == i && !tab_prev_highlight;
+            DL = set_text(DL, SET_X_LABEL, y, l_perfopt, 0xFF, on && s_set_col < 0);
+            DL = set_text(DL, SET_X_VAL3_2, y, v_off, cur == 0 ? SHADE_ON : 0xFF, on && s_set_col == 0);
+            DL = set_text(DL, SET_X_VAL3_3, y, v_on, cur == 1 ? SHADE_ON : 0xFF, on && s_set_col == 1);
+            break;
+        }
         case SR_FPS:
         {
             /* #87: `-` <rate> `+` - the value in force (the store's, or

@@ -472,6 +472,15 @@ static int fogarray_ok(void)
 #include "sl_gfx_tex.h"
 #include "sl_gfx_texprov.h"           /* #47: the texture provider seam */
 #include "sl_gfx_worldasset.h"        /* #68: the world-asset provider seam */
+#include "../platform/sl_worker_pool.h" /* v0.4: the fill queries on workers */
+#include "../platform/sl_bg_worker.h"   /* v0.4: the background pass's vertex helper */
+#include "../platform/sl_perf.h"        /* v0.4: the OPTIMIZED RENDERING row's policy */
+#include "sl_gfx_bggpu.h"             /* v0.4: the background pass's GPU vertex program */
+#include "sl_gfx_bgtf.h"              /* v0.4: the GPU clip prepass candidate (SL_BG_TF_CLIP) */
+#include "sl_gfx_bgstate.h"           /* v0.4: the renderer-state probe (SL_BG_GLSTATE) */
+#include "sl_bgsnap.h"                /* the background draw snapshot's format */
+#include "sl_bgsnap_write.h"          /* and its off-by-default writer */
+#include "sl_gfx_skybatch.h"          /* v0.4: the skydome pass's indexed GPU submission */
 #include "sl_gfx_charskin.h"          /* #70: the character-asset bridge */
 #include "../sl_asset_override.h"
 #include "../platform/sl_display.h"     /* #45: the aspect selection and the one viewport fit */
@@ -10209,10 +10218,21 @@ static void sciss_gl_apply(int l, int t, int r, int b)
         w = right - x;
         if (w <= 0) return;
     }
-    if (getenv("SL_SCISSOR_DBG") != NULL) {
-        static int left = 40;
-        if (left > 0) { left--; fprintf(stderr, "sl_sciss_dbg: logical [%d,%d]-[%d,%d] of %ux%u -> gl %d,%d %dx%d (k=%.3f content x %d..%d)\n",
-                                        l, t, r, b, g_scr_w, g_scr_h, x, y, w, h, g_aspect_k, g_content_vp[0], g_content_vp[0] + g_content_vp[2]); }
+    {   /* v0.4 (B-PERF1): whether SL_SCISSOR_DBG is set, read once. This runs per
+         * scissor change - measured 48 times a walk in Statue room 18, each a
+         * getenv scan of the whole environment - and nothing in the tree writes
+         * the variable (the game's only environment writes are the startup
+         * paths in sl_run_open), so its presence at the first scissor is its
+         * presence for the process.
+         * Only the getenv != NULL answer is kept, never the pointer. Render
+         * thread only. */
+        static int sciss_dbg = -1;
+        if (sciss_dbg < 0) sciss_dbg = (getenv("SL_SCISSOR_DBG") != NULL);
+        if (sciss_dbg) {
+            static int left = 40;
+            if (left > 0) { left--; fprintf(stderr, "sl_sciss_dbg: logical [%d,%d]-[%d,%d] of %ux%u -> gl %d,%d %dx%d (k=%.3f content x %d..%d)\n",
+                                            l, t, r, b, g_scr_w, g_scr_h, x, y, w, h, g_aspect_k, g_content_vp[0], g_content_vp[0] + g_content_vp[2]); }
+        }
     }
     batch_end();               /* glEnable/glScissor are illegal in glBegin */
     glScissor(x, y, w, h);
@@ -12858,6 +12878,14 @@ static int       g_bg_nomip = -1;    /* SL_BG_NOMIP: level 0 only, to separate m
                                       * collapse from a coordinate that is wrong */
 static int       g_bgbox_on = -1;
 static unsigned  g_bgbox_n;
+static int bg_worldbox_on(void)     /* SL_BG_WORLDBOX, read once */
+{
+    if (g_bgbox_on < 0) {
+        const char *v = getenv("SL_BG_WORLDBOX");
+        g_bgbox_on = (v != NULL && *v != '0');
+    }
+    return g_bgbox_on > 0;
+}
 static float     g_bgbox_lo[3] = { 1e30f, 1e30f, 1e30f };
 static float     g_bgbox_hi[3] = { -1e30f, -1e30f, -1e30f };
 
@@ -12916,11 +12944,167 @@ static void nf_cache_reset(void)
  * eight cells about a corner cover its search box. Rebuilt only when the
  * item changes, and the decisions with it. */
 static void nf_open_memo_reset(void);
+
+/* v0.4 THE FILL QUERIES ON WORKERS (B-PERF1; the pool's contract is in
+ * src/platform/sl_worker_pool.h). Every input of a walk's open-hole traces is
+ * fixed when nf_frame returns: the eye of either projection branch (g_nf_vinv,
+ * g_nf_eye, g_nf_org, g_nf_vis and g_nf_sc are written only there), the scale,
+ * and the fill grid (rebuilt only by sl_wa_fill_set, from nf_begin, after a
+ * drain); the hole points are nf_registered's cached ones. So nf_frame predicts
+ * the walk's traces from the previous walk's (projection branch, hole point)
+ * list, skips those the memo already answers, and hands the rest to at most two
+ * workers as exact (eye, hole point, scale) keys; at each memo miss the render
+ * thread takes the answer for its exact key, and traces as before when no batch
+ * holds it. The memo, the registration cache, every counter and every decision
+ * keep their order on the render thread, and no answer is carried from one
+ * walk's eye to another. SL_FILL_WORKERS: unset or auto - two workers when the
+ * process may run on at least four physical cores, none otherwise; 0 - none
+ * (the inline trace, as before); 1 or 2 - that many; anything else - none, said
+ * once. The workers start at the first nf_frame with a fill grid, so a
+ * presentation that draws no replacement starts none. */
+static int g_qw_mode = -1;                /* -1 not asked yet, 0 inline, 1..2 workers */
+#define QW_REC 4096u
+struct qw_rec { int which; float hq[3]; };
+static struct qw_rec g_qw_rec[2][QW_REC]; /* a walk's (branch, hole point) list, each once */
+static unsigned g_qw_nrec[2], g_qw_cur;
+static unsigned g_qw_rgen[QW_REC * 2u], g_qw_rslot[QW_REC * 2u], g_qw_rgn = 1u;
+#define QW_TAB 8192u
+static unsigned g_qw_tgen[QW_TAB], g_qw_tidx[QW_TAB], g_qw_tg = 1u;   /* exact key -> job */
+static unsigned g_qw_njob;
+static unsigned char g_qw_taken[SL_POOL_MAX_JOBS];
+static unsigned long g_qw_batches, g_qw_jobs, g_qw_served, g_qw_worker, g_qw_waited, g_qw_unpred,
+                     g_qw_unused, g_qw_envfb;
+static void qw_stop_at_exit(void) { (void) sl_pool_stop(2000); }
+/* v0.4 the background vertex helper's census (bgv_run below): set on the render thread only */
+static int g_bgv_mode = -1;                  /* -1 unread, 0 off (SL_BG_VERTEX_WORKER=0), 1 auto */
+static int g_bgv_cores = -2;                 /* allowed physical cores when first read */
+static unsigned long g_bgv_split, g_bgv_serial, g_bgv_r_off, g_bgv_r_cores, g_bgv_r_small, g_bgv_r_fog,
+                     g_bgv_r_stats, g_bgv_r_start, g_bgv_r_fp;
+static int qw_mode(void)
+{
+    if (g_qw_mode < 0) {
+        int invalid = 0, n;
+        const char *v = getenv("SL_FILL_WORKERS");
+        n = sl_pool_choose(v, sl_pool_allowed_physical_cores(), &invalid);
+        if (invalid)
+            fprintf(stderr, "#88 fill queries: SL_FILL_WORKERS='%s' is not auto, 0, 1 or 2 - "
+                            "the inline trace\n", v);
+        g_qw_mode = 0;
+        if (n > 0) {
+            sl_wa_fill_flags_init();          /* the grid's lazy switches, read before any worker */
+            g_qw_mode = sl_pool_start(n, sl_wa_fill_open);
+            if (g_qw_mode > 0) atexit(qw_stop_at_exit);
+            else fprintf(stderr, "#88 fill queries: no worker could be started - the inline trace\n");
+        }
+    }
+    return g_qw_mode;
+}
+static unsigned qw_hash(const float *k, unsigned n)
+{
+    const unsigned char *b = (const unsigned char *) k;
+    unsigned h = 2166136261u, j;
+    for (j = 0; j < n * sizeof(float); j++) { h ^= b[j]; h *= 16777619u; }
+    return h;
+}
+static void qw_record(int which, const float *hq)
+{
+    float k[4];
+    unsigned h, i, c = g_qw_cur;
+    if (g_qw_nrec[c] >= QW_REC) return;
+    k[0] = (float) which; k[1] = hq[0]; k[2] = hq[1]; k[3] = hq[2];
+    h = qw_hash(k, 4);
+    for (i = 0; i < QW_REC * 2u; i++) {
+        const unsigned s = (h + i) & (QW_REC * 2u - 1u);
+        if (g_qw_rgen[s] != g_qw_rgn) {
+            struct qw_rec *r = &g_qw_rec[c][g_qw_nrec[c]];
+            g_qw_rgen[s] = g_qw_rgn; g_qw_rslot[s] = g_qw_nrec[c];
+            r->which = which; r->hq[0] = hq[0]; r->hq[1] = hq[1]; r->hq[2] = hq[2];
+            g_qw_nrec[c]++;
+            return;
+        }
+        {
+            const struct qw_rec *r = &g_qw_rec[c][g_qw_rslot[s]];
+            if (r->which == which && memcmp(r->hq, hq, sizeof r->hq) == 0) return;
+        }
+    }
+}
+static int qw_job_find(const float *key7)
+{
+    const struct sl_pool_job *jb = sl_pool_jobs();
+    unsigned h = qw_hash(key7, 7), i;
+    for (i = 0; i < QW_TAB; i++) {
+        const unsigned s = (h + i) & (QW_TAB - 1u);
+        const struct sl_pool_job *j;
+        if (g_qw_tgen[s] != g_qw_tg) return -1;
+        j = &jb[g_qw_tidx[s]];
+        if (memcmp(j->eye, key7, 3 * sizeof(float)) == 0 && memcmp(j->hq, key7 + 3, 3 * sizeof(float)) == 0
+            && memcmp(&j->sc, key7 + 6, sizeof(float)) == 0)
+            return (int) g_qw_tidx[s];
+    }
+    return -1;
+}
+static void qw_job_insert(const float *key7, unsigned idx)
+{
+    unsigned h = qw_hash(key7, 7), i;
+    for (i = 0; i < QW_TAB; i++) {
+        const unsigned s = (h + i) & (QW_TAB - 1u);
+        if (g_qw_tgen[s] != g_qw_tg) { g_qw_tgen[s] = g_qw_tg; g_qw_tidx[s] = idx; return; }
+    }
+}
+/* the batch is over: drain, and count what was computed and never asked for */
+static void qw_retire(void)
+{
+    const struct sl_pool_job *jb = sl_pool_jobs();
+    unsigned i;
+    sl_pool_drain();
+    for (i = 0; i < g_qw_njob; i++)
+        if (jb[i].state == 3 && !g_qw_taken[i]) g_qw_unused++;
+    g_qw_njob = 0;
+    g_qw_tg++;
+}
+
 static void nf_begin(const struct sl_wa_asset *a, float sc)
 {
     float cell = (sc > 0.0f) ? 16.0f * SL_WA_FILL_REGISTER / sc : 0.0f;
+    if (g_qw_mode > 0) qw_retire();           /* no worker reads a grid sl_wa_fill_set may rebuild */
     if (sl_wa_fill_set(a, cell)) { nf_cache_reset(); nf_open_memo_reset(); }
     g_nf_ready = 0;
+}
+
+/* v0.4 the walk's trace inputs are fixed: predict, skip what the memo
+ * answers, publish (see g_qw_mode above) */
+static int nf_eye_of(int which, float *eye);
+static int nf_open_memo_has(const float *key7);
+static void qw_dispatch(void)
+{
+    struct sl_pool_job *jb;
+    unsigned prev, i, n = 0;
+    if (qw_mode() <= 0) return;
+    qw_retire();
+    prev = g_qw_cur;
+    g_qw_cur ^= 1u;                           /* this walk records into the other list */
+    g_qw_nrec[g_qw_cur] = 0;
+    g_qw_rgn++;
+    jb = sl_pool_jobs();
+    for (i = 0; i < g_qw_nrec[prev] && n < SL_POOL_MAX_JOBS; i++) {
+        const struct qw_rec *r = &g_qw_rec[prev][i];
+        float key[7];
+        if (nf_eye_of(r->which, key) <= 0) continue;
+        key[3] = r->hq[0]; key[4] = r->hq[1]; key[5] = r->hq[2]; key[6] = g_nf_sc;
+        if (nf_open_memo_has(key) || qw_job_find(key) >= 0) continue;
+        memcpy(jb[n].eye, key, 3 * sizeof(float));
+        memcpy(jb[n].hq, key + 3, 3 * sizeof(float));
+        jb[n].sc = key[6];
+        jb[n].by = 0;
+        jb[n].state = 1;
+        qw_job_insert(key, n);
+        n++;
+    }
+    memset(g_qw_taken, 0, n);
+    g_qw_njob = n;
+    g_qw_batches++;
+    g_qw_jobs += n;
+    sl_pool_publish(n);
 }
 
 /* The inverse of the PLAIN branch's view (row vectors: v' = v * M, an
@@ -13003,6 +13187,7 @@ static void nf_frame(float sc, float vis)
         for (k = 0; k < 3; k++) g_nf_org[k] = ro[k];
     }
     g_nf_ready = (sc > 0.0f && vis > 0.0f && (g_nf_have_view || g_nf_have_ro));
+    if (g_nf_ready) qw_dispatch();            /* v0.4: the walk's predicted traces to the workers */
     /* THE WITNESS: the spaces the fill runs backwards, said once and again
      * whenever readiness changes - a fill that never engages is a space
      * that was not in hand, and this is the line that says so. */
@@ -13376,6 +13561,21 @@ static void nf_report(FILE *f)
     if (g_nf_kept_tris)
         fprintf(f, "#96 nativefill: %u translucent triangles of named rooms drawn where the "
                    "replacement has no surface (SL_BG_KEEP_ROOMS=0: off)\n", g_nf_kept_tris);
+    if (g_qw_mode > 0)
+        fprintf(f, "#88 fill queries: %d worker%s, %lu batches of %lu predicted traces; %lu answers "
+                   "taken from a batch (%lu computed by a worker, %lu waited for), %lu traced inline "
+                   "(not predicted), %lu computed and not asked, %lu answered inline after a "
+                   "floating-point change (SL_FILL_WORKERS=0: inline)\n",
+                g_qw_mode, g_qw_mode == 1 ? "" : "s", g_qw_batches, g_qw_jobs, g_qw_served,
+                g_qw_worker, g_qw_waited, g_qw_unpred, g_qw_unused, g_qw_envfb);
+    if (g_bgv_mode >= 0)
+        fprintf(f, "#88 background vertices: helper %s (SL_BG_VERTEX_WORKER %s, %d allowed physical cores); "
+                   "%lu walks in two ranges, %lu on the render thread alone (off %lu, under four cores %lu, "
+                   "small item %lu, level fog %lu, statistics %lu, no helper %lu); %lu upper ranges "
+                   "recomputed after a floating-point environment the helper did not take\n",
+                sl_bgw_state(), g_bgv_mode ? "auto" : "0", g_bgv_cores, g_bgv_split, g_bgv_serial,
+                g_bgv_r_off, g_bgv_r_cores, g_bgv_r_small, g_bgv_r_fog, g_bgv_r_stats, g_bgv_r_start,
+                g_bgv_r_fp);
 }
 
 /* ARMED AT ALL, in one int. Every per-triangle test below is behind this, so
@@ -13497,13 +13697,49 @@ static void nf_open_memo_reset(void)
     memset(g_nf_open_memo, 0, sizeof g_nf_open_memo);
     g_nf_open_memo_n = 0;
 }
+/* v0.4 the memo asked read-only - no counter, no insertion - for qw_dispatch */
+static int nf_open_memo_has(const float *key7)
+{
+    struct nf_open_ent key;
+    unsigned h = 2166136261u, i, j;
+    const unsigned char *b;
+    if (!nf_open_memo_on()) return 0;
+    memset(&key, 0, sizeof key);
+    memcpy(key.k, key7, sizeof key.k);
+    b = (const unsigned char *) key.k;
+    for (j = 0; j < sizeof key.k; j++) { h ^= b[j]; h *= 16777619u; }
+    for (i = 0; i < 16u; i++) {
+        const struct nf_open_ent *e = &g_nf_open_memo[(h + i) & (NF_OPEN_MEMO - 1u)];
+        if (!e->used) return 0;
+        if (memcmp(e->k, key.k, sizeof key.k) == 0) return 1;
+    }
+    return 0;
+}
+/* v0.4 the trace for a memo miss: the batch's answer for this exact key when
+ * it holds one, else the trace as always */
+static int qw_fill_open(const float *eye)
+{
+    float key[7];
+    int j, r = 0, how = 0;
+    if (g_qw_njob == 0) return sl_wa_fill_open(eye, g_nf_hq, g_nf_sc);
+    key[0] = eye[0]; key[1] = eye[1]; key[2] = eye[2];
+    key[3] = g_nf_hq[0]; key[4] = g_nf_hq[1]; key[5] = g_nf_hq[2]; key[6] = g_nf_sc;
+    j = qw_job_find(key);
+    if (j < 0) { g_qw_unpred++; return sl_wa_fill_open(eye, g_nf_hq, g_nf_sc); }
+    if (!sl_pool_take((unsigned) j, &r, &how)) { g_qw_envfb++; return sl_wa_fill_open(eye, g_nf_hq, g_nf_sc); }
+    g_qw_taken[j] = 1;
+    g_qw_served++;
+    if (how == 1) g_qw_worker++; else if (how == 2) g_qw_waited++;
+    return r;
+}
 static int nf_open_traced(const float *eye)
 {
     struct nf_open_ent key, *e = NULL;
     unsigned h = 2166136261u, i, j;
     const unsigned char *b;
     int open;
-    if (!nf_open_memo_on()) return sl_wa_fill_open(eye, g_nf_hq, g_nf_sc);
+    if (g_qw_mode > 0) qw_record(g_proj_world_which, g_nf_hq);   /* v0.4 the next walk's prediction */
+    if (!nf_open_memo_on()) return g_qw_mode > 0 ? qw_fill_open(eye) : sl_wa_fill_open(eye, g_nf_hq, g_nf_sc);
     memset(&key, 0, sizeof key);
     for (i = 0; i < 3; i++) { key.k[i] = eye[i]; key.k[3 + i] = g_nf_hq[i]; }
     key.k[6] = g_nf_sc;
@@ -13514,7 +13750,7 @@ static int nf_open_traced(const float *eye)
         if (!e->used) break;
         if (memcmp(e->k, key.k, sizeof key.k) == 0) { g_nf_open_hits++; return e->open; }
     }
-    open = sl_wa_fill_open(eye, g_nf_hq, g_nf_sc);
+    open = g_qw_mode > 0 ? qw_fill_open(eye) : sl_wa_fill_open(eye, g_nf_hq, g_nf_sc);
     if (g_nf_open_memo_n >= (NF_OPEN_MEMO / 4u) * 3u) {
         nf_open_memo_reset();               /* three quarters full: start over */
         e = NULL;
@@ -13534,19 +13770,27 @@ static int nf_open_traced(const float *eye)
 /* #81 the eye in item space, by the projection in force (nf_item_point's
  * inverse of the eye), and whether the replacement leaves the last decided
  * hole open behind it (sl_wa_fill_open). */
+/* the eye of a projection branch in item space: 1 = computed, 0 = not in hand
+ * for that branch, -1 = no world projection. One function, so a predicted
+ * key (qw_dispatch) carries the same bits as the ask it answers. */
+static int nf_eye_of(int which, float *eye)
+{
+    int k;
+    if (which == 1) {
+        if (!g_nf_have_view) return 0;
+        for (k = 0; k < 3; k++) eye[k] = g_nf_vinv[12 + k] / g_nf_sc;
+    } else if (which == 2) {
+        if (!g_nf_have_ro) return 0;
+        for (k = 0; k < 3; k++) eye[k] = (g_nf_eye[k] / g_nf_vis + g_nf_org[k]) / g_nf_sc;
+    } else {
+        return -1;
+    }
+    return 1;
+}
 static int nf_open(void)
 {
     float eye[3];
-    int k;
-    if (g_proj_world_which == 1) {
-        if (!g_nf_have_view) return 1;
-        for (k = 0; k < 3; k++) eye[k] = g_nf_vinv[12 + k] / g_nf_sc;
-    } else if (g_proj_world_which == 2) {
-        if (!g_nf_have_ro) return 1;
-        for (k = 0; k < 3; k++) eye[k] = (g_nf_eye[k] / g_nf_vis + g_nf_org[k]) / g_nf_sc;
-    } else {
-        return 1;
-    }
+    if (nf_eye_of(g_proj_world_which, eye) <= 0) return 1;
     if (nf_open_traced(eye)) return 1;
     g_nf_void_tris++;
     return 0;
@@ -14663,7 +14907,8 @@ static int bg_anim_on(void)
  * rather than asserted - "the background is fogged" is a claim about a
  * distribution, and a single number for it would hide the one shape that
  * matters, which is that the near vertices are near zero and the far ones
- * saturate. */
+ * saturate. Kept only while a reader is on (SL_BG_FOGTRACE, SL_DL_CENSUS):
+ * B-PERF1, the vertex loop. */
 static double   g_bg_fog_sum;
 static float    g_bg_fog_min, g_bg_fog_max;
 static float    g_bg_ndc_min, g_bg_ndc_max;   /* the depth those came from */
@@ -14674,6 +14919,42 @@ static unsigned g_bg_fog_n, g_bg_fog_full;
 static int      g_bg_fog_mode, g_bg_fog_which;
 static unsigned g_bg_min_filter, g_bg_mag_filter, g_bg_levels;
 static const struct sl_wa_asset *g_bg_asset;
+
+/* WHICH ITEM THE TWO POINTERS ABOVE WERE SELECTED FOR, or NULL for "not asked
+ * yet". This is the cache key for the one lookup the renderer makes, and it is
+ * the ITEM rather than nothing at all.
+ *
+ * MEASURED 2026-11-01, one process, XBLA, SL_DL_CENSUS=1: with the selection
+ * keyed on the pointer being NULL, Dam followed by Facility in one process
+ * left `#68 background resident` at Dam's 150993 vertices for the whole of
+ * Facility, and `background/facility` was never opened - while the texture
+ * provider moved to stage 34 and the stage fog to environment row 34 on the
+ * same frame. The result is Dam's terrain and dome drawn around Facility's
+ * rooms, with Facility's collision, audio and objectives live: the stage the
+ * player is in, inside the stage they left. Any earlier stage in the same
+ * process selects the pair this way; a title-only run was measured entering
+ * the attract demo's Dam at frame 6582, which is one such earlier stage. A
+ * stage reached first in a process, by direct boot, selected correctly in the
+ * runs measured.
+ *
+ * The provider keeps an asset for the life of the process (sl_wa_lookup writes
+ * a slot once and never evicts), so a resolved pointer stays valid - but WHICH
+ * asset a stage draws is a property of THE STAGE. Keying on the item path
+ * therefore re-selects exactly when the item changes, which covers the stage
+ * change and also an item that changes WITHIN a stage (a borrowed dome follows
+ * the game's environment row, D-031). The item strings come from the tables in
+ * src/native/sl_world_assets.c and src/platform/sl_presentation.c and are
+ * string literals, so the key may be held across frames; it is compared by
+ * value rather than by pointer so that remains true of any future source.
+ *
+ * It also makes an ABSENT asset cost one lookup instead of one per frame: the
+ * NULL that Facility's missing skydome resolves to is now remembered as
+ * "asked, and not provided". MEASURED on Facility, whose source holds no dome:
+ * the provider's lookup counter advanced 22 per frame before and 4 after, and
+ * the 4 that remain are the character and prop classes, which have their own
+ * caches and are not this seam. */
+static const char *g_bg_sel_item;
+static const char *g_sky_sel_item;
 
 /* DRAW ISOLATION, diagnostic only, both off unless named. The question a
  * misplaced or bleeding surface raises is "which mesh is that", and nothing
@@ -15041,6 +15322,7 @@ static void sky_frame_begin(void)
      * only re-armed by a pass that actually draws - never latched. */
     g_bg_suppress = 0;
     g_nf_ready = 0;                            /* #78 no space until the pass runs */
+    if (g_qw_mode > 0 && g_qw_njob != 0) qw_retire();   /* v0.4: no batch outlives its frame */
     if (!sl_wa_active()) return;               /* the whole feature, off */
 
     item = sl_wa_stage_item_path();
@@ -15059,8 +15341,15 @@ static void sky_frame_begin(void)
      * at the draw so a sky this composition does not contain is never even
      * opened, and the census reports what was composed rather than what
      * exists. */
-    if (g_bg_asset == NULL)
+    if (g_bg_sel_item == NULL || strcmp(g_bg_sel_item, item) != 0) {
+        /* The stage this selection answers for changed (see g_bg_sel_item). */
+        fprintf(stderr, "#68 worldasset: stage item %s -> %s, selecting the "
+                        "background and the dome for the stage now loaded\n",
+                (g_bg_sel_item != NULL) ? g_bg_sel_item : "(none)", item);
         g_bg_asset = sl_wa_lookup(SL_WA_CLASS_BACKGROUND, item);
+        g_bg_sel_item = item;
+        g_sky_notsaid = 0;                     /* said per stage, not per process */
+    }
     g_bg_armed = (g_bg_asset != NULL);
     g_stage_env = stage_env_select();          /* #68 STAGE FOG ON OBJECTS */
 
@@ -15089,8 +15378,14 @@ static void sky_frame_begin(void)
         }
         if (sky_item == NULL) sky_item = sl_wa_stage_sky_item_path();
         if (sky_item == NULL) sky_item = item;
-        if (g_sky_asset == NULL)
+        if (g_sky_sel_item == NULL || strcmp(g_sky_sel_item, sky_item) != 0) {
+            /* Its own key, not the background's: Surface 2 and Egyptian name a
+             * dome of their own, a borrowed dome follows the game's
+             * environment row within one stage (D-031), and a lent one is
+             * another stage's item entirely (D-044). */
             g_sky_asset = sl_wa_lookup(SL_WA_CLASS_SKYDOME, sky_item);
+            g_sky_sel_item = sky_item;
+        }
     }
     g_sky_armed = (g_sky_asset != NULL);       /* missing or invalid: ORIGINAL */
 }
@@ -15280,6 +15575,7 @@ static void sky_draw(void)
     int scr = 0;                       /* D-046: ... where it lies on the screen */
     float scr_rows[10];
     int scr_fill[4];
+    int batched = 0;                   /* v0.4: the indexed path served this pass */
 
     g_sky_done = 1;
     if (a == NULL) return;
@@ -15574,6 +15870,23 @@ static void sky_draw(void)
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
+    /* v0.4 THE INDEXED SUBMISSION, selected by OPTIMIZED RENDERING
+     * (src/platform/sl_perf.h; SL_SKY_BATCH overrides it for one launch), and
+     * the decision is taken HERE - once, before the first material draw, which
+     * is the boundary a selection change lands on. The loop below
+     * references each vertex several times and recomputes its shade and its
+     * cloud cast at every occurrence; the batch path prepares each unique
+     * referenced vertex once per material draw and submits one glDrawElements
+     * over indices cached per asset. See sl_gfx_skybatch.h.
+     *
+     * Everything the batch path cannot serve is refused BEFORE anything is
+     * submitted - an unresolved entry point, an invalid topology, a failed
+     * allocation, a context with more texture units than its state bracket
+     * can account for - so a refusal costs the immediate loop below and never
+     * a duplicated triangle. Unset, this is one cached getenv and one branch
+     * not taken: no allocation, no GL resolution, no query, no upload. */
+    if (sl_skybatch_on()) batched = sl_skybatch_pass_begin(a, clip);
+
     for (mi = 0; mi < a->mesh_count; mi++) {
         const struct sl_wa_mesh *mh = &a->meshes[mi];
         const struct sl_wa_material *mt = &a->materials[mh->material];
@@ -15614,6 +15927,67 @@ static void sky_draw(void)
         }
         glBindTexture(GL_TEXTURE_2D, (GLuint) a->gl_tex[mt->texture]);
         if (atm) sky_atm_texenv(atm_fog);
+
+        /* v0.4 THE SAME DRAW, SUBMITTED INDEXED. The material, texture, blend
+         * and texture-environment state above is unchanged and still owned
+         * here; only the per-vertex submission moves. The shading state is
+         * handed over explicitly rather than read from a global, so the
+         * prepared attributes are THIS material's - a vertex two materials
+         * share cannot inherit the other's shade, and a cloud material's cast
+         * uses this frame's phase, resolved just above.
+         *
+         * A 0 answer means the mesh was NOT submitted and the pass has closed
+         * itself, so this mesh and every later one fall through to the
+         * immediate loop below. */
+        if (batched) {
+            struct sl_skybatch_shade sh;
+            /* EACH FIELD IS COPIED ONLY UNDER THE FLAG THAT MAKES ITS SOURCE
+             * INITIALISED. atm_fog and atm_cloud are written only on the `atm`
+             * path, scr_rows and scr_fill only when `scr` was taken, and the
+             * cloud layer's eye only once cloud_ok resolved - which the
+             * CLOUD_PLANE branch above guarantees before reaching here, since
+             * it continues otherwise. `cen` is the one unconditional field:
+             * sl_wa_sky_anchor fills it before the loop on every pass. The
+             * zeroing leaves every unread field a defined zero rather than
+             * stack contents, and the disabled paths in the formatter do not
+             * read them either way. */
+            memset(&sh, 0, sizeof sh);
+            sh.atm         = atm;
+            sh.scr         = scr;
+            sh.cloud_plane = (mt->flags & SL_WA_MAT_CLOUD_PLANE) ? 1 : 0;
+            memcpy(sh.cen, cen, sizeof sh.cen);
+            if (atm) {
+                memcpy(sh.fog,   atm_fog,   sizeof sh.fog);
+                memcpy(sh.cloud, atm_cloud, sizeof sh.cloud);
+                if (scr) {
+                    memcpy(sh.scr_rows, scr_rows, sizeof sh.scr_rows);
+                    memcpy(sh.scr_fill, scr_fill, sizeof sh.scr_fill);
+                }
+            }
+            if (sh.cloud_plane) {
+                memcpy(sh.cloud_eye, cloud_eye, sizeof sh.cloud_eye);
+                sh.cloud_height = cloud_height;
+                sh.cloud_phase  = cloud_phase;
+                sh.cloud_w      = cloud_w;
+                sh.cloud_h      = cloud_h;
+            }
+            {
+                /* r398: THREE answers (sl_gfx_skybatch.h). SERVED - drawn,
+                 * so this mesh is done. REFUSED - not drawn and the pass has
+                 * closed itself, so this mesh and every later one take the
+                 * immediate loop below. DECLINED - not drawn BY DESIGN and
+                 * the pass is still OPEN, so this mesh takes the immediate
+                 * loop below and the next mesh is offered to the batch path
+                 * again. */
+                const int r = sl_skybatch_mesh(mi, &sh);
+                if (r == SL_SKYBATCH_SERVED) {
+                    g_sky_tris  += mh->index_count / 3u;
+                    g_sky_verts += mh->index_count;
+                    continue;
+                }
+                if (r == SL_SKYBATCH_REFUSED) batched = 0;
+            }
+        }
 
         glBegin(GL_TRIANGLES);
         for (n = 0; n < mh->index_count; n++) {
@@ -15658,6 +16032,11 @@ static void sky_draw(void)
         g_sky_tris += mh->index_count / 3u;
         g_sky_verts += mh->index_count;
     }
+    /* v0.4: the client-array state, the buffer bindings, the client active
+     * texture unit and the current colour and coordinate go back exactly as
+     * they were found - once per pass, before the horizon fill below draws
+     * through them. A no-op if a mesh already closed the pass. */
+    if (batched) sl_skybatch_pass_end();
     /* D-046 BELOW THE GAME'S HORIZON EDGE, THE GAME'S FILL: the fog colour,
      * over the dome, from the edge to the bottom of the picture - what
      * skyRender leaves there (sl_wa_sky_screen_frac in the header). The
@@ -16384,17 +16763,372 @@ static void bgv_vertex_pointer(int pushed)
     }
 }
 
+/* ---- v0.4: THE SAME DRAW, TRANSFORMED ON THE GPU (opt-in) ----------------
+ *
+ * The item's MODEL positions are already resident: bgv_item uploads the whole
+ * vertex record array to g_bgv_static once per item, and a position is its
+ * first three floats. So an eligible mesh draws from offset 0 of that buffer at
+ * the record's own stride, with sl_gfx_bggpu.c's vertex program computing the
+ * clip position from them - the same expression, in the same order, as
+ * bg_vertex_range. No buffer, no upload and no allocation is added.
+ *
+ * An INELIGIBLE mesh draws from the walk's own clip positions, exactly as every
+ * mesh does today. The two differ in one piece of state each, so switching is
+ * the program and the vertex pointer and nothing else; g_bggpu_bound is what
+ * keeps a run of eligible meshes from re-issuing both per mesh.
+ *
+ * WHY THE CPU LOOP STILL RUNS. The near-cut classification, the fog
+ * coordinate, the far-plane reduction, the panorama bins and the coplanar push
+ * are consumed on the CPU in the same frame, and this program is not read back.
+ * The predicates in bg_draw_pass are where that is decided; see docs/backlog.md
+ * B-PERF1 for what each later removal needs. */
+/* WHAT THE COUNTERS MEAN, because eligibility and USE are different facts and
+ * a ready program that submitted nothing is not a GPU-drawn frame. The pair is
+ * kept apart deliberately:
+ *
+ *   elig_walks / cand   a walk, or a mesh of one, that PASSED the predicates.
+ *   walks / drawn       a walk, or a mesh, that actually SUBMITTED geometry.
+ *   runs / idx          the glDrawElements calls issued through the program and
+ *                       the indices in them.
+ *
+ * Eligibility is not use. A mesh can pass every predicate here and still submit
+ * nothing: bg_draw_mesh_elements drops whole runs for the other draw's pieces
+ * (#90) and for triangles the face cull withholds (#96), and a mesh can be
+ * hidden outright. So the submitted counts are taken at the one draw boundary
+ * the pass has (bg_draw_mesh_run), a walk counts as used only once a mesh of it
+ * submitted, and the census prints both columns.
+ *
+ * These are diagnostic counters for bounded runs behind SL_DL_CENSUS, sized
+ * like the pass's other cumulative counters (g_bg_tris and the rest are plain
+ * unsigned); they are not lifetime odometers. */
+static int      g_bggpu_bound;                /* the program is current for this mesh */
+static unsigned g_bggpu_elig_walks;           /* walks the predicates admitted */
+static unsigned g_bggpu_walks;                /* ... of those, walks that submitted geometry */
+static unsigned g_bggpu_cand;                 /* mesh draws the predicates admitted */
+static unsigned g_bggpu_drawn;                /* ... of those, mesh draws that submitted */
+static unsigned g_bggpu_kept;                 /* mesh draws kept on the clip positions */
+static unsigned long g_bggpu_runs;            /* draw submissions through the program */
+static unsigned long g_bggpu_idx;             /* indices in them */
+static unsigned g_bggpu_mesh_sub;             /* submissions by the mesh being drawn */
+static int      g_bggpu_used;                 /* this walk submitted through the program */
+static unsigned g_bggpu_r_late, g_bggpu_r_pano,
+                g_bggpu_r_anim, g_bggpu_r_arrays, g_bggpu_r_prog;
+/* v0.4: walks refused because they draw in TWO depth ranges and the selection
+ * in force does not admit a far walk (sl_perf_bg_far_admit). Counted on its
+ * own so a census can tell "this frame had no far walk" from "this frame's far
+ * walk was held back", which are different facts about the same zero in
+ * g_bggpu_dcalls[FAR0] and [FAR1]. */
+static unsigned g_bggpu_r_far;
+/* v0.4 WHICH DEPTH THE SUBMITTED GEOMETRY WAS DRAWN AT, indexed by
+ * SL_BGGPU_DEPTH_* : the one-range frame's clamp, a far frame's first range,
+ * a far frame's game range. Taken at the same non-empty submission boundary as
+ * the counts above, NOT at eligibility, because the question these answer is
+ * whether a depth mode actually drew - a far frame whose every mesh was refused
+ * submits nothing in modes 1 and 2 and is not a far-depth GPU frame. The mode
+ * recorded is the one the draw's own uniform carries (bggpu_select). */
+static unsigned long g_bggpu_dcalls[3];       /* draw submissions, by depth mode */
+static unsigned long g_bggpu_didx[3];         /* indices in them, by depth mode */
+static int      g_bggpu_dmode;                /* the depth the bound program writes */
+
+/* Fold the mesh that has just been drawn into the submitted counts. Called
+ * before every source switch and once at the end of the pass, so it runs
+ * exactly once per drawn mesh - including the early-return case, where a run of
+ * eligible meshes keeps the same state. */
+/* ---- v0.4 THE GPU CLIP PREPASS (sl_gfx_bgtf.c) ---------------------------
+ *
+ * WHAT SELECTS IT, AND THE PRODUCTION SELECTION IS THE OPTIMIZED RENDERING ROW.
+ * sl_bgtf_walk_admit answers per walk: 1 when a developer named SL_BG_TF_CLIP=1,
+ * and 1 when the row admitted this walk with no arm, no OFF token, no
+ * main-context diagnostic and no capture named - in which case the walk takes
+ * the AUXILIARY-CONTEXT real prepass on arm GPU_SOURCE with FENCE, the arm whose
+ * frames were measured BYTE EXACT against the original renderer's. It takes
+ * precedence over the vertex program for the walks it admits, because the two
+ * are alternative answers to the same question and running both on one walk
+ * would bind two programs.
+ *
+ * AND EVERY WAY OUT OF THE CHAIN EXCEPT TWO ENDS AT THE CPU CLIP AND RASTER
+ * PATH. The vertex program's own frames read ONE BLUE VALUE APART from the
+ * original renderer's at (71,113), 142 against 143, as the main-context
+ * prepass's do, and that is the defect this selection removes - so the program
+ * is reached ONLY when a developer explicitly names it
+ * (sl_perf_bg_xform_named), where it is labelled a diagnostic. The three
+ * answers are:
+ *
+ *   the PREPASS            an admitted walk, by either route
+ *   the VERTEX PROGRAM     a walk on a launch that NAMED SL_BG_GPU_XFORM=1,
+ *                          labelled a DIAGNOSTIC and a known mismatch
+ *   the CPU CLIP PATH      everything else: the row off, a predicate refusing,
+ *                          a prepass refusal, a selector that took the
+ *                          production selection away, and an unreadable
+ *                          selector. Counted as g_bggpu_r_tfstand when the row
+ *                          admitted the walk and neither GPU path took it.
+ *
+ * THE FIRST DRAFT OF THIS CHAIN HAD THE PROGRAM AS THE FALL-THROUGH, so every
+ * walk the prepass did not admit reached the 142 arm - a malformed
+ * SL_BG_TF_AUX_REAL among them. A known mismatch reached by typo is the one
+ * outcome this selection may not have.
+ *
+ * THE PREPASS DELIBERATELY DOES NOT USE THE LOOP REDUCTION. A reduced walk
+ * leaves clip positions unwritten, which is sound only while something else
+ * supplies them; a prepass can still refuse at any draw, on a capability this
+ * walk has not asked for yet. Keeping gpu_walk at 0 for a prepass walk means the reduction's
+ * existing repair - `bypass && !gpu_walk`, a few hundred lines below - always
+ * recomputes the whole item's CPU arrays before any reader runs, so a refusal
+ * at any point simply draws from data that is already there.
+ *
+ * AND THAT TRADE IS NOW PAID ON THE PRODUCTION PATH, which is a cost worth
+ * stating plainly rather than leaving in a sentence about an experiment: a
+ * row-ON walk gives up the loop reduction's saving in exchange for an exact
+ * image. The repair is counted (g_bgb_repairs), so the cost is visible rather
+ * than assumed; narrowing it is a separate change and is NOT part of this
+ * selection, which claims an image and no frame time. */
+static int      g_bgtf_walk;                  /* this walk is on the prepass  */
+/* THE ACTIVE VERTEX SOURCE, TRACKED INDEPENDENTLY OF ELIGIBILITY.
+ *
+ * g_bgtf_walk says the walk was admitted; it does NOT say what glVertexPointer
+ * currently names. Those came apart in the first implementation and the gap was
+ * a wrong picture: a candidate walk leaves g_bggpu_bound at 0, so
+ * bggpu_select's pointer switch never runs, and the candidate-ineligible
+ * meshes - four-image, pulled, coplanar, far shell - skipped pointer selection
+ * entirely. A previous mesh's prepass pool therefore stayed named, and the
+ * excluded mesh drew its own indices against another mesh's positions at
+ * another depth.
+ *
+ * g_bgtf_src is 1 only while a prepass pool is REALLY the vertex source, and
+ * g_bgtf_src_dmode is that pool's depth. Everything that draws or counts asks
+ * these two rather than the admission flag. bgtf_cpu_source() is the one place
+ * that puts the original per-mesh source back, through the pass's own helper,
+ * so no caller open-codes a client pointer. */
+static int      g_bgtf_src;                   /* a prepass pool is the source */
+static int      g_bgtf_src_dmode;             /* ... and the depth it carries */
+static unsigned g_bgtf_gen;                   /* walk identity for the slot keys */
+static unsigned g_bgtf_r_prog;                /* refused: not ready / no walk */
+static unsigned g_bgtf_r_draw;               /* refused: a draw got no pool */
+static unsigned g_bgtf_elig_walks;            /* walks the predicates admitted */
+/* v0.4 WALKS THE ROW ADMITTED THAT NO GPU CLIP COMPUTATION TOOK.
+ *
+ * The row said yes, the pass's own predicates admitted the walk, and then
+ * neither the prepass nor a named vertex transform took it - because a
+ * developer selector took the production selection away, or offered a value no
+ * grammar can read. Such a walk draws the fully produced CPU clip and raster
+ * path, and this is the count that lets a census tell that from "no walk this
+ * frame at all". It is NOT a refusal of anything: nothing was asked for and
+ * denied, so it is kept apart from g_bggpu_r_prog and g_bgtf_r_prog, which
+ * both mean a selected path could not be prepared.
+ *
+ * REPORTED ON ITS OWN SELECTOR-KEYED LINE and never folded into either census.
+ * The #88 per-depth line's fields are the schema one capture package parses and
+ * the #95 clip-prepass line's are another; adding a column to either would make
+ * every existing healthy run read as a DRIFTED census in
+ * tools/windows/perflive-check.py. */
+static unsigned g_bggpu_r_tfstand;
+
+/* v0.4 THE PRODUCTION BUFFER DIAGNOSTIC'S ONE SELECTED MESH (SL_BG_TF_DUMP,
+ * src/gfx/sl_gfx_bgtf.h), default off and nothing at all when it is.
+ *
+ * 1 only between a bind the diagnostic ACCEPTED and the next time the source
+ * stops being that pool. It is set from the same facts the bind site already
+ * has - the mesh, its material, the depth the pool actually carries, the slot
+ * the prepass returned and the three draw-site clocks - and it is tested at the
+ * submission seam beside g_bgtf_src, because a bind is not a draw: a mesh whose
+ * triangles are all filtered submits nothing, and a diagnostic that fired at
+ * the bind would have recorded a draw that never happened.
+ *
+ * It is NOT the admission flag and NOT a second source of truth about the
+ * source. The one gate is g_bgtf_src, exactly as the coverage count's is. */
+static int      g_bgtf_dump_mesh;
+
+/* v0.4 THE ORIGINAL-RASTER CONTROL'S PER-MESH MARK (SL_BG_TF_RASTER_CPU,
+ * src/gfx/sl_gfx_bgtf.h), default off and nothing at all when it is.
+ *
+ * 1 only between a prepass this control ran for THIS mesh and the next time the
+ * source changes, for the same reason the diagnostic's mark is: it is tested
+ * where a run is REALLY submitted, because a bind is not a draw and a mesh
+ * whose triangles are all filtered submits nothing.
+ *
+ * IT IS NOT A SECOND SOURCE OF TRUTH ABOUT THE SOURCE. g_bgtf_src remains the
+ * one gate for what glVertexPointer names, and under this control it is 0 -
+ * the raster reads the original stream - which is exactly why a separate mark
+ * is needed to record that a prepass nevertheless ran for this draw. The two
+ * can never both be set for one draw. */
+static int           g_bgtf_cpur_mesh;
+static unsigned long g_bgtf_cpur_draws;    /* nonempty runs under the control */
+static unsigned long g_bgtf_cpur_indices;  /* indices submitted in them       */
+static unsigned      g_bgtf_cpur_meshes;   /* meshes the control served       */
+
+/* PUT THE ORIGINAL PER-MESH SOURCE BACK UNCONDITIONALLY.
+ *
+ * Separate from bgtf_cpu_source because the two answer different questions. The
+ * conditional form below is correct for the ordinary paths, where there is
+ * nothing to put back unless a pool is the source. It is WRONG after a prepass
+ * that ran without its pool being bound: sl_bgtf_prepass leaves the vertex
+ * pointer naming the item's MODEL positions - three floats at the vertex
+ * record's stride, from the pass's own static buffer - because the ordinary
+ * path has sl_bgtf_bind_clip overwrite it immediately. In that case g_bgtf_src
+ * is 0 and the conditional form would return early, leaving model-space
+ * positions to rasterise at the wrong component count.
+ *
+ * Routed through bgv_vertex_pointer for the reason given below: that helper is
+ * what knows whether this pass streams through its own vertex buffer or hands
+ * GL a host pointer. */
+static void bgtf_source_original(void)
+{
+    g_bgtf_dump_mesh = 0;
+    g_bgtf_cpur_mesh = 0;
+    g_bgtf_src = 0;
+    g_bgtf_src_dmode = SL_BGGPU_DEPTH_SINGLE;
+    bgv_vertex_pointer(0);
+}
+
+/* PUT THE ORIGINAL PER-MESH SOURCE BACK, if a prepass pool is holding it.
+ *
+ * Deliberately routed through bgv_vertex_pointer rather than naming a client
+ * array here: that helper is what knows whether this pass is streaming through
+ * its own vertex buffer or handing GL a host pointer, and it is what the pushed
+ * and coplanar cases already use. Open-coding a raw clip pointer instead - as
+ * the first implementation's refusal path did - gets the non-buffered case
+ * right by accident and the buffered case wrong.
+ *
+ * `pushed` is 0 here because that is the ordinary per-mesh source. A mesh that
+ * wants the pushed pool selects it for itself afterwards, which is the order
+ * the pass already used before the candidate existed. */
+static void bgtf_cpu_source(void)
+{
+    /* The diagnostic's selection names a pool that is the vertex source, so it
+     * is dropped here unconditionally - before the early return, because this
+     * is also the point a caller reaches when the source was already the CPU
+     * array and the selection must not outlive it either. */
+    g_bgtf_dump_mesh = 0;
+    g_bgtf_cpur_mesh = 0;
+    if (!g_bgtf_src) return;
+    bgtf_source_original();
+}
+
+static void bggpu_tally(void)
+{
+    if (g_bggpu_mesh_sub == 0u) return;
+    g_bggpu_mesh_sub = 0u;
+    g_bggpu_drawn++;
+    g_bggpu_used = 1;
+}
+
+/* The item's model positions, from the buffer the item is already in. */
+static void bggpu_model_pointer(const struct sl_wa_asset *a)
+{
+    p_BindBuffer(GL_ARRAY_BUFFER, g_bgv_static);
+    glVertexPointer(3, GL_FLOAT, (GLsizei) sizeof a->vertices[0], (const GLvoid *) 0);
+    p_BindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+/* Which source this mesh draws from, switched only when the answer changes -
+ * AND, for a mesh that draws through the program, which depth it writes, which
+ * is set EVERY time. The two are deliberately not under the same condition: the
+ * binding is shared by a run of eligible meshes, while the depth belongs to the
+ * mesh and the range (SL_BGGPU_DEPTH_* for the three cases and why a blended
+ * mesh takes its own first-range coefficients). Folding the depth into the
+ * binding's early return would leave the second and later meshes of a run, and
+ * every mesh of the second range, drawing at the previous mesh's depth. */
+static void bggpu_select(int on, const struct sl_wa_asset *a,
+                         int dmode, float dk1, float dk2)
+{
+    bggpu_tally();                       /* the previous mesh's submissions, first */
+    if (on != g_bggpu_bound) {
+        sl_bggpu_bind(on);
+        if (on) bggpu_model_pointer(a);
+        else    bgv_vertex_pointer(0);
+        g_bggpu_bound = on;
+    }
+    if (on) {
+        sl_bggpu_use_depth(dmode, dk1, dk2);   /* with the program current */
+        g_bggpu_dmode = dmode;
+    }
+}
+
 /* One background mesh's draw: exactly as before, then the near-cut fill. A
  * mesh with yielding triangles is drawn in its own order as runs, the
  * yielding runs under LESS. */
 static void bg_draw_mesh_run(const unsigned *ix, unsigned count, int fill)
 {
+    /* v0.4 THE ONE PLACE A BACKGROUND RUN IS SUBMITTED, which is why the GPU
+     * path's submitted counts are taken here and not where eligibility was
+     * decided. An empty run is not a submission. The near-cut fill below rides
+     * on whichever vertex source is current and its triangles are already
+     * counted in g_bgn_tris, so it is not counted again here. */
+    if (g_bggpu_bound && count != 0u) {
+        g_bggpu_runs++;
+        g_bggpu_idx += count;
+        g_bggpu_mesh_sub++;
+        if ((unsigned) g_bggpu_dmode < 3u) {    /* by the depth this draw writes */
+            g_bggpu_dcalls[g_bggpu_dmode]++;
+            g_bggpu_didx[g_bggpu_dmode] += count;
+        }
+    }
+    /* v0.4 THE CANDIDATE'S COVERAGE, counted here and only here, because this
+     * is the one place a background run is really submitted.
+     *
+     * The gate is g_bgtf_src - a prepass pool is ACTUALLY the vertex source -
+     * and not g_bgtf_walk. The admission flag stays true across the whole walk,
+     * including the excluded meshes and the draws whose prepass refused, so
+     * counting on it credited the candidate with indices the CPU arrays drew.
+     * The depth recorded is the SOURCE's, so a mesh served from a pool built
+     * for another range cannot be counted into this range. An empty run is not
+     * a submission, which the module also checks. */
+    if (g_bgtf_src && count != 0u)
+        sl_bgtf_count_submission(g_bgtf_src_dmode, count);
+    /* v0.4 THE ORIGINAL-RASTER CONTROL'S OWN COUNT (SL_BG_TF_RASTER_CPU),
+     * taken here for the same reason the coverage count is: this is the one
+     * place a background run is really submitted, and an empty run is not a
+     * submission.
+     *
+     * DELIBERATELY NOT THE CANDIDATE'S COVERAGE. These runs rasterised the
+     * ORIGINAL position stream after a prepass ran, so counting them as
+     * TF-position-source coverage is exactly the mislabelling this control
+     * exists to avoid. sl_bgtf_count_submission is not called for them - the
+     * gate above cannot be true at the same time as this one - and these two
+     * numbers are what a census reads for the control arm instead. */
+    if (g_bgtf_cpur_mesh && count != 0u) {
+        g_bgtf_cpur_draws++;
+        g_bgtf_cpur_indices += count;
+    }
+    /* v0.4 THE PRODUCTION BUFFER DIAGNOSTIC'S ONE READBACK (SL_BG_TF_DUMP),
+     * here and nowhere else, and with SL_BG_TF_DUMP off this is one integer
+     * test and no call.
+     *
+     * WHY HERE. The pool must be read AFTER the prepass that filled it ended
+     * and IMMEDIATELY BEFORE the raster draw that reads it, with this run's own
+     * exact index sequence in hand. This is the only point where all three are
+     * true: the prepass ran at the bind, the indices are this run's, and the
+     * glDrawElements below has not happened yet.
+     *
+     * The gate is the same pair the coverage count uses - a prepass pool is
+     * ACTUALLY the vertex source, and the run is not empty - plus the
+     * diagnostic's own acceptance of this mesh. A bind whose triangles are all
+     * filtered out never reaches this line, so it cannot satisfy the selector.
+     *
+     * The readback adds a stall, so a run that captures is not a timing
+     * measurement; that is stated in the record itself. */
+    if (g_bgtf_src && count != 0u && g_bgtf_dump_mesh)
+        sl_bgtf_dump_capture(ix, count);
+    /* v0.4 THE RENDERER-STATE PROBE'S PHASE 4, PRE_RASTER (SL_BG_GLSTATE,
+     * src/gfx/sl_gfx_bgstate.h), default off: one cached integer test and no
+     * call. It appears TWICE below, once in each branch, and each copy sits
+     * AFTER that branch's element binding is settled and IMMEDIATELY before its
+     * glDrawElements - which is the moment the record claims. A single site
+     * above the branch would be before the element binding on the buffered path
+     * and would record a binding this draw does not use.
+     *
+     * THE GATE IS THE PROBE'S OWN SELECTION PLUS A NONEMPTY RUN, and
+     * deliberately not g_bgtf_src: a bind is not a draw, and the arm the
+     * comparison needs most rasterises the ORIGINAL positions with that flag at
+     * 0. An empty run is not a draw either, which the probe also checks. */
     if (g_bgv_live) {
         p_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_bgv_index);
+        if (sl_bgstate_armed()) sl_bgstate_pre_raster(ix, count);
         glDrawElements(GL_TRIANGLES, (GLsizei) count, GL_UNSIGNED_INT,
                        (const GLvoid *) ((size_t) (ix - g_bgv_idx0) * sizeof *ix));
         p_BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     } else {
+        if (sl_bgstate_armed()) sl_bgstate_pre_raster(ix, count);
         glDrawElements(GL_TRIANGLES, (GLsizei) count, GL_UNSIGNED_INT, (const GLvoid *) ix);
     }
     if (fill) g_bgn_tris += wa_near_fill(ix, count, g_bgn_cls);
@@ -16936,6 +17670,604 @@ static void bg_xlu_flush(int why)
     bg_draw_pass(1);
 }
 
+/* ---- v0.4: THE CPU VERTEX LOOP SKIPPED WHERE ITS OUTPUTS ARE NOT READ ------
+ * (selected by OPTIMIZED RENDERING, src/platform/sl_perf.h, and only ever
+ * applied to a walk the GPU vertex transform also takes - SL_BG_GPU_BYPASS and
+ * SL_BG_GPU_XFORM each override their own half for one launch)
+ *
+ * WHAT THIS IS. Binding the GPU vertex program alone removes no CPU work: the
+ * per-vertex loop still runs because its outputs have CPU consumers in the same
+ * frame (sl_gfx_bggpu.h, WHAT IT IS NOT). This picks out the vertices whose
+ * outputs are provably not read anywhere in the frame and computes, for those,
+ * only the two clip components that ARE still read - the near class's, since
+ * sl_wa_near_class reads c[2] and c[3] and nothing else (#75) - instead of the
+ * whole clip position, the raw depth, the fog coordinate and the pushed
+ * position. The arithmetic left is the loop's own expression for those two
+ * components in the loop's own order, so the class is the same value.
+ *
+ * WHY THE TWO COMPONENTS ARE BIT-IDENTICAL, and not merely algebraically equal:
+ * src/gfx is compiled -msse2 -mfpmath=sse with no -march naming an FMA-capable
+ * target and no -ffast-math or -funsafe-math-optimizations (tools/windows/
+ * build.ps1 - the flag list for src/gfx and the note above OPTFLAGS_NATIVE).
+ * With no FMA instruction for the target the three products cannot be
+ * contracted, with -mfpmath=sse there is no x87 excess precision to round away
+ * differently, and without the relaxing flags the left-to-right association
+ * stands - so the same expression in two places is the same instruction
+ * sequence on the same values. A build that added any of those flags would
+ * invalidate this paragraph, not just slow it down.
+ *
+ * WHICH VERTICES. A vertex is CLIP-DEPENDENT when some mesh naming it can read
+ * the walk's clip array. That is a question about the ITEM's materials and its
+ * coplanar answer, not about the frame, so it is answered once per item
+ * (bg_bypass_need). A mesh is clip-dependent when:
+ *
+ *   no material,  the pass's own per-mesh tables (bg_decal_mix's, the coplanar
+ *   or beyond     answer's) have no entry for it, so nothing here may assume
+ *   SL_WA_MAX_MESHES  one
+ *   SL_WA_MAT_DECAL   bg_decal_pull rewrites this mesh's clip z for the length
+ *                 of its draw and puts it back (#81), and bg_decal_mix can
+ *                 leave pieces of it for the late draw (#90)
+ *   SL_WA_MAT_PANORAMA  the shell keeps the clip positions on a two-range
+ *                 frame (#80, bg_far_shell)
+ *   SL_WA_BLEND_ALPHA  sl_wa_blend_late can defer it to the late draw, which
+ *                 rebuilds no transform and so is refused the program (#90)
+ *   four-image    the material program transforms with ftransform() (#69)
+ *   coplanar      a yielding mesh draws from the clip arrays and switches to
+ *                 the pushed ones part way through its own draw (#77)
+ *
+ * Every vertex a clip-dependent mesh's indices name is clip-dependent, and so
+ * is every vertex carrying a two-sided push normal of its own - so the pushed
+ * positions, and the pushed count every consumer of them is gated on, are the
+ * existing path's values and not a recount.
+ *
+ * The set is CONSERVATIVE in one direction only: marking a vertex that would
+ * not have been read costs the saving, never the picture. The converse - an
+ * unmarked mesh that the per-mesh predicate then refuses - cannot arise,
+ * because each term above is the term that predicate tests (bg_draw_pass, AND
+ * WHICH MESHES OF AN ELIGIBLE WALK); it is counted anyway (g_bgb_broken) rather
+ * than assumed, and the count belongs in a validation gate.
+ *
+ * WHICH WALKS (bg_bypass_walk's terms, all of them this frame's own and already
+ * in hand where the loop runs). On such a walk the five outputs the reduced
+ * path does not write are read nowhere:
+ *
+ *   clip        read by the clip-dependent meshes, which is what the marking
+ *               means, and by the two blanket far-range rewrites - which a
+ *               FOGLESS walk cannot reach, because the far clamp is the only
+ *               thing that raises nfar and it is gated on !fogless, so #78's
+ *               first term is false and farpass stays 0
+ *   zraw        read by the game-range rewrite alone, under that same term
+ *   fogc        without the level's band and without an environment row the
+ *               array is neither uploaded nor bound (g_bgv_fog, and the
+ *               GL_FOG_COORD_ARRAY enable), and pano_coords is refused with
+ *               the panorama
+ *   cop_clip,   read through the pushed vertex pointer inside a coplanar
+ *   cop_zraw    mesh's own draw, and by those same two rewrites
+ *
+ * so those arrays' entries for a bypassed vertex keep whatever they held
+ * before. The fog coordinates are written even so - one memset of the value the
+ * existing path computes for every vertex of such a walk - so the only stale
+ * entries this leaves are the clip, raw-depth and pushed ones named above.
+ *
+ * A FALSIFICATION MODE IS DELIBERATELY NOT HERE. The offline experiment that
+ * established the claim above carried a second switch value which wrote a clip
+ * position behind the eye for every bypassed vertex, so that any draw reading
+ * one lost its triangles and a picture could falsify the claim. It is not part
+ * of this path: the switch below is a strict "1" test, so every other value -
+ * "2" included - is off. A mode whose purpose is to render a deliberately
+ * wrong picture has no place in a shipped binary, and it also pays a per-vertex
+ * store this path does not, so its timing was never this path's timing.
+ *
+ * FOGLESS IS ALSO WHAT MAKES THE NEAR CLASS THE SAME VALUE, which is the less
+ * obvious half of that term: the existing loop takes the class from c AFTER the
+ * far clamp may have rewritten c[2], so on a walk where the clamp can fire a
+ * class computed from the unclamped component would be a different answer for a
+ * vertex past the far plane. On a fogless walk the clamp cannot fire, so the
+ * component the class is taken from is the unclamped one on both paths.
+ *
+ * WHAT IT IS NOT. Not selected, the walk's `need` pointer is NULL and the loop
+ * is the one that ships, with one loop-invariant test added - and that is what
+ * an inactive settings store (trace replay, headless health, the matching
+ * build) always gets. It is not a measured speedup - how much of an item is
+ * bypassed is a property of that item's materials, and the report below is
+ * what measures it.
+ * A walk the program refuses after the loop has already run is REPAIRED by
+ * running the loop again over the whole item, so a refusal costs that walk's
+ * time and never its picture. */
+/* THE ANSWER IS NO LONGER CACHED HERE. It used to be an environment variable
+ * read once into a function static; the reduction is now selected by the
+ * OPTIMIZED RENDERING row (src/platform/sl_perf.h), which a player can move
+ * while the game is running, so the question is asked again rather than
+ * remembered. No walk pays a getenv - sl_perf.c parses SL_BG_GPU_BYPASS once
+ * and the live part is an index into the settings table - and bg_draw_pass
+ * LATCHES one answer per walk, so a press cannot land between the reduction
+ * and the admission that justifies it. */
+static int bg_gpu_bypass_on(void)
+{
+    return sl_perf_bg_bypass();
+}
+static const struct sl_wa_asset *g_bgb_asset;   /* the item the two arrays answer for */
+static unsigned char *g_bgb_need;               /* per vertex: clip-dependent */
+static unsigned char *g_bgb_mesh;               /* per mesh: clip-dependent */
+static unsigned g_bgb_cap, g_bgb_mcap;
+/* the facts the answer is made of, so a change rebuilds it rather than being
+ * read through a stale one */
+static const void *g_bgb_key_yield, *g_bgb_key_vn;
+static unsigned    g_bgb_key_vncap;
+static int         g_bgb_key_copsame;
+static unsigned g_bgb_items, g_bgb_rebuilds, g_bgb_need_n, g_bgb_meshes_n;
+static unsigned long g_bgb_walks, g_bgb_vtx_full, g_bgb_vtx_skip;
+/* Walks the predicate EXAMINED, counted whether it admitted them or not, so a
+ * run in which every walk is refused still has a number to report. Without it
+ * a fully refused run is silent and indistinguishable from the switch being
+ * off or from a binary built without it. */
+static unsigned long g_bgb_considered;
+static unsigned g_bgb_r_pair, g_bgb_r_pano, g_bgb_r_anim, g_bgb_r_stats, g_bgb_r_fog,
+                g_bgb_r_fogless, g_bgb_r_arrays, g_bgb_r_prog, g_bgb_r_need;
+static unsigned g_bgb_repairs, g_bgb_broken;
+/* One analysis per item is amortised over every walk of it; a rebuild is a
+ * walk's own cost, so a run that would rebuild repeatedly stops analysing and
+ * takes the existing path instead of paying more than the reduction saves. */
+#define BGB_MAX_REBUILDS 16u
+
+static const unsigned char *bg_bypass_need(const struct sl_wa_asset *a)
+{
+    const int copsame = (g_cop_asset == a);
+    unsigned m, k, i, nm = 0u, nv = 0u;
+    if (a == NULL || a->vertex_count == 0u || a->mesh_count == 0u) return NULL;
+    if (a == g_bgb_asset && g_bgb_need != NULL && g_bgb_mesh != NULL
+        && g_bgb_key_yield == (const void *) g_cop_yield
+        && g_bgb_key_vn == (const void *) g_cop_vn
+        && g_bgb_key_vncap == g_cop_vn_cap
+        && g_bgb_key_copsame == copsame)
+        return g_bgb_need;
+    if (g_bgb_rebuilds >= BGB_MAX_REBUILDS) return NULL;
+    if (g_bgb_cap < a->vertex_count) {
+        unsigned char *p = (unsigned char *) realloc(g_bgb_need, a->vertex_count);
+        if (p == NULL) return NULL;
+        g_bgb_need = p;
+        g_bgb_cap = a->vertex_count;
+    }
+    if (g_bgb_mcap < a->mesh_count) {
+        unsigned char *p = (unsigned char *) realloc(g_bgb_mesh, a->mesh_count);
+        if (p == NULL) return NULL;
+        g_bgb_mesh = p;
+        g_bgb_mcap = a->mesh_count;
+    }
+    g_bgb_asset = NULL;                  /* no half-built answer is readable */
+    memset(g_bgb_need, 0, a->vertex_count);
+    memset(g_bgb_mesh, 0, a->mesh_count);
+    for (m = 0; m < a->mesh_count; m++) {
+        const struct sl_wa_mesh *mh = &a->meshes[m];
+        int dep = (m >= SL_WA_MAX_MESHES) || (mh->material >= a->material_count);
+        if (!dep) {
+            const struct sl_wa_material *mt = &a->materials[mh->material];
+            dep = (mt->flags & (SL_WA_MAT_DECAL | SL_WA_MAT_PANORAMA)) != 0u
+               || mt->blend == SL_WA_BLEND_ALPHA
+               || (a->vframe && a->matx[mh->material].mode == SL_WA_MATX_NORMAL_SPHERE)
+               || (copsame && g_cop_yield != NULL && g_cop_mesh[m]);
+        }
+        g_bgb_mesh[m] = (unsigned char) (dep ? 1 : 0);
+        if (!dep) continue;
+        nm++;
+        for (k = 0; k < mh->index_count && mh->first_index + k < a->index_count; k++) {
+            const unsigned vi = a->indices[mh->first_index + k];
+            if (vi < a->vertex_count) g_bgb_need[vi] = 1u;
+        }
+    }
+    if (copsame && g_cop_vn != NULL && g_cop_vn_cap >= a->vertex_count)
+        for (i = 0; i < a->vertex_count; i++) {
+            const float *vn = &g_cop_vn[i * 3u];
+            if (vn[0] != 0.0f || vn[1] != 0.0f || vn[2] != 0.0f) g_bgb_need[i] = 1u;
+        }
+    for (i = 0; i < a->vertex_count; i++) nv += g_bgb_need[i];
+    g_bgb_key_yield = (const void *) g_cop_yield;
+    g_bgb_key_vn = (const void *) g_cop_vn;
+    g_bgb_key_vncap = g_cop_vn_cap;
+    g_bgb_key_copsame = copsame;
+    g_bgb_need_n = nv;
+    g_bgb_meshes_n = nm;
+    g_bgb_items++;
+    g_bgb_rebuilds++;
+    g_bgb_asset = a;
+    fprintf(stderr, "#88 background GPU bypass: background/%s - %u of %u meshes can read the "
+                    "walk's clip array and name %u of %u vertices; the other %u vertices of a "
+                    "bypassed walk compute the near class alone (SL_BG_GPU_BYPASS unset: the "
+                    "whole loop, as it ships)\n",
+            a->path, nm, a->mesh_count, nv, a->vertex_count, a->vertex_count - nv);
+    return g_bgb_need;
+}
+
+/* Whether this mesh of the analysed item can read the clip array. Outside the
+ * analysed item the answer is yes, which is the existing path. */
+static int bg_bypass_mesh_dep(const struct sl_wa_asset *a, unsigned mi)
+{
+    if (a != g_bgb_asset || g_bgb_mesh == NULL || mi >= a->mesh_count) return 1;
+    return g_bgb_mesh[mi] != 0;
+}
+
+/* Which term refused the most walks, by the counters the predicate already
+ * keeps. Named from the counters at print time rather than recorded at the
+ * refusal, so the predicate's own chain is untouched - the term order and
+ * every condition in it stay exactly what the consumer proof rests on.
+ *
+ * The names are the SAME STRINGS, in the SAME ORDER, that the reduced-walk
+ * report prints its refusal tally under, so one reader covers both lines. The
+ * field spelled "far range" is the !fogless refusal: the far pass is what
+ * fogless rules out, and the name is kept rather than corrected because it is
+ * already in recorded logs.
+ *
+ * "none" is reachable only if no walk was refused, which the single caller
+ * excludes; it exists so the function has no undefined answer. */
+static const char *bg_bypass_refusal_top(void)
+{
+    static const char *const name[9] = {
+        "switch pair", "panorama", "animated", "statistics", "fog",
+        "far range", "arrays", "program", "analysis"
+    };
+    const unsigned n[9] = {
+        g_bgb_r_pair, g_bgb_r_pano, g_bgb_r_anim, g_bgb_r_stats, g_bgb_r_fog,
+        g_bgb_r_fogless, g_bgb_r_arrays, g_bgb_r_prog, g_bgb_r_need
+    };
+    unsigned i, top = 0u;
+    for (i = 1u; i < 9u; i++) if (n[i] > n[top]) top = i;
+    return n[top] != 0u ? name[top] : "none";
+}
+
+/* ---- v0.4 (B-PERF1): THE BACKGROUND VERTEX LOOP ON TWO THREADS -------------
+ * The pass's per-vertex loop (bg_vertex_range) reads only the walk's prepared
+ * inputs (struct bgv_in, filled on the render thread after every preparation the
+ * loop depends on) and writes only its own indices of the pass's arrays and its
+ * own reductions (struct bgv_out). So [0, n) splits into two contiguous ranges:
+ * the render thread computes the lower half and one helper (sl_bg_worker.c) the
+ * upper half, and the render thread joins before anything reads an output. The
+ * reductions merge in range order with the loop's own rules - the counts add;
+ * wmax and each panorama bin keep the first strictly larger value from the same
+ * 0.0f start - so every array byte and every reduced value equals the
+ * single-threaded loop's. Each panorama-shell vertex has its own slot, so the
+ * shell positions are disjoint too.
+ *
+ * The loop runs on the render thread alone with SL_BG_VERTEX_WORKER=0; with
+ * fewer than four allowed physical cores or an unknown count; for an item under
+ * BGV_SPLIT_MIN vertices; under the level's fog band (fog_coord updates renderer
+ * counters); while SL_BG_WORLDBOX, SL_BG_FOGTRACE or SL_DL_CENSUS reads the
+ * loop's statistics (order-sensitive sums); and when the helper could not start.
+ * A helper whose floating-point environment did not take runs nothing, and the
+ * render thread computes that range. A join that cannot prove the helper finished
+ * is fatal (sl_fatalf): continuing would draw from, or later release, memory a
+ * thread that never completed may still be writing.
+ *
+ * Every input and output the helper touches is file-static (g_bgv_*, the pass's
+ * arrays, the item, which is never released) and the join precedes every array
+ * growth, item change, grid rebuild and the next walk; the census line reports
+ * the helper's state and which walks split. Measured: see B-PERF1. */
+#define BGV_SPLIT_MIN 2048u
+struct bgv_in {
+    const struct sl_wa_asset *a;
+    float C[16], org[3], feye[3], eyep[3], cop_eye[3];
+    float sc, post;
+    int have_f, have_e, pano, anim, fogless, fogm, wbox, fstats, cop_eye_ok;
+    double tsec;
+    const struct sl_wa_env *env;
+    const struct sl_wa_asset *cop_asset;
+    const float *cop_vn;
+    unsigned cop_vn_cap, cop_nopp;
+    const unsigned *pano_slot;
+    /* v0.4 (SL_BG_GPU_BYPASS): per vertex, whether this walk reads its clip
+     * position on the CPU. NULL - the default - is the loop that ships: every
+     * vertex whole. See THE CPU VERTEX LOOP SKIPPED WHERE ITS OUTPUTS ARE NOT
+     * READ above. */
+    const unsigned char *need;
+};
+struct bgv_out {
+    float *clip, *zraw, *fogc, *cop_clip, *cop_zraw, *pano_pos, *bin, *blo, *bhi;
+    unsigned char *cls;
+    double nearest;
+    unsigned nfar, nanim, pushed;
+    float wmax;
+};
+static void bg_vertex_range(const struct bgv_in *in, struct bgv_out *o, unsigned lo, unsigned hi)
+{
+    const struct sl_wa_asset *a = in->a;
+    const float *C = in->C, *org = in->org, *feye = in->feye, *eyep = in->eyep;
+    const float sc = in->sc, post = in->post;
+    const int have_f = in->have_f, have_e = in->have_e, pano = in->pano, anim = in->anim;
+    const int fogless = in->fogless, fogm = in->fogm, wbox = in->wbox, fstats = in->fstats;
+    const double tsec = in->tsec;
+    /* the names the loop reads, bound to this walk's inputs ... */
+    const struct sl_wa_env *g_bg_env = in->env;
+    const struct sl_wa_asset *g_cop_asset = in->cop_asset;
+    const float *g_cop_vn = in->cop_vn;
+    const unsigned g_cop_vn_cap = in->cop_vn_cap, g_cop_nopp = in->cop_nopp;
+    const int g_cop_eye_ok = in->cop_eye_ok;
+    const float *g_cop_eye = in->cop_eye;
+    const unsigned *g_pano_slot = in->pano_slot;
+    /* v0.4 (SL_BG_GPU_BYPASS): NULL on every walk that is not reduced, which is
+     * every walk by default - one loop-invariant test below */
+    const unsigned char *need = in->need;
+    /* ... and to this range's outputs */
+    float *clip = o->clip, *zraw = o->zraw, *fogc = o->fogc;
+    float *g_cop_clip = o->cop_clip, *g_cop_zraw = o->cop_zraw, *g_pano_pos = o->pano_pos, *g_pano_bin = o->bin;
+    float *blo = o->blo, *bhi = o->bhi;
+    unsigned char *g_bgn_cls = o->cls;
+    double nearest = o->nearest;
+    unsigned nfar = 0u, nanim = 0u, g_cop_pushed = 0u;
+    float wmax = 0.0f;
+    unsigned i;
+    int j;
+        for (i = lo; i < hi; i++) {
+            const struct sl_wa_vertex *v = &a->vertices[i];
+            float *c = &clip[i * 4u];
+            float px = v->x, py = v->y, pz = v->z;
+            float x, y, z;
+            float envc = 0.0f;              /* remaster stage fog, #68 */
+            /* THE DISPLACEMENT, in the bundle's own units and along the
+             * vertex's own direction, before the level scale - where the
+             * source program applies it, in the item's model space. */
+            if (anim && SL_WA_VAUX(a, i)->anim != 0u) {
+                const struct sl_wa_vaux *ax = SL_WA_VAUX(a, i);
+                const float d = sl_wa_anim_displacement(&a->anims[ax->anim - 1u],
+                                                        (float) ax->wave_a,
+                                                        (float) ax->wave_b, tsec)
+                              * (1.0f / 32767.0f);
+                px += d * (float) ax->nx;
+                py += d * (float) ax->ny;
+                pz += d * (float) ax->nz;
+                nanim++;
+            }
+            x = (px * sc - org[0]) * post;
+            y = (py * sc - org[1]) * post;
+            z = (pz * sc - org[2]) * post;
+            /* v0.4 (SL_BG_GPU_BYPASS): a vertex whose clip position no mesh of
+             * this walk reads. The near class is the one output still read and
+             * it reads two components, so those two are computed - the same
+             * expression this loop writes below for j == 2 and j == 3, in the
+             * same order - and nothing else is written. wmax is kept here too,
+             * so the reduction is the whole item's either way. */
+            if (need != NULL && !need[i]) {
+                float cn[4];
+                cn[0] = 0.0f;
+                cn[1] = 0.0f;
+                cn[2] = x * C[2] + y * C[6] + z * C[10] + C[14];
+                cn[3] = x * C[3] + y * C[7] + z * C[11] + C[15];
+                if (cn[3] > wmax) wmax = cn[3];
+                g_bgn_cls[i] = (unsigned char) sl_wa_near_class(cn);
+                continue;
+            }
+            if (wbox) {
+                if (x < blo[0]) blo[0] = x;  if (x > bhi[0]) bhi[0] = x;
+                if (y < blo[1]) blo[1] = y;  if (y > bhi[1]) bhi[1] = y;
+                if (z < blo[2]) blo[2] = z;  if (z > bhi[2]) bhi[2] = z;
+                if (have_e) {
+                    double dx = x - eyep[0], dy = y - eyep[1], dz = z - eyep[2];
+                    double d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < nearest) nearest = d2;
+                }
+            }
+            /* THE REMASTER'S DISTANCE: world units after the level scale and
+             * before the visibility scale (measured - see SLEN), so this
+             * space's distance divided by the factor applied to it. */
+            if (have_f) {
+                double fx = x - feye[0], fy = y - feye[1], fz = z - feye[2];
+                envc = sl_wa_env_fog_coord(g_bg_env, (float) (sqrt(fx * fx + fy * fy
+                                           + fz * fz) / (double) post));
+            }
+            /* #74 D-026 step 1: the shell's own positions kept for step 2;
+             * every other vertex the fog reaches raises its azimuth's bin. */
+            if (pano) {
+                const unsigned sl = g_pano_slot[i];
+                if (sl != 0u) {
+                    float *q = &g_pano_pos[(sl - 1u) * 3u];
+                    q[0] = x; q[1] = y; q[2] = z;
+                } else if (envc > SL_WA_PANO_REACH) {
+                    const double hx = x - feye[0], hz = z - feye[2];
+                    const double hh = sqrt(hx * hx + hz * hz);
+                    if (hh > 1e-3 && y > feye[1]) {
+                        const float val = sl_wa_panorama_reach(envc)
+                                        * (float) ((y - feye[1]) / hh);
+                        double ph = atan2(hx, hz) * (180.0 / 3.14159265358979);
+                        int bi;
+                        if (ph < 0.0) ph += 360.0;
+                        bi = (int) (ph * (PANO_BINS / 360.0));
+                        if (bi >= PANO_BINS) bi = PANO_BINS - 1;
+                        if (val > g_pano_bin[bi]) g_pano_bin[bi] = val;
+                    }
+                }
+            }
+            for (j = 0; j < 4; j++)
+                c[j] = x * C[j] + y * C[4 + j] + z * C[8 + j] + C[12 + j];
+            /* clamp to the far plane - the depth a single-range frame draws
+             * at; the unclamped z is kept for the second range (#78) */
+            zraw[i] = c[2];
+            if (c[3] > wmax) wmax = c[3];
+            if (!fogless && c[3] > 0.0f && c[2] > c[3]) { c[2] = c[3]; nfar++; }
+            /* #77 the pushed position of a two-sided vertex (g_cop_vn):
+             * along its normal, away from the eye, by twice the pair
+             * tolerance at its distance from the origin; every other
+             * vertex's pushed position is its own */
+            {
+                float *c2 = &g_cop_clip[i * 4u];
+                const float *vn = (g_cop_asset == a && g_cop_vn != NULL && g_cop_vn_cap >= a->vertex_count
+                                   && g_cop_nopp != 0u && g_cop_eye_ok) ? &g_cop_vn[i * 3u] : NULL;
+                if (vn != NULL && (vn[0] != 0.0f || vn[1] != 0.0f || vn[2] != 0.0f)) {
+                    const double r = sqrt((double) px * px + (double) py * py + (double) pz * pz);
+                    const double push = 2.0 * sl_wa_coplanar_eps(r, r);
+                    const double toeye = vn[0] * ((double) g_cop_eye[0] - px) + vn[1] * ((double) g_cop_eye[1] - py)
+                                       + vn[2] * ((double) g_cop_eye[2] - pz);
+                    const double s2 = (toeye > 0.0) ? -push : push;   /* away from the eye */
+                    const float qx = (float) (((double) px + vn[0] * s2) * sc - org[0]) * post;
+                    const float qy = (float) (((double) py + vn[1] * s2) * sc - org[1]) * post;
+                    const float qz = (float) (((double) pz + vn[2] * s2) * sc - org[2]) * post;
+                    for (j = 0; j < 4; j++)
+                        c2[j] = qx * C[j] + qy * C[4 + j] + qz * C[8 + j] + C[12 + j];
+                    g_cop_zraw[i] = c2[2];
+                    if (!fogless && c2[3] > 0.0f && c2[2] > c2[3]) c2[2] = c2[3];
+                    g_cop_pushed++;
+                } else {
+                    c2[0] = c[0]; c2[1] = c[1]; c2[2] = c[2]; c2[3] = c[3];
+                    g_cop_zraw[i] = zraw[i];
+                }
+            }
+            g_bgn_cls[i] = (unsigned char) sl_wa_near_class(c);   /* #75 near class */
+            /* THE FOG VALUE, from the SAME depth the depth buffer gets. The
+             * triangle path feeds fog_coord the perspective-divided z that
+             * ndc_account computed (g_vdepth, sl_gfx_dl.c:1423, cz/cw); this
+             * pass has that division's two halves in hand, so it takes the
+             * identical quotient rather than a distance of its own. A point at
+             * or behind the eye has no meaningful quotient and the near plane
+             * is the no-fog end, so it contributes zero - the same rule the
+             * triangle path's ndc row carries. The far clamp above is what
+             * keeps terrain past the frustum at full fog rather than at
+             * whatever a divergent z happened to be. */
+            fogc[i] = (fogm != FOG_NONE && c[3] > 1e-6f)
+                    ? fog_coord(fogm, c[2] / c[3]) : envc;
+            if (fstats) {
+                if (i == 0) { g_bg_fog_sum = 0.0; g_bg_fog_n = g_bg_fog_full = 0;
+                              g_bg_fog_min = 1e30f; g_bg_fog_max = -1e30f;
+                              g_bg_ndc_min = 1e30f; g_bg_ndc_max = -1e30f;
+                              g_bg_fog_mode = fogm; g_bg_fog_which = g_proj_world_which; }
+                g_bg_fog_sum += fogc[i];
+                g_bg_fog_n++;
+                if (fogc[i] < g_bg_fog_min) g_bg_fog_min = fogc[i];
+                if (fogc[i] > g_bg_fog_max) g_bg_fog_max = fogc[i];
+                if (fogc[i] > 0.999f) g_bg_fog_full++;
+                /* THE DEPTH ITSELF, beside the value derived from it. A
+                 * coordinate of zero has two causes - the band starts beyond
+                 * this geometry, or the depth is wrong - and they are the same
+                 * number afterwards. This is the pair that tells them apart. */
+                if (c[3] > 1e-6f) {
+                    float nz = c[2] / c[3];
+                    if (nz < g_bg_ndc_min) g_bg_ndc_min = nz;
+                    if (nz > g_bg_ndc_max) g_bg_ndc_max = nz;
+                }
+            }
+        }
+    o->nearest = nearest; o->nfar = nfar; o->nanim = nanim; o->pushed = g_cop_pushed; o->wmax = wmax;
+    (void) j;
+}
+struct bgv_job { const struct bgv_in *in; struct bgv_out *out; unsigned lo, hi; };
+static struct bgv_in g_bgv_in;               /* file-static: alive for as long as the helper may read it */
+static struct bgv_out g_bgv_out[2];
+static struct bgv_job g_bgv_job;
+static float g_bgv_bin[2][PANO_BINS];
+void sl_fatalf(const char *fmt, unsigned v);
+static void bgv_job_run(void *p)
+{
+    const struct bgv_job *jb = (const struct bgv_job *) p;
+    bg_vertex_range(jb->in, jb->out, jb->lo, jb->hi);
+}
+static void bgv_stop_at_exit(void) { (void) sl_bgw_stop(2000); }
+static int bgv_mode(void)
+{
+    if (g_bgv_mode < 0) {
+        const char *v = getenv("SL_BG_VERTEX_WORKER");
+        g_bgv_mode = 1;
+        if (v != NULL && v[0] != '\0') {
+            if (strcmp(v, "0") == 0) g_bgv_mode = 0;
+            else if (strcmp(v, "1") != 0 && strcmp(v, "auto") != 0) {
+                g_bgv_mode = 0;
+                fprintf(stderr, "#88 background vertices: SL_BG_VERTEX_WORKER='%s' is not auto, 1 or 0 - "
+                                "the render thread alone\n", v);
+            }
+        }
+        g_bgv_cores = sl_pool_allowed_physical_cores();
+    }
+    return g_bgv_mode;
+}
+/* The walk's loop over the whole item: in two ranges when it may, else on the
+ * render thread alone. g_bgv_out[0] and [1] hold the two ranges' reductions. */
+static void bgv_run(const struct bgv_in *in, float *clip, float *zraw, float *fogc, float *blo, float *bhi,
+                    double nearest)
+{
+    const unsigned n = in->a->vertex_count, mid = n / 2u;
+    int k, split = 0;
+    for (k = 0; k < 2; k++) {
+        struct bgv_out *o = &g_bgv_out[k];
+        o->clip = clip; o->zraw = zraw; o->fogc = fogc;
+        o->cop_clip = g_cop_clip; o->cop_zraw = g_cop_zraw; o->cls = g_bgn_cls;
+        o->pano_pos = g_pano_pos; o->bin = g_bgv_bin[k];
+        o->blo = blo; o->bhi = bhi; o->nearest = nearest;
+        o->nfar = o->nanim = o->pushed = 0u; o->wmax = 0.0f;
+        if (in->pano) memset(g_bgv_bin[k], 0, sizeof g_bgv_bin[k]);
+    }
+    (void) bgv_mode();                       /* read first, so the census names the switch on every path */
+    if (in->wbox || in->fstats) g_bgv_r_stats++;
+    else if (g_bgv_mode == 0) g_bgv_r_off++;
+    else if (g_bgv_cores < 4) g_bgv_r_cores++;
+    else if (in->fogm != FOG_NONE) g_bgv_r_fog++;
+    else if (n < BGV_SPLIT_MIN) g_bgv_r_small++;
+    else if (!sl_bgw_running() && !sl_bgw_start()) g_bgv_r_start++;
+    else {
+        static int stop_registered;
+        if (!stop_registered) { stop_registered = 1; atexit(bgv_stop_at_exit); }
+        g_bgv_job.in = in; g_bgv_job.out = &g_bgv_out[1]; g_bgv_job.lo = mid; g_bgv_job.hi = n;
+        k = sl_bgw_post(bgv_job_run, &g_bgv_job);
+        if (k == SL_BGW_LOST)
+            sl_fatalf("sightline: background vertices - the helper could not be woken (%u); stopping\n", 0u);
+        if (k == 1) split = 1;
+        else g_bgv_r_start++;
+    }
+    if (split) {
+        bg_vertex_range(in, &g_bgv_out[0], 0u, mid);
+        k = sl_bgw_join();
+        if (k == SL_BGW_LOST)
+            sl_fatalf("sightline: background vertices - the helper's range was not proven complete (%u); "
+                      "stopping\n", 0u);
+        if (k == SL_BGW_SKIPPED) {           /* proven: the helper ran nothing; the range is the render thread's */
+            struct bgv_out *o = &g_bgv_out[1];
+            o->nfar = o->nanim = o->pushed = 0u; o->wmax = 0.0f;
+            if (in->pano) memset(g_bgv_bin[1], 0, sizeof g_bgv_bin[1]);
+            bg_vertex_range(in, o, mid, n);
+            g_bgv_r_fp++;
+        }
+        g_bgv_split++;
+    } else {
+        bg_vertex_range(in, &g_bgv_out[0], 0u, n);
+        g_bgv_serial++;
+    }
+
+    /* THE HELPER'S OWN BOUNDED WITNESS, and the reason it cannot live in the
+     * census report alone.
+     *
+     * That report (nf_report, above) prints only from the census branch, and
+     * the census sets `fstats` - which is the FIRST term this function refuses
+     * the split on, at the top of this very block. So every switch that made
+     * the line printable also guaranteed the split it reported was zero: a
+     * reader could learn the helper's refusal tally, and could never learn
+     * that the helper had ever taken a range. A feature cannot be witnessed by
+     * a diagnostic that disables it, so the witness is here, where the
+     * decision is, and needs no statistics reader.
+     *
+     * BOUNDED BY PROGRESS, the reduced loop's own cadence: the first walk,
+     * then every 300th, compared against a REMEMBERED count rather than
+     * against a multiple - a counter parked on a multiple would otherwise
+     * reprint on every later frame. One fixed-width line, with no per-vertex,
+     * per-mesh or per-item quantity in it, so its cost does not grow with the
+     * item; at roughly one background walk a frame that is one line per 300
+     * frames rather than one a frame.
+     *
+     * IT PRINTS ON BOTH OUTCOMES. "The helper took no range, and this is the
+     * term that refused it" is the fallback behaviour, and a fallback that can
+     * only be inferred from silence is indistinguishable from a build without
+     * the helper at all. */
+    {
+        const unsigned long walks = g_bgv_split + g_bgv_serial;
+        static unsigned long said;
+        if (said != walks && (said == 0ul || (walks % 300ul) == 0ul)) {
+            said = walks;
+            fprintf(stderr, "#88 background vertices: %lu walk%s - %lu in two ranges, "
+                            "%lu on the render thread alone (off %lu, under four cores %lu, "
+                            "small item %lu, level fog %lu, statistics %lu, no helper %lu, "
+                            "upper range recomputed %lu); helper %s, %d allowed physical "
+                            "cores\n",
+                    walks, walks == 1ul ? "" : "s", g_bgv_split, g_bgv_serial,
+                    g_bgv_r_off, g_bgv_r_cores, g_bgv_r_small, g_bgv_r_fog,
+                    g_bgv_r_stats, g_bgv_r_start, g_bgv_r_fp,
+                    sl_bgw_state(), g_bgv_cores);
+        }
+    }
+}
+
 static void bg_draw_pass(int late)
 {
     const struct sl_wa_asset *a = g_bg_asset;
@@ -16957,12 +18289,41 @@ static void bg_draw_pass(int late)
     int fogless = 0;                  /* #81 the game's own range and fill */
     float viewm[16];                  /* #69 the world-to-view matrix, for the frame */
     int have_view = 0;
+    /* v0.4: this walk's eligibility for the GPU vertex program (bggpu_select),
+     * its transform, and whether its vertices are displaced this frame - the
+     * displacement is per-vertex CPU work the program does not carry. */
+    int gpu_walk = 0, gpu_anim = 0;
+    struct sl_bggpu_walk gpu_w = { { 0.0f } };
+    /* v0.4 (SL_BG_GPU_BYPASS): whether the loop below was reduced, and the
+     * per-vertex answer it was reduced by. Both stay zero on every default
+     * walk. */
+    int bypass = 0;
+    const unsigned char *bypass_need = NULL;
     unsigned nmatx = 0;               /* #69 meshes drawn through the material program */
     const unsigned char *lc = NULL;   /* #75 the shot-out lights' colours, when any */
     static float *clip;
     static float *fogc;               /* one fog coordinate per vertex, #68 */
     static unsigned clip_cap;
     unsigned nlate = 0;               /* #90 meshes left for, or drawn in, the late draw */
+    /* v0.4: THIS WALK'S LATCHED POLICY - one question each, asked here and
+     * read from these three at every point that acts on them.
+     *
+     * WHY A LATCH. The three selections are the OPTIMIZED RENDERING row
+     * (src/platform/sl_perf.h), which a player can move at any moment, and two
+     * places in this function act on them several hundred lines apart: the
+     * loop reduction below decides to leave clip positions unwritten, and the
+     * GL section's admission decides whether the program - which is what makes
+     * that sound - takes the walk. Asking twice could get two answers, leaving
+     * the walk reduced for a draw the program declined. The REPAIR below still
+     * exists, because it covers what a latch cannot: a context that went away
+     * between the reduction's cached answers and the admission's live ones.
+     *
+     * The late draw latches too, and refuses on its own term (g_bggpu_r_late);
+     * its first draw's own latch is not kept, because nothing it decides is
+     * read again here. */
+    const int opt_xform  = sl_bggpu_opt_in();
+    const int opt_bypass = bg_gpu_bypass_on();
+    const int opt_far    = sl_perf_bg_far_admit();
 
     if (late) {
         /* #90 the frame's translucent meshes, on the state the first draw
@@ -17262,134 +18623,136 @@ static void bg_draw_pass(int late)
                           && sl_wa_frame_clock(&clockf));
         const double tsec = anim ? sl_wa_anim_seconds(clockf) : 0.0;
         unsigned nanim = 0;
+        /* B-PERF1 THE DIAGNOSTIC STATISTICS - the item's box, its nearest
+         * vertex to the eye and the fog / depth summary - are read by the
+         * SL_BG_WORLDBOX line, the SL_BG_FOGTRACE line and the census report
+         * (SL_DL_CENSUS) and by nothing drawn, so a walk computes them only
+         * when one of those will read them. Measured: see B-PERF1. */
+        const int wbox = bg_worldbox_on();
+        const int fstats = bg_fogtrace_on() || dl_census_on();
         for (j = 0; j < 3; j++) { blo[j] = 1e30f; bhi[j] = -1e30f; }
-        for (i = 0; i < a->vertex_count; i++) {
-            const struct sl_wa_vertex *v = &a->vertices[i];
-            float *c = &clip[i * 4u];
-            float px = v->x, py = v->y, pz = v->z;
-            float x, y, z;
-            float envc = 0.0f;              /* remaster stage fog, #68 */
-            /* THE DISPLACEMENT, in the bundle's own units and along the
-             * vertex's own direction, before the level scale - where the
-             * source program applies it, in the item's model space. */
-            if (anim && SL_WA_VAUX(a, i)->anim != 0u) {
-                const struct sl_wa_vaux *ax = SL_WA_VAUX(a, i);
-                const float d = sl_wa_anim_displacement(&a->anims[ax->anim - 1u],
-                                                        (float) ax->wave_a,
-                                                        (float) ax->wave_b, tsec)
-                              * (1.0f / 32767.0f);
-                px += d * (float) ax->nx;
-                py += d * (float) ax->ny;
-                pz += d * (float) ax->nz;
-                nanim++;
-            }
-            x = (px * sc - org[0]) * post;
-            y = (py * sc - org[1]) * post;
-            z = (pz * sc - org[2]) * post;
-            if (x < blo[0]) blo[0] = x;  if (x > bhi[0]) bhi[0] = x;
-            if (y < blo[1]) blo[1] = y;  if (y > bhi[1]) bhi[1] = y;
-            if (z < blo[2]) blo[2] = z;  if (z > bhi[2]) bhi[2] = z;
-            if (have_e) {
-                double dx = x - eyep[0], dy = y - eyep[1], dz = z - eyep[2];
-                double d2 = dx * dx + dy * dy + dz * dz;
-                if (d2 < nearest) nearest = d2;
-            }
-            /* THE REMASTER'S DISTANCE: world units after the level scale and
-             * before the visibility scale (measured - see SLEN), so this
-             * space's distance divided by the factor applied to it. */
-            if (have_f) {
-                double fx = x - feye[0], fy = y - feye[1], fz = z - feye[2];
-                envc = sl_wa_env_fog_coord(g_bg_env, (float) (sqrt(fx * fx + fy * fy
-                                           + fz * fz) / (double) post));
-            }
-            /* #74 D-026 step 1: the shell's own positions kept for step 2;
-             * every other vertex the fog reaches raises its azimuth's bin. */
-            if (pano) {
-                const unsigned sl = g_pano_slot[i];
-                if (sl != 0u) {
-                    float *q = &g_pano_pos[(sl - 1u) * 3u];
-                    q[0] = x; q[1] = y; q[2] = z;
-                } else if (envc > SL_WA_PANO_REACH) {
-                    const double hx = x - feye[0], hz = z - feye[2];
-                    const double hh = sqrt(hx * hx + hz * hz);
-                    if (hh > 1e-3 && y > feye[1]) {
-                        const float val = sl_wa_panorama_reach(envc)
-                                        * (float) ((y - feye[1]) / hh);
-                        double ph = atan2(hx, hz) * (180.0 / 3.14159265358979);
-                        int bi;
-                        if (ph < 0.0) ph += 360.0;
-                        bi = (int) (ph * (PANO_BINS / 360.0));
-                        if (bi >= PANO_BINS) bi = PANO_BINS - 1;
-                        if (val > g_pano_bin[bi]) g_pano_bin[bi] = val;
-                    }
-                }
-            }
-            for (j = 0; j < 4; j++)
-                c[j] = x * C[j] + y * C[4 + j] + z * C[8 + j] + C[12 + j];
-            /* clamp to the far plane - the depth a single-range frame draws
-             * at; the unclamped z is kept for the second range (#78) */
-            zraw[i] = c[2];
-            if (c[3] > wmax) wmax = c[3];
-            if (!fogless && c[3] > 0.0f && c[2] > c[3]) { c[2] = c[3]; nfar++; }
-            /* #77 the pushed position of a two-sided vertex (g_cop_vn):
-             * along its normal, away from the eye, by twice the pair
-             * tolerance at its distance from the origin; every other
-             * vertex's pushed position is its own */
-            {
-                float *c2 = &g_cop_clip[i * 4u];
-                const float *vn = (g_cop_asset == a && g_cop_vn != NULL && g_cop_vn_cap >= a->vertex_count
-                                   && g_cop_nopp != 0u && g_cop_eye_ok) ? &g_cop_vn[i * 3u] : NULL;
-                if (vn != NULL && (vn[0] != 0.0f || vn[1] != 0.0f || vn[2] != 0.0f)) {
-                    const double r = sqrt((double) px * px + (double) py * py + (double) pz * pz);
-                    const double push = 2.0 * sl_wa_coplanar_eps(r, r);
-                    const double toeye = vn[0] * ((double) g_cop_eye[0] - px) + vn[1] * ((double) g_cop_eye[1] - py)
-                                       + vn[2] * ((double) g_cop_eye[2] - pz);
-                    const double s2 = (toeye > 0.0) ? -push : push;   /* away from the eye */
-                    const float qx = (float) (((double) px + vn[0] * s2) * sc - org[0]) * post;
-                    const float qy = (float) (((double) py + vn[1] * s2) * sc - org[1]) * post;
-                    const float qz = (float) (((double) pz + vn[2] * s2) * sc - org[2]) * post;
-                    for (j = 0; j < 4; j++)
-                        c2[j] = qx * C[j] + qy * C[4 + j] + qz * C[8 + j] + C[12 + j];
-                    g_cop_zraw[i] = c2[2];
-                    if (!fogless && c2[3] > 0.0f && c2[2] > c2[3]) c2[2] = c2[3];
-                    g_cop_pushed++;
-                } else {
-                    c2[0] = c[0]; c2[1] = c[1]; c2[2] = c[2]; c2[3] = c[3];
-                    g_cop_zraw[i] = zraw[i];
-                }
-            }
-            g_bgn_cls[i] = (unsigned char) sl_wa_near_class(c);   /* #75 near class */
-            /* THE FOG VALUE, from the SAME depth the depth buffer gets. The
-             * triangle path feeds fog_coord the perspective-divided z that
-             * ndc_account computed (g_vdepth, sl_gfx_dl.c:1423, cz/cw); this
-             * pass has that division's two halves in hand, so it takes the
-             * identical quotient rather than a distance of its own. A point at
-             * or behind the eye has no meaningful quotient and the near plane
-             * is the no-fog end, so it contributes zero - the same rule the
-             * triangle path's ndc row carries. The far clamp above is what
-             * keeps terrain past the frustum at full fog rather than at
-             * whatever a divergent z happened to be. */
-            fogc[i] = (fogm != FOG_NONE && c[3] > 1e-6f)
-                    ? fog_coord(fogm, c[2] / c[3]) : envc;
-            if (i == 0) { g_bg_fog_sum = 0.0; g_bg_fog_n = g_bg_fog_full = 0;
-                          g_bg_fog_min = 1e30f; g_bg_fog_max = -1e30f;
-                          g_bg_ndc_min = 1e30f; g_bg_ndc_max = -1e30f;
-                          g_bg_fog_mode = fogm; g_bg_fog_which = g_proj_world_which; }
-            g_bg_fog_sum += fogc[i];
-            g_bg_fog_n++;
-            if (fogc[i] < g_bg_fog_min) g_bg_fog_min = fogc[i];
-            if (fogc[i] > g_bg_fog_max) g_bg_fog_max = fogc[i];
-            if (fogc[i] > 0.999f) g_bg_fog_full++;
-            /* THE DEPTH ITSELF, beside the value derived from it. A coordinate
-             * of zero has two causes - the band starts beyond this geometry,
-             * or the depth is wrong - and they are the same number afterwards.
-             * This is the pair that tells them apart. */
-            if (c[3] > 1e-6f) {
-                float nz = c[2] / c[3];
-                if (nz < g_bg_ndc_min) g_bg_ndc_min = nz;
-                if (nz > g_bg_ndc_max) g_bg_ndc_max = nz;
-            }
+        /* v0.4 (SL_BG_GPU_BYPASS): WHICH WALKS TAKE THE REDUCED LOOP. Every
+         * term is this frame's own and already in hand here; what each one owes
+         * is above, at THE CPU VERTEX LOOP SKIPPED WHERE ITS OUTPUTS ARE NOT
+         * READ. The late draw never reaches this point (it jumps to the GL
+         * section), so there is no term for it.
+         *
+         * The program and the buffers are asked for by their CACHED answers,
+         * because the walk's own are not established until the GL section
+         * below: a resolved program (sl_bggpu_state) and this item already in
+         * the buffers (g_bgv_state, g_bgv_asset) are what make the two
+         * admissions there succeed without a further allocation or compile. The
+         * first walk of a run, and the first of an item, are therefore never
+         * reduced - and a refusal that happens anyway is repaired below. */
+        if (opt_bypass) {
+            g_bgb_considered++;      /* examined; admitted or refused below */
+            /* THERE IS NO FAR TERM HERE, and there must not be: `farpass` is
+             * decided AFTER the loop this block is about to reduce, from the
+             * nfar and wmax the loop itself produces, so at this point it is
+             * still 0 and a term reading it would be dead. It is not needed
+             * either - the `!fogless` term below admits only fogless walks,
+             * and nfar cannot rise on a fogless walk (the far clamp cannot
+             * fire), so a reduced walk's farpass is 0 by construction. The
+             * far-walk guard belongs where farpass is known, at the program
+             * admission in the GL section. */
+            if (!opt_xform)                         g_bgb_r_pair++;
+            else if (pano)                          g_bgb_r_pano++;
+            else if (anim)                          g_bgb_r_anim++;
+            else if (wbox || fstats)                g_bgb_r_stats++;
+            else if (fogm != FOG_NONE || have_f
+                     || g_bg_env != NULL)           g_bgb_r_fog++;
+            else if (!fogless)                      g_bgb_r_fogless++;
+            else if (!(g_bgv_state > 0 && g_bgv_asset == a
+                       && a->vertex_count != 0u))   g_bgb_r_arrays++;
+            else if (sl_bggpu_state() <= 0)         g_bgb_r_prog++;
+            else if ((bypass_need = bg_bypass_need(a)) == NULL) g_bgb_r_need++;
+            else                                    bypass = 1;
         }
+        {
+            /* v0.4: the loop on one or two threads (bg_vertex_range, bgv_run) */
+            struct bgv_in *vin = &g_bgv_in;
+            int b;
+            vin->a = a;
+            memcpy(vin->C, C, sizeof vin->C);
+            memcpy(vin->org, org, sizeof vin->org);
+            memcpy(vin->feye, feye, sizeof vin->feye);
+            memcpy(vin->eyep, eyep, sizeof vin->eyep);
+            memcpy(vin->cop_eye, g_cop_eye, sizeof vin->cop_eye);
+            vin->sc = sc; vin->post = post; vin->have_f = have_f; vin->have_e = have_e; vin->pano = pano;
+            vin->anim = anim; vin->fogless = fogless; vin->fogm = fogm; vin->wbox = wbox; vin->fstats = fstats;
+            vin->cop_eye_ok = g_cop_eye_ok; vin->tsec = tsec; vin->env = g_bg_env; vin->cop_asset = g_cop_asset;
+            vin->cop_vn = g_cop_vn; vin->cop_vn_cap = g_cop_vn_cap; vin->cop_nopp = g_cop_nopp;
+            vin->pano_slot = g_pano_slot;
+            /* v0.4 (SL_BG_GPU_BYPASS). The fog coordinates are written whole,
+             * by one memset of the value this walk's own terms make every
+             * element: no level band and no environment row leaves the loop's
+             * fog expression at `envc`, which is 0.0f for every vertex, and
+             * 0.0f is all-zero bits. So the reduced loop leaves no stale fog
+             * element - only the clip, raw-depth and pushed ones the audit
+             * above shows unread. */
+            /* THE BACKGROUND DRAW SNAPSHOT (src/gfx/sl_bgsnap_write.h), off by
+             * default. With SL_BGSNAP unset, sl_bgsnap_armed() is one cached
+             * integer test and the two calls below return immediately, so this
+             * walk's ordering, suppression, coefficients and per-vertex work
+             * are exactly what they were - the diagnostic adds the gate and
+             * nothing else.
+             *
+             * When a walk IS selected, the reduction is refused for it: the
+             * reduction is a performance path whose skipped vertices have no
+             * clip position written, so a record taken under it would be a
+             * whole-item record with holes. That is why the suppression sits
+             * here, after the eligibility decision and before `need` is bound,
+             * rather than inside the loop. */
+            if (sl_bgsnap_armed()) {
+                /* Declared at the use site, as every other caller of it in
+                 * this tree does (src/game/bg.c, chrprop.c, explosion.c):
+                 * the recording index has no public header. */
+                extern unsigned sl_record_index(void);
+                if (sl_bgsnap_want(sl_record_index(), g_dl_frame,
+                                   (unsigned) g_sky_cloud_phase, a->path))
+                    sl_bgsnap_begin(a, a->vertex_count, sl_record_index(),
+                                    g_dl_frame, (unsigned) g_sky_cloud_phase);
+                if (sl_bgsnap_collecting()) bypass = 0;
+            }
+            vin->need = bypass ? bypass_need : NULL;
+            if (bypass) {
+                memset(fogc, 0, (size_t) a->vertex_count * sizeof *fogc);
+                g_bgb_walks++;
+                g_bgb_vtx_full += g_bgb_need_n;
+                g_bgb_vtx_skip += a->vertex_count - g_bgb_need_n;
+            }
+            bgv_run(vin, clip, zraw, fogc, blo, bhi, nearest);
+            /* AFTER THE JOIN, and that placement is the whole correctness
+             * argument: bgv_run may split [0, n) across the render thread and
+             * one helper, and it joins before returning. A record taken before
+             * the join would read arrays a thread may still be writing. The
+             * clamped clip, the unclamped depth and the fog are all complete
+             * here, which is what the format's two depth fields require. */
+            if (sl_bgsnap_collecting())
+                sl_bgsnap_vertices(a, a->vertex_count, clip, zraw);
+            nearest = g_bgv_out[0].nearest;
+            nfar = g_bgv_out[0].nfar + g_bgv_out[1].nfar;
+            nanim = g_bgv_out[0].nanim + g_bgv_out[1].nanim;
+            g_cop_pushed = g_bgv_out[0].pushed + g_bgv_out[1].pushed;
+            wmax = 0.0f;
+            if (g_bgv_out[0].wmax > wmax) wmax = g_bgv_out[0].wmax;
+            if (g_bgv_out[1].wmax > wmax) wmax = g_bgv_out[1].wmax;
+            if (pano)
+                for (b = 0; b < PANO_BINS; b++) {
+                    if (g_bgv_bin[0][b] > g_pano_bin[b]) g_pano_bin[b] = g_bgv_bin[0][b];
+                    if (g_bgv_bin[1][b] > g_pano_bin[b]) g_pano_bin[b] = g_bgv_bin[1][b];
+                }
+        }
+        /* v0.4: the same transform the loop above just applied, as the GPU
+         * program's uniforms - taken from the loop's own inputs rather than
+         * rebuilt, so the two cannot drift. Whether the program is used at all
+         * is decided below, once the pass knows the item is in buffer objects. */
+        memcpy(gpu_w.C, C, sizeof gpu_w.C);
+        memcpy(gpu_w.org, org, sizeof gpu_w.org);
+        gpu_w.sc = sc;
+        gpu_w.post = post;
+        gpu_w.fogless = fogless;
+        gpu_anim = anim;
         /* #74 D-026 steps 2 and 3. */
         if (pano) pano_coords(feye, fogc);
         /* #78 BEYOND THE FAR PLANE (sl_wa_far_plane in the header for the
@@ -17424,11 +18787,7 @@ static void bg_draw_pass(int late)
                     a->path, nanim, a->anim_count, a->anim_count == 1u ? "" : "s",
                     clockf, tsec);
         }
-        if (g_bgbox_on < 0) {
-            const char *v = getenv("SL_BG_WORLDBOX");
-            g_bgbox_on = (v != NULL && *v != '0');
-        }
-        if (g_bgbox_on > 0 && (g_bg_frames % 20u) == 0u) {
+        if (wbox && (g_bg_frames % 20u) == 0u) {
             float llo[3], lhi[3], lsc = 0.0f;
             int nrooms = sl_wa_level_box(llo, lhi, &lsc);
             fprintf(stderr, "#68 bgplaced: the REPLACEMENT spans %.1f %.1f %.1f "
@@ -17617,6 +18976,20 @@ gl_state:
             glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0],
                            (const GLvoid *) &a->vertices[0].r);
     }
+    /* THE SNAPSHOT'S EFFECTIVE ATTRIBUTES, recorded HERE and not earlier,
+     * because here is the first point at which both are decided: the remaster
+     * fog enable is settled above, and the colour source - disabled, the
+     * item's own records, or the shot-out-light replacement - is settled by
+     * the branch immediately above this. Recording either at the geometry
+     * point produced a snapshot that disagreed with the draws, measured both
+     * ways: no fog claimed on a frame whose draws bound a fog array, and the
+     * item's own colour bytes asserted while a replacement array was bound.
+     * The writer carries what this establishes into every draw record's state
+     * mask, so the draw site neither restates it nor can contradict it. */
+    if (sl_bgsnap_collecting())
+        sl_bgsnap_effective(a, a->vertex_count,
+                            (fogm != FOG_NONE || remfog) ? fogc : NULL,
+                            lc, g_bg_white);
     /* #88 the same arrays from buffer objects (see bgv_ready): the item's
      * records and indices held per item, this walk's fog coordinates now and
      * its clip positions at each range's start, below */
@@ -17644,6 +19017,182 @@ gl_state:
         if (!g_bg_white && lc == NULL)
             glColorPointer(4, GL_UNSIGNED_BYTE, (GLsizei) sizeof a->vertices[0], (const GLvoid *) orr);
         p_BindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    /* v0.4: WHICH WALKS MAY DRAW THROUGH THE GPU VERTEX PROGRAM. Every term is
+     * a fact about THIS frame - the switch, the arrays, and what the pass is
+     * about to do to the clip positions - so nothing here is per level or per
+     * item, and no list of either exists.
+     *
+     *   late     the late draw jumps straight to the GL section and never
+     *            rebuilds sc, org, post or C, so this walk's transform is not
+     *            in hand to upload (#90)
+     *   pano     the shell's positions and the azimuth bins are CPU reductions
+     *            and pano_coords rewrites the fog array from them (#74)
+     *   anim     the displacement is per-vertex work from the bundle's own
+     *            records, which the program does not carry (#69)
+     *   arrays   without buffer objects there is no resident model position to
+     *            read (#88)
+     *
+     * THE TWO-RANGE FAR WALK: #78 stopped refusing it here, and the row
+     * refuses it again - over missing evidence, not a finding.
+     *
+     *   far      this walk draws in TWO depth ranges (farpass). The two ranges
+     *            rewrite the clip z between draws, which a program computing
+     *            its own clip position cannot read; so the range, and within
+     *            the first range the mesh's own coefficients, are a uniform
+     *            the draws below select (SL_BGGPU_DEPTH_FAR0 / _FAR1). Those
+     *            far-depth expressions are recorded in docs/backlog.md as
+     *            source-only, with no run qualifying their clamp or their
+     *            ranges - so sl_perf_bg_far_admit answers 0 under the row and
+     *            the walk takes the CPU path it has always taken. The
+     *            sprint's own SL_BG_GPU_XFORM=1 still admits it, and
+     *            SL_PERF_BG_FAR=1 admits it with every other selection at the
+     *            row's own values, which is the arm that can close the gap.
+     *
+     *            A ONE-RANGE FRAME IS NOT REFUSED, AND IS NOT QUALIFIED
+     *            EITHER. The clip-component campaign exercised the clip
+     *            components, which the program computes BEFORE a depth case is
+     *            selected; it covers no depth expression, so SINGLE's far
+     *            clamp is as unqualified as the far pair. The difference is in
+     *            how each is treated, not in the evidence behind it: the pair
+     *            carries its own source-only record and is guarded, SINGLE is
+     *            selected. Both are required rows of the qualification batch.
+     *
+     * What the ranges do to the CPU's arrays is unchanged either way - the
+     * blanket rewrites, bg_far_rezero's per-mesh pair, the depth clear between
+     * the ranges and every upload still run, because the meshes this walk
+     * keeps on the clip positions draw from them.
+     *
+     * A refused walk is the walk that ships, unchanged. The counters say which
+     * term refused it, so the census names the reason rather than the fact. */
+    g_bggpu_bound = 0;
+    g_bggpu_mesh_sub = 0u;
+    g_bggpu_used = 0;
+    g_bgtf_walk = 0;          /* v0.4 the candidate re-admits per walk */
+    g_bgtf_src = 0;           /* ... and nothing is sourced from a pool yet */
+    g_bgtf_src_dmode = SL_BGGPU_DEPTH_SINGLE;
+    g_bgtf_dump_mesh = 0;     /* ... and no mesh is the diagnostic's yet */
+    g_bgtf_cpur_mesh = 0;     /* ... nor the original-raster control's   */
+    /* v0.4 THE RENDERER-STATE PROBE'S WALK ARMING (SL_BG_GLSTATE,
+     * src/gfx/sl_gfx_bgstate.h), default off: one cached integer test and no
+     * call.
+     *
+     * WHY THE WALK AND NOT THE MESH. Three of the probe's four moments are
+     * inside the clip prepass, which runs BEFORE the mesh that consumes its
+     * pool is known - so a probe armed only when a mesh matched could never
+     * have observed them. The clocks are the DRAW SITE's own three, the same
+     * three the snapshot seam and the buffer diagnostic pass, and arming on
+     * them is what confines the producers the record may link to this frame.
+     *
+     * IT IS ABOVE THE ADMISSION ON PURPOSE. This runs whether or not the
+     * candidate takes the walk, because the probe's draw site must be reached
+     * on the arm where no prepass runs at all. */
+    if (sl_bgstate_armed()) {
+        extern unsigned sl_record_index(void);
+        sl_bgstate_begin_walk(sl_record_index(), g_dl_frame,
+                              (unsigned) g_sky_cloud_phase);
+    }
+    gpu_walk = 0;
+    g_bggpu_dmode = SL_BGGPU_DEPTH_SINGLE;
+    if (opt_xform) {
+        if (late)            g_bggpu_r_late++;
+        else if (farpass && !opt_far) g_bggpu_r_far++;
+        else if (pano)       g_bggpu_r_pano++;
+        else if (gpu_anim)   g_bggpu_r_anim++;
+        else if (!g_bgv_live) g_bggpu_r_arrays++;
+        else if (sl_bgtf_walk_admit()) {
+            /* THE PREPASS, WHEN IT IS SELECTED, ANSWERS INSTEAD OF THE PROGRAM.
+             * Both compute the same clip positions from the same inputs, so a
+             * walk takes one or the other, never both. gpu_walk stays 0 either
+             * way: on success because the prepass rasterises through the fixed
+             * pipeline rather than the vertex program, and on refusal because
+             * the walk falls back to the existing CPU path. Leaving it 0 is also
+             * what makes the reduction's repair below cover this walk - see the
+             * note at g_bgtf_walk.
+             *
+             * ASKED HERE, INSIDE THE WALK'S LATCHED ROW ANSWER, which is what
+             * resolves the OPTIMIZED RENDERING row ONCE PER WALK. `opt_xform`
+             * is this walk's one answer (#18264); sl_bgtf_walk_admit reads no
+             * row of its own and caches none, so a menu moving OFF -> ON -> OFF
+             * acts at the next walk boundary in each direction and no walk can
+             * be admitted under one answer and rastered under another. */
+            g_bgtf_gen++;
+            if (!sl_bgtf_ready()
+                || !sl_bgtf_begin_walk(&gpu_w, a->vertex_count, (unsigned) g_bgv_static,
+                                       (unsigned) sizeof a->vertices[0], g_bgtf_gen)) {
+                g_bgtf_r_prog++;
+            } else {
+                g_bgtf_walk = 1;
+                g_bgtf_elig_walks++;
+            }
+        }
+        /* v0.4 THE VERTEX PROGRAM IS REACHED ONLY WHEN A DEVELOPER NAMED IT,
+         * AND THIS BRANCH IS THE FIX FOR A MEASURED DEFECT IN THE FIRST DRAFT
+         * OF THIS CHAIN.
+         *
+         * WHAT WAS WRONG. The chain read `... else if (admitted) {prepass} else
+         * if (!ready || !use_walk) r_prog++; else {gpu_walk = 1;}`, so with the
+         * row ON every walk the prepass did NOT admit fell through to the vertex
+         * program. That program's frames were measured ONE BLUE VALUE APART
+         * from the original renderer's at (71,113), 142 against 143 - the very
+         * defect the row's selection exists to remove - and the walks that fell
+         * there included a launch with an UNREADABLE SL_BG_TF_AUX_REAL. A known
+         * mismatch reached BY TYPO is the one outcome this selection may not
+         * have, and "the stood-down walk draws the original renderer" was a
+         * claim about code that did something else.
+         *
+         * WHAT IT IS NOW, AS THREE ANSWERS AND A DEFAULT. The prepass takes an
+         * admitted walk; a developer who NAMED the vertex transform gets it,
+         * labelled; and everything else - an absence, a stand-down, a typo -
+         * draws the fully produced CPU clip and raster path, which is the pass
+         * that ships. There is no path from an absence or an unreadable value to
+         * either 142 arm.
+         *
+         * NAMED MEANS NAMED, AND THE PRECEDENCE IS sl_perf.h's OWN.
+         * sl_perf_bg_xform_named answers 1 only for SL_BG_GPU_XFORM=1 before any
+         * menu press; an explicit 0 turns `opt_xform` off and never reaches
+         * here, and a press ends the switch's say so an inherited variable
+         * cannot put the 142 path back behind a menu that was just set. No
+         * environment key is added for this.
+         *
+         * AND SL_BG_TF_CLIP=1 STILL WINS, which keeps every A/B arm in
+         * src/gfx/sl_gfx_bgtf.h exactly as it was: the admission above is asked
+         * FIRST, so a launch setting both switches - which the live candidate
+         * arm does - takes the prepass, as it did before this branch existed. */
+        else if (sl_perf_bg_xform_named()) {
+            if (!sl_bggpu_ready() || !sl_bggpu_use_walk(&gpu_w)) g_bggpu_r_prog++;
+            else { gpu_walk = 1; g_bggpu_elig_walks++; }   /* admitted; USED is decided at the draws */
+        }
+        /* THE DEFAULT IS THE CPU CLIP AND RASTER PATH, counted so a census can
+         * tell "no walk this frame" from "the walk stood down". gpu_walk stays
+         * 0, so the reduction's repair below recomputes the whole item's CPU
+         * arrays and the pass draws its own clip positions - byte for byte the
+         * walk that has always shipped. */
+        else g_bggpu_r_tfstand++;
+    }
+    /* v0.4 (SL_BG_GPU_BYPASS): THE REPAIR. The reduced loop left this walk's
+     * clip positions unwritten for every vertex no mesh of it reads, which is
+     * sound only while the program takes the walk. A refusal here - the two
+     * admissions above answering differently from the cached answers the
+     * reduction asked, because a context went away between them - is repaired
+     * by running the loop again over the whole item. The reductions are not
+     * re-read: a reduced walk's nfar, wmax, nanim and pushed count are already
+     * the whole item's - wmax is taken on both of the loop's paths, nfar cannot
+     * rise on a fogless walk, an animated walk is refused outright, and every
+     * vertex with a push normal is marked - so what the repair owes is the
+     * arrays. */
+    if (bypass && !gpu_walk) {
+        struct bgv_out ro;
+        float rlo[3] = { 1e30f, 1e30f, 1e30f }, rhi[3] = { -1e30f, -1e30f, -1e30f };
+        g_bgb_repairs++;
+        memset(&ro, 0, sizeof ro);
+        ro.clip = clip; ro.zraw = zraw; ro.fogc = fogc;
+        ro.cop_clip = g_cop_clip; ro.cop_zraw = g_cop_zraw; ro.cls = g_bgn_cls;
+        ro.pano_pos = g_pano_pos; ro.bin = g_bgv_bin[0];
+        ro.blo = rlo; ro.bhi = rhi; ro.nearest = 1e30;
+        g_bgv_in.need = NULL;
+        bg_vertex_range(&g_bgv_in, &ro, 0u, a->vertex_count);
+        bypass = 0;
     }
     nearkeep = bg_nearkeep_on() && wa_nearkeep_ready();    /* #75 */
     if (!late) {
@@ -17705,6 +19254,12 @@ gl_state:
             int blue = 0;                            /* #81 blue coverage, this mesh */
 
             g_bgx_filter = -1;                       /* #90 every piece, unless below */
+            /* v0.4 THE PROBE'S PER-MESH RESET (SL_BG_GLSTATE), default off: one
+             * cached integer test. Drops the per-mesh selection and the
+             * per-mesh producer link, so neither outlives the mesh it belongs
+             * to - a link left standing would attribute the previous mesh's
+             * prepass to this mesh's draw. */
+            if (sl_bgstate_armed()) sl_bgstate_mesh_begin();
             if (!bg_mesh_shown(mi)) continue;        /* SL_BG_ONLY / SL_BG_HIDE */
             /* #90 the game's range: a translucent mesh waits for the game's
              * translucent walk, and only it is drawn there - a decal piece on
@@ -17883,6 +19438,336 @@ gl_state:
             }
             if (g_bg_nomip)
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            /* v0.4: AND WHICH MESHES OF AN ELIGIBLE WALK. Again every term is
+             * this draw's own state, and the choice is made HERE - before any
+             * program is bound below, because the material program and this one
+             * are both the current program and only one of them can be:
+             *
+             *   four-image  a material carrying the source's four-image record
+             *               draws through the material program, which transforms
+             *               with ftransform(). The test is the RECORD, not
+             *               whether the program ends up bound, so it refuses a
+             *               few meshes that would have been eligible with
+             *               SL_BG_MATERIAL=0 - refusing more is always safe,
+             *               and it keeps one condition here instead of a mirror
+             *               of a compound one that could drift from it (#69)
+             *   pulled      bg_decal_pull rewrote this mesh's clip z (#81)
+             *   cop         bg_draw_mesh_elements switches the vertex pointer to
+             *               the pushed positions part way through this mesh, and
+             *               only the clip arrays hold those (#77)
+             *   shell_far   the panorama shell on a two-range frame is not one
+             *               of the ordinary far-depth cases: it is drawn once and
+             *               whole in the first range, under GL_DEPTH_CLAMP and
+             *               without the blended pair bg_far_rezero gives every
+             *               other blended mesh, and the second range skips it
+             *               (#80, bg_far_shell). It keeps the clip positions
+             *               (#74 also still refuses every walk the shell fades
+             *               on, so this term is the frames where it does not)
+             *
+             * A refused mesh draws from the walk's clip positions, which is what
+             * every mesh does today. The near-cut fill draws through whichever
+             * pointer is current, so it is correct on either path - and on this
+             * mesh's own depth uniform, since the fill is part of its draw.
+             *
+             * AND WHICH DEPTH an accepted mesh writes, the one fact the program
+             * cannot take from the clip array (SL_BGGPU_DEPTH_*): the range is
+             * the pass's, and inside the first range the pair is this mesh's own,
+             * the same choice bg_far_rezero makes by rewriting the vertices of a
+             * blended mesh for the length of its draw. */
+            {
+                const int cop = !(a != g_cop_asset || g_cop_yield == NULL
+                                  || mi >= SL_WA_MAX_MESHES || !g_cop_mesh[mi])
+                             && g_cop_pushed != 0u && g_cop_clip != NULL;
+                const int fourimg = a->vframe && mh->material < a->material_count
+                                 && a->matx[mh->material].mode == SL_WA_MATX_NORMAL_SPHERE;
+                const int gpu = gpu_walk && !fourimg && !pulled && !cop && !shell_far;
+                int dmode = SL_BGGPU_DEPTH_SINGLE;
+                float dk1 = 0.0f, dk2 = 0.0f;
+                if (farpass && pass == 0) {
+                    dmode = SL_BGGPU_DEPTH_FAR0;
+                    if (SL_WA_BLEND_BLENDS(mt->blend)) { dk1 = fz_t1; dk2 = fz_t2; }
+                    else                               { dk1 = fz_k1; dk2 = fz_k2; }
+                } else if (farpass) {
+                    dmode = SL_BGGPU_DEPTH_FAR1;
+                }
+                if (gpu_walk) { if (gpu) g_bggpu_cand++; else g_bggpu_kept++; }
+                /* v0.4 (SL_BG_GPU_BYPASS): THE INVARIANT, counted rather than
+                 * assumed. A mesh the reduction did not mark clip-dependent
+                 * must be one this predicate accepts - each term above is the
+                 * term the marking tests - because its vertices' clip
+                 * positions were not written. A violation is a wrong picture,
+                 * so it is said once and counted; the count belongs in the
+                 * validation gate and must be zero. */
+                if (bypass && !gpu && !bg_bypass_mesh_dep(a, mi)) {
+                    static int said;
+                    g_bgb_broken++;
+                    if (!said) {
+                        said = 1;
+                        fprintf(stderr, "#88 background GPU bypass: UNSOUND - background/%s mesh %u "
+                                        "was not marked clip-dependent and the program refused it, "
+                                        "so it draws from clip positions this walk did not write. "
+                                        "Unset SL_BG_GPU_BYPASS; this run's picture is not evidence\n",
+                                a->path, mi);
+                    }
+                }
+                /* v0.4 THE CANDIDATE'S DRAW. The mesh terms are the program's
+                 * own, so the candidate admits exactly the meshes the program
+                 * would have. A prepass that refuses costs only this draw: the
+                 * walk was never reduced, so the CPU clip array is present and
+                 * the pointer is put straight back to it. */
+                if (g_bgtf_walk) {
+                    if (!fourimg && !pulled && !cop && !shell_far) {
+                        int tslot = sl_bgtf_prepass(dmode, dk1, dk2);
+                        /* v0.4 THE ORIGINAL-RASTER CONTROL (SL_BG_TF_RASTER_CPU),
+                         * default off and one cached test when it is off.
+                         *
+                         * THE PREPASS ABOVE HAS ALREADY RUN, with this mesh's
+                         * own depth and coefficients, the same slot key and the
+                         * same cache and reuse behaviour it has without the
+                         * control. That is the whole design: the prepass's
+                         * EXECUTION is held constant and its OUTPUT is what
+                         * stops being consumed.
+                         *
+                         * THE POOL IS NOT BOUND. sl_bgtf_bind_clip is what makes
+                         * a pool the vertex source, so not calling it is what
+                         * leaves the TF position slot unconsumed - and `binds`
+                         * un-incremented, which is the truthful count rather
+                         * than a bind immediately undone.
+                         *
+                         * A REFUSED PREPASS IS NOT THIS BRANCH. tslot < 0 falls
+                         * through to the existing refusal path, which is
+                         * correct unchanged: every refusal inside
+                         * sl_bgtf_prepass returns before its body touches the
+                         * vertex pointer, and a reused slot returns earlier
+                         * still, so a refusal leaves nothing to put back.
+                         *
+                         * THE RESTORATION IS UNCONDITIONAL AND IS NOT OPTIONAL.
+                         * A prepass that RAN leaves the vertex pointer naming
+                         * the item's model positions, so the original per-mesh
+                         * stream has to be named again before the raster draw.
+                         * bgtf_cpu_source cannot do it: g_bgtf_src is 0 here,
+                         * which is its early-return case, so the unconditional
+                         * helper is what puts the stream back - through the
+                         * pass's own bgv_vertex_pointer(0), not an open-coded
+                         * pointer.
+                         *
+                         * WHAT IT RESTORES TO IS FULLY PRODUCED. A candidate
+                         * walk keeps gpu_walk at 0, so the reduction's repair -
+                         * `bypass && !gpu_walk` - has already recomputed the
+                         * whole item's CPU arrays before any reader runs (the
+                         * note at g_bgtf_walk). This control adds no repair of
+                         * its own and reads nothing stale or bypassed.
+                         *
+                         * EVERYTHING ELSE IS THE ORIGINAL DRAW. Colour, UV and
+                         * fog arrays, the matrices, the depth mode and its
+                         * coefficients, the element buffer, the index order and
+                         * the range rewrites are untouched here; only which
+                         * array the positions come from differs.
+                         *
+                         * NO COVERAGE IS CLAIMED. g_bgtf_src stays 0, so
+                         * sl_bgtf_count_submission is never reached for these
+                         * draws and they cannot read as TF-position-source
+                         * coverage. The mark records that a prepass ran for a
+                         * draw the original stream rasterised, and it is
+                         * counted where the run is really submitted. */
+                        int rcpu = tslot >= 0 && sl_bgtf_raster_cpu();
+                        int tdm = (tslot >= 0 && !rcpu) ? sl_bgtf_bind_clip(tslot) : -1;
+                        if (rcpu) {
+                            bgtf_source_original();
+                            g_bgtf_cpur_mesh = 1;
+                            g_bgtf_cpur_meshes++;
+                        } else if (tdm >= 0) {
+                            g_bgtf_src = 1;
+                            g_bgtf_src_dmode = tdm;
+                            /* v0.4 THE PRODUCTION BUFFER DIAGNOSTIC'S OFFER
+                             * (SL_BG_TF_DUMP, src/gfx/sl_gfx_bgtf.h), default
+                             * off: one cached integer test and no call.
+                             *
+                             * THE DEPTH OFFERED IS tdm, THE SOURCE'S OWN, not
+                             * the `dmode` this mesh computed. The two differ
+                             * exactly when a mesh is served from a pool built
+                             * for another range, which is the case a record
+                             * must never attribute to this range.
+                             *
+                             * THE CPU REFERENCE IS `clip` AS IT STANDS HERE,
+                             * and that placement is the whole of its
+                             * correctness: it is after the bypass repair and
+                             * after this range's own depth rewrite - the
+                             * blanket FAR0 rewrite, the FAR1 write-back of
+                             * zraw, and bg_far_rezero for a blended mesh - so
+                             * it is the array the original path would have
+                             * submitted for THIS draw. The pre-range snapshot
+                             * reference would be the wrong numbers for FAR0.
+                             * `zraw` is handed over BESIDE it, not into it: the
+                             * diagnostic records every payload component from
+                             * `clip` and uses `zraw` only to count the vertices
+                             * where the two disagree.
+                             *
+                             * THE THREE CLOCKS ARE THE DRAW SITE'S OWN and are
+                             * the same three the snapshot seam above passes:
+                             * sl_record_index(), g_dl_frame and the cloud
+                             * phase. sl_frames_completed() is handed over
+                             * beside them to be RECORDED as the DRAW SITE's own
+                             * sample of that counter, and is never selected on:
+                             * it is a different number from g_dl_frame, and it
+                             * is also a different SAMPLE from the one the
+                             * screenshot line prints as frame=, which is taken
+                             * later in the frame. Conflating any two of them
+                             * names a different draw. */
+                            if (sl_bgtf_dump_opt_in()) {
+                                extern unsigned sl_record_index(void);
+                                extern unsigned sl_frames_completed(void);
+                                struct sl_bgtf_dump_site site;
+                                memset(&site, 0, sizeof site);
+                                site.read = sl_record_index();
+                                site.dl_frame = g_dl_frame;
+                                site.cloud = (unsigned) g_sky_cloud_phase;
+                                site.pumped = sl_frames_completed();
+                                site.item = a->path;
+                                site.item_bytes = (unsigned) sizeof a->path;
+                                site.mesh = mi;
+                                site.material = mh->material;
+                                site.dmode = tdm;
+                                site.slot = tslot;
+                                site.k1 = dk1;
+                                site.k2 = dk2;
+                                site.nverts = a->vertex_count;
+                                site.clip = clip;
+                                site.zraw = zraw;
+                                site.w = &gpu_w;
+                                g_bgtf_dump_mesh = sl_bgtf_dump_select(&site);
+                            }
+                        } else {
+                            /* A PREPASS OR A BIND THAT REFUSED. The walk was
+                             * never reduced, so the CPU arrays are present;
+                             * what matters is that the pool stops being the
+                             * source, which a plain refusal count would not
+                             * have achieved on its own. */
+                            g_bgtf_r_draw++;
+                            bgtf_cpu_source();
+                        }
+                    } else {
+                        /* CANDIDATE-INELIGIBLE, AND THAT IS EXACTLY WHEN THE
+                         * SOURCE HAD TO BE PUT BACK. Four-image, pulled,
+                         * coplanar and far-shell meshes draw through their own
+                         * paths; leaving a previous mesh's pool named here is
+                         * what let one mesh's indices rasterise against
+                         * another's positions at another depth. */
+                        bgtf_cpu_source();
+                    }
+                }
+                /* v0.4 THE RENDERER-STATE PROBE'S MESH SELECTION
+                 * (SL_BG_GLSTATE, src/gfx/sl_gfx_bgstate.h), default off: one
+                 * cached integer test and no call.
+                 *
+                 * HERE, BECAUSE THIS IS THE ONE POINT BOTH ARMS REACH. The
+                 * candidate's own block above runs only when SL_BG_TF_CLIP
+                 * admitted the walk, so a selection made inside it would be
+                 * unreachable on the arm where no prepass runs - and that arm is
+                 * half of the comparison this probe exists to serve. It is also
+                 * AFTER that block, so a prepass run for this mesh has already
+                 * registered its producer and the link is this mesh's own.
+                 *
+                 * NONE OF THE FOUR ARM FLAGS GATES ANYTHING. They are recorded.
+                 * g_bgtf_src is 0 under SL_BG_TF_RASTER_CPU - the raster reads
+                 * the ORIGINAL position stream - and g_bgtf_walk is 0 with the
+                 * candidate off, so gating on either would lose exactly one arm.
+                 * That is why this is NOT the buffer diagnostic's
+                 * `g_bgtf_src && g_bgtf_dump_mesh` gate and does not reuse it.
+                 *
+                 * The depth offered is this mesh and range's own `dmode`, which
+                 * is a fact about the range rather than about a prepass, so it
+                 * is comparable across the arms. */
+                if (sl_bgstate_armed()) {
+                    extern unsigned sl_record_index(void);
+                    extern unsigned sl_frames_completed(void);
+                    struct sl_bgstate_site bs;
+                    memset(&bs, 0, sizeof bs);
+                    bs.read = sl_record_index();
+                    bs.dl_frame = g_dl_frame;
+                    bs.cloud = (unsigned) g_sky_cloud_phase;
+                    bs.pumped = sl_frames_completed();
+                    bs.item = a->path;
+                    bs.item_bytes = (unsigned) sizeof a->path;
+                    bs.mesh = mi;
+                    bs.material = mh->material;
+                    bs.dmode = dmode;
+                    bs.k1 = dk1;
+                    bs.k2 = dk2;
+                    bs.nverts = a->vertex_count;
+                    bs.arm_candidate = g_bgtf_walk;
+                    bs.arm_pool_source = g_bgtf_src;
+                    bs.arm_cpu_raster = g_bgtf_cpur_mesh;
+                    bs.arm_vbo_indices = g_bgv_live;
+                    (void) sl_bgstate_select(&bs);
+                }
+                bggpu_select(g_bgtf_walk ? 0 : gpu, a, dmode, dk1, dk2);
+            /* ONE SNAPSHOT RECORD PER DRAW, with the uniform set this draw
+             * carries and the depth mode and pair its own program was just
+             * given. Off by default: one cached test.
+             *
+             * NO GL STATE IS READ BACK HERE. A read-back in a draw loop would
+             * flush the pipeline and perturb the very frame being recorded, so
+             * only values the pass ITSELF establishes are recorded, and every
+             * word not established that way is left UNRECORDED in the per-word
+             * mask. The reader treats an unrecorded word as absent evidence and
+             * withholds the oracle that depended on it, which is why marking a
+             * word unrecorded is honest and guessing at it would not be.
+             *
+             * Recorded here: the fog mode, whether the colour array is enabled
+             * (the pass disables it under SL_BG_WHITE) and whether the fog
+             * array is bound - which is exactly what the colour and fog oracles
+             * need. Left unrecorded: blending, the depth function and mask, the
+             * texture environments and names, unit 1, culling and the alpha
+             * test, none of which this seam establishes. The texture matrices
+             * are not recorded either, so the reader leaves the texture
+             * coordinates without an oracle rather than assuming an identity. */
+            if (sl_bgsnap_collecting()) {
+                unsigned st[16], set = 0u, dflags = 0u;
+                memset(st, 0, sizeof st);
+                st[SL_BGSNAP_S_FOG_MODE] = (unsigned) fogm;
+                set |= 1u << SL_BGSNAP_S_FOG_MODE;
+                /* THE FOG ARRAY IS PER DRAW AND IS RECORDED HERE, after the
+                 * per-material toggle above has left the array in the state
+                 * this draw will use. A walk-level answer is false for at
+                 * least one draw of any walk that mixes a material carrying
+                 * the stage-fog flag with one that does not, which is the
+                 * shared-pool case the toggle exists for.
+                 *
+                 * The three values are defined at SL_BGSNAP_S_FOG_ARRAY. The
+                 * disabled-under-remaster case is a KNOWN zero rather than an
+                 * absence, because the same branch that disables the array
+                 * sets the current coordinate to 0.0f, so the forwarded value
+                 * for every vertex of such a draw is exactly 0.0f. The
+                 * walk-level-off case sets no current value here, so it is
+                 * recorded as unestablished and the reader withholds the
+                 * oracle instead of reading a pool this draw never touched. */
+                st[SL_BGSNAP_S_FOG_ARRAY] =
+                    remfog ? (remarr ? SL_BGSNAP_FOG_ARRAY_ON
+                                     : SL_BGSNAP_FOG_OFF_ZERO)
+                           : ((fogm != FOG_NONE) ? SL_BGSNAP_FOG_ARRAY_ON
+                                                 : SL_BGSNAP_FOG_OFF_UNKNOWN);
+                set |= 1u << SL_BGSNAP_S_FOG_ARRAY;
+                /* The colour-array word is NOT set here: it is a per-WALK
+                 * property and the writer fills it from what
+                 * sl_bgsnap_effective observed actually bound. */
+                if (gpu) dflags |= SL_BGSNAP_DF_GPU;
+                if (gpu_w.fogless) dflags |= SL_BGSNAP_DF_FOGLESS;
+                /* THE UNIFORM SET COMES FROM gpu_w, not from the walk's own
+                 * locals. gpu_w is the copy this pass hands the GPU program,
+                 * taken from the vertex loop's own inputs rather than rebuilt
+                 * so the two cannot drift, which makes it the set the draw
+                 * actually carries - exactly what the record is for. The
+                 * walk's `post` is block-scoped and not even reachable here,
+                 * so reading it would have been the wrong source as well as
+                 * the unavailable one. */
+                sl_bgsnap_draw(mi, dflags, dmode, dk1, dk2,
+                               (a->indices != NULL && mh->index_count != 0u)
+                                   ? &a->indices[mh->first_index] : NULL,
+                               mh->index_count, gpu_w.C, gpu_w.org,
+                               gpu_w.sc, gpu_w.post, NULL, NULL, st, set);
+            }
+            }
             /* #69 THE MATERIAL PROGRAM, for a mesh whose material carries the
              * source's four-image record (see THE MATERIAL PROGRAM above): bound
              * for this one draw and put back after it. Without a view matrix
@@ -18055,6 +19940,129 @@ gl_state:
                 g_bg_draws++;
             }
             }
+        }
+    }
+    /* v0.4: the fixed pipeline and the walk's clip positions back, before the
+     * pass's own restore below - so the interpreter's list resumes with no
+     * program of this pass's current, exactly as it does today. Unconditional:
+     * the switch is a no-op when nothing was bound, and it folds the last
+     * mesh's submissions in. This walk counts as USED only if some mesh of it
+     * actually submitted, which is what g_bggpu_used records. */
+    bggpu_select(0, a, SL_BGGPU_DEPTH_SINGLE, 0.0f, 0.0f);
+    /* v0.4: and the candidate's own state - program, array and element
+     * bindings, the indexed transform-feedback binding and rasterizer discard -
+     * put back before the pass's restore below. A no-op when the candidate
+     * took no walk. */
+    if (g_bgtf_walk) {
+        /* THE SOURCE FIRST, THEN THE MODULE'S STATE. The walk's last mesh may
+         * still have a prepass pool named, and the interpreter's list resumes
+         * after this point, so the original per-mesh source has to be back
+         * before anything else draws. sl_bgtf_unbind then puts the program,
+         * the bindings and rasterizer discard back. */
+        bgtf_cpu_source();
+        sl_bgtf_unbind();
+        g_bgtf_walk = 0;
+    }
+    /* The snapshot closes here, after the last draw of the walk, so the file
+     * holds the whole pass and not a prefix of it. It writes once: a later
+     * selected walk in the same process is ignored, and an existing file is
+     * never replaced. A no-op when nothing is collecting. */
+    sl_bgsnap_end();
+    if (g_bggpu_used) { g_bggpu_walks++; g_bggpu_used = 0; }
+    /* v0.4: the reduced loop's own report, bounded, and printed whenever the
+     * reduction is SELECTED - which, since OPTIMIZED RENDERING defaults ON, is
+     * an ordinary player run and no longer only a switched-on one. What bounds
+     * it is the cadence below (the first reduced walk, then every 300th), not
+     * the selection, so an ordinary run writes about one line per 300
+     * background walks and nothing per frame.
+     *
+     * The display-list census cannot carry this: the census is itself one of
+     * the readers that refuses the walk (fstats), so a run with SL_DL_CENSUS=1
+     * reduces nothing and would report zeros. That is why a census arm can
+     * establish which depth modes SUBMITTED but cannot establish anything
+     * about the reduction, and why the two have to be separate runs. */
+    if (bg_gpu_bypass_on() && !late && g_bgb_walks != 0u) {
+        static unsigned long said;
+        /* `said != g_bgb_walks` makes this cadence a property of PROGRESS
+         * rather than of the counter's value, the same term the refusal report
+         * below carries, and for a reason this line can actually reach:
+         * g_bgb_walks advances only on a walk that was REDUCED, so on a mixed
+         * item - some walks reduced, then a stretch refused - the counter
+         * parks on a multiple of 300 while frames keep arriving, and a
+         * value-only condition reprints on every one of them. The duplicates
+         * are not even identical: the walk count and the vertex figures are
+         * parked while the refusal tally keeps rising, so they cannot be
+         * collapsed by equality either. One comparison bounds the line: at
+         * most one report per distinct reduced-walk count. */
+        if (said != g_bgb_walks
+            && (said == 0ul || (g_bgb_walks % 300ul) == 0ul)) {
+            said = g_bgb_walks;
+            fprintf(stderr, "#88 background GPU bypass: %lu walk%s reduced - %lu vertices computed "
+                            "whole, %lu to the near class alone; refused: %u switch pair, %u panorama, "
+                            "%u animated, %u statistics, %u fog, %u far range, %u arrays, %u program, "
+                            "%u analysis; %u repaired, %u unsound mesh draw%s (must be 0); %u item%s "
+                            "analysed in %u rebuild%s\n",
+                    g_bgb_walks, g_bgb_walks == 1ul ? "" : "s",
+                    g_bgb_vtx_full, g_bgb_vtx_skip,
+                    g_bgb_r_pair, g_bgb_r_pano, g_bgb_r_anim, g_bgb_r_stats, g_bgb_r_fog,
+                    g_bgb_r_fogless, g_bgb_r_arrays, g_bgb_r_prog, g_bgb_r_need,
+                    g_bgb_repairs, g_bgb_broken, g_bgb_broken == 1u ? "" : "s",
+                    g_bgb_items, g_bgb_items == 1u ? "" : "s",
+                    g_bgb_rebuilds, g_bgb_rebuilds == 1u ? "" : "s");
+        }
+    }
+    /* v0.4 (SL_BG_GPU_BYPASS): THE REFUSAL REPORT, for a run that reduces
+     * NOTHING. The line above is guarded on g_bgb_walks != 0, and a walk the
+     * predicate refuses never reaches bg_bypass_need either, so a run whose
+     * every walk is refused printed nothing at all - and a missing line cannot
+     * be told apart from the switch being unset, or from a binary built
+     * without this path. That is the whole fallback case: a fogged stage
+     * refuses every walk by design, and the fallback is supposed to be
+     * OBSERVED rather than inferred from silence.
+     *
+     * So this branch states the refusal positively: how many walks the
+     * predicate examined, that none was reduced, the per-term tally, and which
+     * term refused the most. Its guard is `g_bgb_walks == 0`, which is the
+     * exact complement of the line above, so the two are mutually exclusive by
+     * construction rather than by an else: a reader never has to merge them,
+     * and the reduced-walk report is left exactly as it was - every run that
+     * reduces at least one walk still reports through it, and it already
+     * carries the same tally.
+     *
+     * BOUNDED THE SAME WAY, and bounded in the same unit it reports: the first
+     * refusal, then every 300th examined walk, which is the reduced report's
+     * own cadence. It prints fixed-width counters only - no per-vertex, per-
+     * mesh or per-item quantity appears - so its cost does not grow with the
+     * item, and at roughly one background walk a frame it is one line per 300
+     * frames rather than one a frame. With the reduction not selected it is
+     * silent, because g_bgb_considered is only ever incremented inside the
+     * predicate. */
+    if (bg_gpu_bypass_on() && !late && g_bgb_walks == 0ul && g_bgb_considered != 0ul) {
+        static unsigned long said;
+        /* `said != g_bgb_considered` is what makes the cadence self-enforcing.
+         * Without it the condition is a property of the COUNTER's value, not of
+         * progress: a counter sitting on a multiple of 300 satisfies it on
+         * every later visit, so any walk that reached here without having
+         * incremented the counter would reprint the same line every frame.
+         * Today no such walk exists - the only jump that skips the increment is
+         * the late draw's `goto gl_state`, and this guard excludes late draws -
+         * but that is an argument across 1200 lines and two control-flow terms,
+         * and it would be silently false if either moved. One comparison
+         * replaces it: a line is printed at most once per distinct counter
+         * value, whatever path arrives. */
+        if (said != g_bgb_considered
+            && (said == 0ul || (g_bgb_considered % 300ul) == 0ul)) {
+            said = g_bgb_considered;
+            fprintf(stderr, "#88 background GPU bypass: REFUSED - %lu walk%s considered, 0 reduced; "
+                            "refused: %u switch pair, %u panorama, %u animated, %u statistics, "
+                            "%u fog, %u far range, %u arrays, %u program, %u analysis; most %s; "
+                            "%u repaired, %u unsound mesh draw%s (must be 0); the switch is on and "
+                            "the CPU loop ran whole on every walk\n",
+                    g_bgb_considered, g_bgb_considered == 1ul ? "" : "s",
+                    g_bgb_r_pair, g_bgb_r_pano, g_bgb_r_anim, g_bgb_r_stats, g_bgb_r_fog,
+                    g_bgb_r_fogless, g_bgb_r_arrays, g_bgb_r_prog, g_bgb_r_need,
+                    bg_bypass_refusal_top(),
+                    g_bgb_repairs, g_bgb_broken, g_bgb_broken == 1u ? "" : "s");
         }
     }
     g_bgx_filter = -1;                       /* #90 back to every piece */
@@ -18312,6 +20320,1474 @@ void sl_sky_report(FILE *f)
                                     : g_bgv_state < 0 ? "client arrays (SL_BG_VBO=0 or no buffer objects)"
                                                       : "not drawn yet",
                     g_bgv_items, g_bgv_items == 1u ? "" : "s", g_bgv_uploads, g_bgv_uploads == 1ul ? "" : "s");
+            /* v0.4 the GPU vertex transform (sl_gfx_bggpu.c). SUBMITTED comes
+             * first and ADMITTED second, because a ready program that submitted
+             * nothing has drawn nothing: the two counts answer different
+             * questions and only the first says the GPU drew. The refusals are
+             * printed beside them, because "0 submitted" has several causes -
+             * the switch off, every walk refused, or every admitted mesh's runs
+             * dropped - and they are the same number afterwards. The CPU loop
+             * ran on every one of these walks either way, so this line is not a
+             * saving.
+             *
+             * BY DEPTH splits the submitted calls and indices across the pass's
+             * three depth cases (SL_BGGPU_DEPTH_*), at the same submission
+             * boundary. It is the only evidence that a far frame's ranges were
+             * drawn through the program rather than merely admitted: a run with
+             * zeros in the two far columns drew every far frame on the clip
+             * positions, whatever the admitted columns say. */
+            fprintf(f, "#88 background GPU transform: %s, SUBMITTED %u walk%s, %u mesh draw%s, "
+                       "%lu draw call%s, %lu indices (%lu triangles); BY DEPTH %lu call%s / "
+                       "%lu indices at the single-range clamp, %lu / %lu in a far frame's first "
+                       "range, %lu / %lu in its game range; ADMITTED %u walks and "
+                       "%u mesh draws, %u mesh draws kept on the walk's own clip positions; "
+                       "refused: %u late, %u far-range not admitted, %u panorama, %u animated, "
+                       "%u no buffer objects, %u no program%s\n",
+                    sl_bggpu_state() > 0 ? "ready"
+                                         : sl_bggpu_state() < 0 ? sl_bggpu_why() : "not asked",
+                    g_bggpu_walks, g_bggpu_walks == 1u ? "" : "s",
+                    g_bggpu_drawn, g_bggpu_drawn == 1u ? "" : "s",
+                    g_bggpu_runs, g_bggpu_runs == 1ul ? "" : "s",
+                    g_bggpu_idx, g_bggpu_idx / 3ul,
+                    g_bggpu_dcalls[SL_BGGPU_DEPTH_SINGLE],
+                    g_bggpu_dcalls[SL_BGGPU_DEPTH_SINGLE] == 1ul ? "" : "s",
+                    g_bggpu_didx[SL_BGGPU_DEPTH_SINGLE],
+                    g_bggpu_dcalls[SL_BGGPU_DEPTH_FAR0], g_bggpu_didx[SL_BGGPU_DEPTH_FAR0],
+                    g_bggpu_dcalls[SL_BGGPU_DEPTH_FAR1], g_bggpu_didx[SL_BGGPU_DEPTH_FAR1],
+                    g_bggpu_elig_walks, g_bggpu_cand, g_bggpu_kept,
+                    g_bggpu_r_late, g_bggpu_r_far, g_bggpu_r_pano, g_bggpu_r_anim,
+                    g_bggpu_r_arrays, g_bggpu_r_prog,
+                    sl_bggpu_opt_in()
+                        ? (sl_perf_bg_far_admit() ? ""
+                             : " (the far ranges are not admitted by the selection in "
+                               "force: a two-range frame draws its own clip positions, "
+                               "which is the pass that ships)")
+                        : " (OPTIMIZED RENDERING is off, or SL_BG_GPU_XFORM says 0: the "
+                          "pass is byte for byte the one that ships)");
+            /* v0.4 THE CLIP PREPASS CANDIDATE'S OWN CENSUS LINE, and it has to
+             * be its own rather than a column of the line above. A candidate
+             * walk deliberately leaves gpu_walk 0 and calls bggpu_select(0,
+             * ...), so every counter on that line reads zero while the
+             * candidate is doing the work - reading those zeros as "no GPU
+             * work" would be exactly wrong, and reading them as coverage would
+             * be worse.
+             *
+             * THE NUMBERS ARE SEPARATED SO A FALLBACK CANNOT READ AS COVERAGE.
+             * The prepasses that ran, the vertices they actually transformed
+             * and the raster draws routed through program 0 on a prepass pool
+             * are the coverage; the reuses are work avoided, not work done;
+             * and the refusals, the per-draw refusals and the slot evictions
+             * are the cost and the gaps. A validation gate reads the first
+             * three and must find them nonzero before it believes a run
+             * exercised the candidate at all. */
+            {
+                const struct sl_bgtf_counters *t = sl_bgtf_stats();
+                fprintf(f, "#95 background GPU clip prepass: %s, %lu prepass%s over %lu "
+                           "vertices, %lu reuse%s, %lu bind%s; SUBMITTED %lu nonempty "
+                           "run%s on a prepass pool (%lu indices) by the SOURCE's depth "
+                           "single %lu / far0 %lu / far1 %lu, %lu walk%s; ADMITTED %u, "
+                           "refused %u walk%s and %u draw%s, %lu slot refill%s and "
+                           "%lu eviction%s, %lu module refusal%s%s\n",
+                        sl_bgtf_state() > 0 ? "ready"
+                            : sl_bgtf_state() < 0 ? sl_bgtf_why() : "not asked",
+                        t->prepasses, t->prepasses == 1ul ? "" : "es",
+                        t->vertices,
+                        t->reuses, t->reuses == 1ul ? "" : "s",
+                        t->binds, t->binds == 1ul ? "" : "s",
+                        t->raster_draws, t->raster_draws == 1ul ? "" : "s",
+                        t->raster_indices,
+                        t->dcalls[SL_BGGPU_DEPTH_SINGLE],
+                        t->dcalls[SL_BGGPU_DEPTH_FAR0],
+                        t->dcalls[SL_BGGPU_DEPTH_FAR1],
+                        t->walks, t->walks == 1ul ? "" : "s",
+                        g_bgtf_elig_walks,
+                        g_bgtf_r_prog, g_bgtf_r_prog == 1u ? "" : "s",
+                        g_bgtf_r_draw, g_bgtf_r_draw == 1u ? "" : "s",
+                        t->slot_refills, t->slot_refills == 1ul ? "" : "s",
+                        t->slot_evictions, t->slot_evictions == 1ul ? "" : "s",
+                        t->refusals, t->refusals == 1ul ? "" : "s",
+                        /* v0.4 WHICH SELECTION PUT THESE NUMBERS HERE, AND
+                         * WHY THE OFF SENTENCE NEEDED A THIRD ANSWER. The
+                         * prepass is no longer reached only by the developer
+                         * switch, so "SL_BG_TF_CLIP is not 1" alone could be
+                         * printed beside POSITIVE prepass counts on a launch
+                         * the OPTIMIZED RENDERING row admitted - a false
+                         * sentence about the arm that produced the frames.
+                         * The three answers are the three states: the
+                         * developer switch (silent, as before), the row's
+                         * production selection, and no walk having reached a
+                         * prepass at all.
+                         *
+                         * sl_bgtf_production IS READ RATHER THAN THE WALK
+                         * ADMISSION. A census runs on launches that drew
+                         * nothing, and asking the admission would promote a
+                         * selection and print its startup line from inside a
+                         * report. This reads the promotion the walks took. */
+                        sl_bgtf_opt_in()
+                            ? ""
+                            : sl_bgtf_production()
+                            ? " (the PRODUCTION selection: the OPTIMIZED RENDERING "
+                              "row admitted these walks and no selector named an "
+                              "arm, so the mode in force is the auxiliary-context "
+                              "real prepass on arm GPU_SOURCE)"
+                            : " (SL_BG_TF_CLIP is not 1: the candidate is off and the "
+                              "pass is byte for byte the one that ships)");
+                /* v0.4 THE STOOD-DOWN WALKS' OWN LINE, printed only when there
+                 * were any, so an ordinary census is unchanged.
+                 *
+                 * WHAT IT NAMES THAT NO OTHER LINE CAN. These walks were
+                 * admitted by the row and then taken by NEITHER GPU clip
+                 * computation, so every counter on the two census lines reads
+                 * as though the row had been off - which is the right reading
+                 * of the picture and the wrong reading of the launch. The line
+                 * says which it was, and says where those walks drew.
+                 *
+                 * KEYED BY THE ROW'S NAME AND NOT BY THE MODULE'S CENSUS
+                 * PREFIX, like the sibling auxiliary lines: a new line under
+                 * that prefix is read as a drifted census by
+                 * tools/windows/perflive-check.py. */
+                if (g_bggpu_r_tfstand != 0u)
+                    fprintf(f, "#95 OPTIMIZED RENDERING stood down for %u walk%s: "
+                               "the row admitted them and NEITHER GPU clip "
+                               "computation took them, because a developer "
+                               "selector took the production selection away or "
+                               "offered a value no grammar can read. They drew "
+                               "the FULLY PRODUCED CPU clip and raster path - "
+                               "the pass that ships - and NOT the main-context "
+                               "prepass and NOT the background vertex program, "
+                               "each of which was measured one blue value apart "
+                               "from the original renderer's frames on the scene "
+                               "that carries the defect. This is not a refusal: "
+                               "nothing was asked for and denied\n",
+                            g_bggpu_r_tfstand,
+                            g_bggpu_r_tfstand == 1u ? "" : "s");
+                /* v0.4 AND A NAMED VERTEX TRANSFORM IS LABELLED WHERE THE
+                 * FRAMES ARE PRODUCED, for the reason the main-context
+                 * prepass's off-token label exists: a developer holding this
+                 * switch is producing diagnostic evidence rather than the row's
+                 * output, and a reader must never have to infer which of the
+                 * two GPU clip computations made the picture in front of them.
+                 * Nothing is refused and no value is echoed. */
+                if (sl_perf_bg_xform_named())
+                    fprintf(f, "#95 SL_BG_GPU_XFORM=1 names the BACKGROUND "
+                               "VERTEX TRANSFORM, so this launch ran it "
+                               "deliberately in place of the row's exact-image "
+                               "clip prepass. That is the DIAGNOSTIC path and a "
+                               "KNOWN MISMATCH - its frames were measured ONE "
+                               "BLUE VALUE APART from the original renderer's on "
+                               "the scene that carries the defect - and it is "
+                               "kept reachable by name because the sprint's own "
+                               "comparisons were driven with it. A session that "
+                               "did not name it cannot reach it\n");
+                /* v0.4 THE ORIGINAL-RASTER CONTROL'S OWN LINE, printed only
+                 * when it is selected, so an ordinary census is unchanged.
+                 *
+                 * IT NAMES WHAT THE NUMBERS ABOVE CANNOT. On this arm the
+                 * prepass counts are positive while the bind and submission
+                 * counts are 0, and those two facts together are what
+                 * distinguishes "the prepass ran and its output was not
+                 * consumed" from "the prepass never ran". Without this line a
+                 * reader seeing zero submissions could not tell the two apart,
+                 * and reading the candidate's coverage counts as the control's
+                 * work is the mislabelling this arm exists to avoid. */
+                if (sl_bgtf_raster_cpu())
+                    fprintf(f, "#95 background GPU clip prepass ORIGINAL-RASTER CONTROL "
+                               "(SL_BG_TF_RASTER_CPU=1): %u mesh%s served, SUBMITTED %lu "
+                               "nonempty run%s (%lu indices) from the ORIGINAL position "
+                               "stream after a prepass ran for the same mesh. These are "
+                               "NOT TF-position-source coverage: the pool is never bound, "
+                               "so the bind and submitted counts above are 0 by "
+                               "construction. The prepass is paid for and its output is "
+                               "discarded, so this run's frame times measure nothing%s\n",
+                            g_bgtf_cpur_meshes, g_bgtf_cpur_meshes == 1u ? "" : "es",
+                            g_bgtf_cpur_draws, g_bgtf_cpur_draws == 1ul ? "" : "s",
+                            g_bgtf_cpur_indices,
+                            sl_bgtf_opt_in()
+                                ? ""
+                                : " (SL_BG_TF_CLIP is not 1, so no walk reached the "
+                                  "candidate and this control changed nothing)");
+                /* v0.4 THE STATE-ONLY CONTROL'S OWN LINE (SL_BG_TF_STATE_ONLY,
+                 * src/gfx/sl_gfx_bgtf.h), printed only when that control is
+                 * EFFECTIVE - which the module's own coupled answer decides, so
+                 * a miscombined launch prints nothing here and is reported once
+                 * on stderr instead.
+                 *
+                 * IT NAMES THE DISTINCTION NEITHER LINE ABOVE CAN. On this arm
+                 * the prepass setup ran and its vertex draw did not, so the
+                 * candidate's prepass, vertex and reuse counts are 0 beside a
+                 * positive setup count; the original-raster control's line above
+                 * carries the CPU raster, which is positive on this arm too. A
+                 * reader with only those two lines could not tell a setup-only
+                 * launch from one where the prepass never ran at all, and
+                 * reading a setup as transformed vertices is the mislabelling
+                 * this arm exists to avoid.
+                 *
+                 * THE FIELDS ARE LABELLED AND CARRY NO PLURAL SUFFIX, unlike the
+                 * two lines above: this line is read by a chained comparison's
+                 * parser as well as by a person, and a stable "label number"
+                 * grammar is what makes both possible from one string. */
+                if (sl_bgtf_state_only())
+                    fprintf(f, "#95 background GPU clip prepass STATE-ONLY CONTROL "
+                               "(SL_BG_TF_STATE_ONLY=1 with SL_BG_TF_CLIP=1 and "
+                               "SL_BG_TF_RASTER_CPU=1): setups %lu, omitted_draws %lu, "
+                               "setup_reuses %lu; prepasses %lu, vertices %lu, "
+                               "pool_reuses %lu, binds %lu, submitted_runs %lu, "
+                               "submitted_indices %lu; cpu_meshes %u, cpu_draws %lu, "
+                               "cpu_indices %lu. The prepass program, uniforms, pool, "
+                               "position pointer, rasterizer discard and "
+                               "transform-feedback bracket all ran and were restored; "
+                               "the ONE omitted call is the prepass glDrawArrays. NO "
+                               "vertex was transformed and NO pool was written, so the "
+                               "prepass, vertex, reuse, bind and submitted counts are 0 "
+                               "by construction and an unwritten slot is refused by the "
+                               "binding. A setup is NOT TF-position-source coverage, and "
+                               "this run's frame times measure nothing\n",
+                            t->so_setups, t->so_omitted, t->so_reuses,
+                            t->prepasses, t->vertices, t->reuses, t->binds,
+                            t->raster_draws, t->raster_indices,
+                            g_bgtf_cpur_meshes, g_bgtf_cpur_draws,
+                            g_bgtf_cpur_indices);
+                /* v0.4 THE POSITION-ONLY-INPUT CONTROL'S OWN LINE
+                 * (SL_BG_TF_POS_INPUT, src/gfx/sl_gfx_bgtf.h), printed only when
+                 * that control is EFFECTIVE - the module's coupled answer
+                 * decides, so a miscombined or ambiguous launch prints nothing
+                 * here and is reported once on stderr instead.
+                 *
+                 * IT NAMES WHAT THE OTHER LINES CANNOT. This arm does REAL GPU
+                 * work, so the prepass and vertex counts above are positive just
+                 * as they are on the original-raster control, and nothing in
+                 * them says whether the isolation was applied at all. These
+                 * fields do: how many of those draws ran with it in force, how
+                 * much client-array exposure was removed and put back, how wide
+                 * the unit sweep was, and how many draws REFUSED to isolate and
+                 * ran with their inherited arrays instead. A run whose switch
+                 * was silently absent reads as isolated_draws 0.
+                 *
+                 * arrays_off AND arrays_back ARE BOTH PRINTED ON PURPOSE. They
+                 * are equal on every honest run, because the restore re-enables
+                 * exactly what the save found enabled, so a parser can treat an
+                 * inequality as a missed or an invented restore rather than
+                 * having to infer it.
+                 *
+                 * THE FIELDS ARE LABELLED AND CARRY NO PLURAL SUFFIX, like the
+                 * state-only line above and for the same reason: a chained
+                 * comparison's parser reads this string as well as a person. */
+                if (sl_bgtf_pos_input())
+                    fprintf(f, "#95 background GPU clip prepass POSITION-ONLY-INPUT "
+                               "CONTROL (SL_BG_TF_POS_INPUT=1 with SL_BG_TF_CLIP=1 "
+                               "and SL_BG_TF_RASTER_CPU=1): isolated_draws %lu, "
+                               "arrays_off %lu, arrays_back %lu, units_swept %lu, "
+                               "isolation_refusals %lu; prepasses %lu, vertices %lu, "
+                               "pool_reuses %lu, binds %lu, submitted_runs %lu, "
+                               "submitted_indices %lu; cpu_meshes %u, cpu_draws %lu, "
+                               "cpu_indices %lu. The prepass draw and its "
+                               "transform-feedback writes RAN; around that draw and "
+                               "nothing else, every enabled NON-POSITION client array "
+                               "was disabled and exactly those were re-enabled, with "
+                               "the inherited client active texture unit restored "
+                               "last. No pointer, buffer binding or current attribute "
+                               "was altered. arrays_off and arrays_back are equal on "
+                               "an honest run. Isolation is NOT a fix and this run's "
+                               "frame times measure nothing\n",
+                            t->pi_draws, t->pi_off, t->pi_back, t->pi_units,
+                            t->pi_refusals,
+                            t->prepasses, t->vertices, t->reuses, t->binds,
+                            t->raster_draws, t->raster_indices,
+                            g_bgtf_cpur_meshes, g_bgtf_cpur_draws,
+                            g_bgtf_cpur_indices);
+                /* v0.4 THE PRIVATE-PREPASS-VERTEX-ARRAY CONTROL'S OWN LINE
+                 * (SL_BG_TF_PRIVATE_VAO, src/gfx/sl_gfx_bgtf.h), printed only
+                 * when that control is EFFECTIVE - the module's coupled answer
+                 * decides, so a miscombined or ambiguous launch prints nothing
+                 * here and is reported once on stderr instead. An off launch
+                 * adds no line of any kind.
+                 *
+                 * THE SUBJECT IS ITS OWN AND IS NOT THE CENSUS SUBJECT ABOVE.
+                 * The lines above are read by a frozen parser keyed on
+                 * "#95 background GPU clip prepass", and a further line under
+                 * that subject would present this control's fields to it as a
+                 * malformed census. This one is keyed on the variable's own
+                 * name, so the existing grammar is untouched and a reader can
+                 * find this control's numbers by the thing that selects it.
+                 *
+                 * IT NAMES WHAT THE LINES ABOVE CANNOT. This arm does REAL GPU
+                 * work, so the prepass and vertex counts above are positive just
+                 * as they are on the original-raster control, and nothing in
+                 * them says whether any of that work ran inside a private array
+                 * object. These fields do: the binds the context CONFIRMED, the
+                 * draws that ran under one, the restores it confirmed, how many
+                 * of those put back a NONZERO inherited object, the setups that
+                 * REFUSED and ran with the inherited state instead, and the
+                 * cache hits that added nothing. A run whose switch was silently
+                 * absent reads as private_binds 0.
+                 *
+                 * private_binds AND verified_restores ARE BOTH PRINTED ON
+                 * PURPOSE. They are equal on every honest run, because each
+                 * confirmed bind is closed by one confirmed restore, so a parser
+                 * can treat an inequality as a missed or an unconfirmed restore
+                 * rather than having to infer it.
+                 *
+                 * THE FIELDS ARE LABELLED AND CARRY NO PLURAL SUFFIX, like the
+                 * two lines above and for the same reason: a chained
+                 * comparison's parser reads this string as well as a person. */
+                if (sl_bgtf_private_vao())
+                    fprintf(f, "#95 SL_BG_TF_PRIVATE_VAO private prepass vertex-array "
+                               "CONTROL (SL_BG_TF_PRIVATE_VAO=1 with SL_BG_TF_CLIP=1 "
+                               "and SL_BG_TF_RASTER_CPU=1): private_binds %lu, "
+                               "private_draws %lu, verified_restores %lu, "
+                               "nonzero_inherited %lu, control_refusals %lu, "
+                               "cache_reuses %lu; prepasses %lu, vertices %lu, "
+                               "pool_reuses %lu, binds %lu, submitted_runs %lu, "
+                               "submitted_indices %lu; cpu_meshes %u, cpu_draws %lu, "
+                               "cpu_indices %lu. The prepass setup and its draw ran "
+                               "inside ONE context-owned vertex array object, with the "
+                               "position array configured from the pass's own input "
+                               "buffer and stride and the only array enabled on it, and "
+                               "the element binding dropped INSIDE that bracket. The "
+                               "inherited object - zero or not - was put back and read "
+                               "back before the caller's raster restoration. The "
+                               "ARRAY_BUFFER binding and the client active texture "
+                               "selection are NOT array-object state and are handled as "
+                               "they are without this control: NO claim is made that "
+                               "the object isolates the current attributes or all GL "
+                               "state. private_binds and verified_restores are equal on "
+                               "an honest run. This is NOT a fix and this run's frame "
+                               "times measure nothing\n",
+                            t->pv_binds, t->pv_draws, t->pv_restores, t->pv_nonzero,
+                            t->pv_refusals, t->pv_reuses,
+                            t->prepasses, t->vertices, t->reuses, t->binds,
+                            t->raster_draws, t->raster_indices,
+                            g_bgtf_cpur_meshes, g_bgtf_cpur_draws,
+                            g_bgtf_cpur_indices);
+                /* v0.4 THE ZERO-VERTEX-COUNT CONTROL'S OWN LINE
+                 * (SL_BG_TF_ZERO_COUNT, src/gfx/sl_gfx_bgtf.h), printed only
+                 * when that control is EFFECTIVE - the module's coupled answer
+                 * decides, so a miscombined or ambiguous launch prints nothing
+                 * here and is reported once on stderr instead. An off launch
+                 * adds no line of any kind.
+                 *
+                 * THE SUBJECT IS ITS OWN AND IS NOT THE CENSUS SUBJECT ABOVE,
+                 * for the reason the private control's is not: the lines above
+                 * are read by a frozen parser keyed on "#95 background GPU clip
+                 * prepass", and a further line under that subject would present
+                 * this control's fields to it as a malformed census. This one is
+                 * keyed on the variable's own name, so the existing grammar is
+                 * untouched and a reader finds this control's numbers by the
+                 * thing that selects it.
+                 *
+                 * IT NAMES THE DISTINCTION NO OTHER LINE CAN MAKE. On this arm
+                 * the setup ran and its draw was ISSUED with the count 0, so the
+                 * prepass, vertex, pool-reuse, bind and submission counts are 0
+                 * exactly as they are on the state-only arm - and a reader with
+                 * only those could not tell an issued empty call from the
+                 * omitted call that arm measures, nor either from a prepass that
+                 * never ran. zero_count_calls is what says a call was made;
+                 * so_omitted on the other arm says one was not. Reading an empty
+                 * call as transformed vertices, or as an omission, is the
+                 * mislabelling this line exists to prevent.
+                 *
+                 * zero_count_setups AND zero_count_calls ARE BOTH PRINTED ON
+                 * PURPOSE. They are equal on every honest run, because one setup
+                 * bracket issues exactly one call, so a parser can treat an
+                 * inequality as a missed or an invented call rather than having
+                 * to infer it.
+                 *
+                 * THE FIELDS ARE LABELLED AND CARRY NO PLURAL SUFFIX, like the
+                 * three lines above and for the same reason: a chained
+                 * comparison's parser reads this string as well as a person. */
+                if (sl_bgtf_zero_count())
+                    fprintf(f, "#95 SL_BG_TF_ZERO_COUNT zero-vertex prepass draw "
+                               "CONTROL (SL_BG_TF_ZERO_COUNT=1 with SL_BG_TF_CLIP=1 "
+                               "and SL_BG_TF_RASTER_CPU=1): zero_count_setups %lu, "
+                               "zero_count_calls %lu, cache_reuses %lu, "
+                               "control_refusals %lu; prepasses %lu, vertices %lu, "
+                               "pool_reuses %lu, binds %lu, submitted_runs %lu, "
+                               "submitted_indices %lu; cpu_meshes %u, cpu_draws %lu, "
+                               "cpu_indices %lu. The prepass setup ran whole - the "
+                               "program, the uniforms, the pool and its verified "
+                               "storage, the input position pointer at the walk's own "
+                               "buffer and stride, the dropped element binding, "
+                               "rasterizer discard and the transform-feedback bracket "
+                               "- and was restored, and the ONE thing that differs "
+                               "from an ordinary original-raster launch is the COUNT "
+                               "handed to the prepass glDrawArrays, which is 0. The "
+                               "call is ISSUED once per key miss and is NOT omitted. "
+                               "NO vertex was submitted and NO pool was written, so "
+                               "the prepass, vertex, pool-reuse, bind and submitted "
+                               "counts are 0 by construction and an unwritten slot is "
+                               "refused by the binding. zero_count_setups and "
+                               "zero_count_calls are equal on an honest run, and "
+                               "control_refusals is 0 on every line a reader can see "
+                               "because a refused launch prints no line at all. An "
+                               "empty call is NOT TF-position-source coverage and NOT "
+                               "a transformed prepass, this is NOT a fix, and this "
+                               "run's frame times measure nothing\n",
+                            t->zc_setups, t->zc_calls, t->zc_reuses,
+                            t->zc_refusals,
+                            t->prepasses, t->vertices, t->reuses, t->binds,
+                            t->raster_draws, t->raster_indices,
+                            g_bgtf_cpur_meshes, g_bgtf_cpur_draws,
+                            g_bgtf_cpur_indices);
+                /* v0.4 THE SIX-CONDITION EMPTY-DRAW STATE MODE'S OWN LINE
+                 * (SL_BG_TF_EMPTY_STATE, src/gfx/sl_gfx_bgtf.h), printed only
+                 * when a mode is EFFECTIVE - the module's coupled answer
+                 * decides, so an unreadable, miscombined or ambiguous launch
+                 * prints nothing here and is reported once on stderr instead.
+                 *
+                 * Z_KNOWN PRINTS NO LINE OF THIS SUBJECT, which is the point.
+                 * That arm is this selector ABSENT, so its wire format is the
+                 * four lines above exactly as r636 produced them and a fresh Z
+                 * run is comparable to the known one without allowing for a new
+                 * field. The zero-count line above stays on the variant arms
+                 * too, so each of them carries the arm's own cadence AND this
+                 * mode's account of the commands at the draw.
+                 *
+                 * THE SUBJECT IS ITS OWN, for the reason the two before it are:
+                 * the ordinary census lines are read by a parser keyed on
+                 * "#95 background GPU clip prepass" and the zero-count line by
+                 * one keyed on its own variable, so a further line under either
+                 * subject would present these fields as a malformed census.
+                 * This one is keyed on this variable's name.
+                 *
+                 * THE CONDITIONS ARE PRINTED FROM THE MODULE'S OWN TABLE, not
+                 * restated here: sl_bgtf_es_matrix is asked what the mode means,
+                 * so a census can never describe a row differently from the draw
+                 * site that ran it.
+                 *
+                 * EACH PAIR IS PRINTED ON PURPOSE, BUT ONLY TWO OF THEM ARE
+                 * EQUAL PAIRS. tf_begins/tf_ends and discard_offs/discard_ons
+                 * are equal on every honest run, because each of those
+                 * transitions is closed by exactly one restoration, so a parser
+                 * can treat an inequality in either as a missed or an invented
+                 * one. state_setups and empty_draws are equal for the same
+                 * reason, and state_setups + cache_reuses is the COMPLETE
+                 * served-mesh account against cpu_meshes.
+                 *
+                 * program0_switches/program0_restores IS NOT AN EQUAL PAIR, and
+                 * reading it as one was a defect in this line rather than in a
+                 * run. The rows' program switches sit in four independent
+                 * positions (src/gfx/sl_gfx_bgtf.h), and the counts are
+                 *
+                 *     program0_switches  = (pre_zero + post_zero) * empty_draws
+                 *     program0_restores  = (pre_prog + post_prog) * empty_draws
+                 *
+                 * which are equal on the rows that switch away from the prepass
+                 * program and back, and UNEQUAL on the one row that leaves
+                 * program 0 current until the common cleanup: it issues the
+                 * switch and has no rebind to pair with it. So an inequality
+                 * here is that row's own signature, and a gate asserting
+                 * equality would demand a call that row exists to omit. The
+                 * supplemental line below carries the four positions, which is
+                 * what makes the two totals checkable rather than merely
+                 * printed.
+                 *
+                 * ISSUED IS NOT VERIFIED. Every number here counts a command
+                 * this process made. Nothing reads GL state back, so no field is
+                 * evidence about what a driver did with any of them. */
+                if (sl_bgtf_empty_state() != SL_BGTF_ES_OFF) {
+                    int es_t = 1, es_d = 1, es_p = 1;
+                    const int es_mode = sl_bgtf_empty_state();
+                    sl_bgtf_es_matrix(es_mode, &es_t, &es_d, &es_p);
+                    fprintf(f, "#95 SL_BG_TF_EMPTY_STATE six-condition empty-draw "
+                               "state MODE (SL_BG_TF_EMPTY_STATE=%s with "
+                               "SL_BG_TF_ZERO_COUNT=1, SL_BG_TF_CLIP=1 and "
+                               "SL_BG_TF_RASTER_CPU=1): mode %s, tf_active %d, "
+                               "discard_on %d, program_tf %d, state_setups %lu, "
+                               "empty_draws %lu, cache_reuses %lu, tf_begins %lu, "
+                               "tf_ends %lu, program0_switches %lu, "
+                               "program0_restores %lu, discard_offs %lu, "
+                               "discard_ons %lu, mode_refusals %lu; prepasses %lu, "
+                               "vertices %lu, pool_reuses %lu, binds %lu, "
+                               "submitted_runs %lu, submitted_indices %lu; "
+                               "cpu_meshes %u, cpu_draws %lu, cpu_indices %lu. "
+                               "Every draw this mode issued is exactly "
+                               "glDrawArrays(GL_POINTS, 0, 0) and every one was "
+                               "ISSUED; the CPU position, colour, UV, fog and "
+                               "index source, the input buffer and stride, the "
+                               "output allocation and the key, generation, depth "
+                               "and cache cadence are the zero-count arm's "
+                               "unchanged, and a cache hit added no state change, "
+                               "no draw and no setup. A T0 row omits the matched "
+                               "begin/end pair TOGETHER and keeps the output "
+                               "allocation and the indexed binding; a D0 row "
+                               "changes discard only for the empty draw and puts "
+                               "the common bracket's back. A row that switches "
+                               "the program does so in the positions the "
+                               "supplemental line below names, and one of them "
+                               "leaves program 0 current from before the draw "
+                               "until the common cleanup's own switch to 0 - so "
+                               "the state the caller is handed back at close is "
+                               "the same on every row, while the calls BETWEEN "
+                               "the draw and that cleanup are not. NO "
+                               "vertex was submitted and NO pool was written, so "
+                               "the prepass, vertex, pool-reuse, bind and "
+                               "submitted counts are 0 by construction and an "
+                               "unwritten slot is refused by the binding. "
+                               "state_setups equals empty_draws, tf_begins equals "
+                               "tf_ends, discard_offs equals discard_ons, and "
+                               "state_setups + cache_reuses accounts for every "
+                               "served mesh, on an honest run. THE PROGRAM PAIR "
+                               "IS NOT AN EQUAL PAIR: program0_switches is "
+                               "(pre_zero + post_zero) * empty_draws and "
+                               "program0_restores is (pre_prog + post_prog) * "
+                               "empty_draws, with the four positions on the "
+                               "supplemental line below, so the row that leaves "
+                               "program 0 current past its draw reports "
+                               "program0_switches ABOVE program0_restores and an "
+                               "equality gate here would be asserting against a "
+                               "call that row omits on purpose; mode_refusals is 0 "
+                               "on every line a reader can see because a refused "
+                               "launch prints no line at all. These are commands "
+                               "ISSUED, not driver state VERIFIED: omitting a "
+                               "begin/end pair and switching discard or the "
+                               "program change the command history as well as the "
+                               "condition they name, so no outcome here isolates "
+                               "a state bit or a driver operation. This is NOT "
+                               "TF-position-source coverage, NOT a transformed "
+                               "prepass, NOT a fix, and this run's frame times "
+                               "measure nothing\n",
+                            sl_bgtf_es_name(es_mode), sl_bgtf_es_name(es_mode),
+                            es_t, es_d, es_p,
+                            t->es_setups, t->es_draws, t->es_reuses,
+                            t->es_tf_begins, t->es_tf_ends,
+                            t->es_prog0_switches, t->es_prog0_restores,
+                            t->es_discard_offs, t->es_discard_ons,
+                            t->es_refusals,
+                            t->prepasses, t->vertices, t->reuses, t->binds,
+                            t->raster_draws, t->raster_indices,
+                            g_bgtf_cpur_meshes, g_bgtf_cpur_draws,
+                            g_bgtf_cpur_indices);
+                    /* v0.4 THE SUPPLEMENTAL PROGRAM-SWITCH POSITION LINE,
+                     * printed only on the three rows added after the line above
+                     * was baselined.
+                     *
+                     * WHY A SECOND LINE AND NOT MORE FIELDS. The line above is
+                     * read by a parser keyed on its own subject, and widening its
+                     * field list would present a different record to that parser
+                     * under the same key. The fields here therefore sit under a
+                     * key of their own, and the field NAMES are distinct from the
+                     * ones above so that a grep for either lands on one line
+                     * only.
+                     *
+                     * THE KEY NAMES NO ENVIRONMENT VARIABLE, which is a
+                     * deliberate choice rather than an omission. A reader keyed
+                     * on a variable's name - which is how the three control lines
+                     * above are found - matches by that name, and every name that
+                     * would be natural here either IS the key of the line above or
+                     * has it as a prefix. So this key is the module's own
+                     * identifier, which no existing reader's key is a prefix of,
+                     * and the selector is named in words instead. The enum and the
+                     * selector tokens are in src/gfx/sl_gfx_bgtf.h.
+                     *
+                     * ONLY THESE THREE ROWS PRINT IT, and the reason is the
+                     * parser contract rather than the value of the fields. The
+                     * rows that existed when that parser was frozen keep the
+                     * output it was baselined against, byte for byte, down to the
+                     * number of lines. Nothing is lost by the omission: the line
+                     * above already separates every one of those rows from each
+                     * other and from these three by tf_active, discard_on,
+                     * program_tf and the two totals, and the ONE pair those five
+                     * fields cannot separate - two rows that each switch away
+                     * from the prepass program and back, differing only in
+                     * whether the pair sits before or after the draw - are both
+                     * in this set and so both carry this line.
+                     *
+                     * ISSUED IS NOT VERIFIED, here as above. Every field counts a
+                     * command this process made. Nothing is read back from GL, no
+                     * field is evidence about what a driver did with any command,
+                     * and nothing here is a fix for any pixel: the rows bisect a
+                     * command history and name no cause. */
+                    if (es_mode == SL_BGTF_ES_R || es_mode == SL_BGTF_ES_S
+                        || es_mode == SL_BGTF_ES_Q) {
+                        int es_pz = 0, es_pp2 = 0, es_qz = 0, es_qp = 0;
+                        sl_bgtf_es_switches(es_mode, &es_pz, &es_pp2, &es_qz,
+                                            &es_qp);
+                        fprintf(f, "#95 SL_BGTF_ES_SWITCHES empty-draw "
+                                   "program-switch POSITIONS, supplemental to the "
+                                   "mode line above and keyed apart from it: mode "
+                                   "%s, prog_pre_zero %lu, prog_pre_prog %lu, "
+                                   "prog_post_zero %lu, prog_post_prog %lu, "
+                                   "draws_prog_tf %lu, draws_prog0 %lu, "
+                                   "empty_draws %lu; row_pre_zero %d, "
+                                   "row_pre_prog %d, row_post_zero %d, "
+                                   "row_post_prog %d. The four prog_ counts are "
+                                   "the glUseProgram calls this mode ISSUED around "
+                                   "the empty draw, each raised immediately after "
+                                   "the call it counts: prog_pre_zero and "
+                                   "prog_pre_prog are the switch to program 0 and "
+                                   "the switch back made BEFORE the draw, in that "
+                                   "order, and the prog_post_ pair is the same two "
+                                   "AFTER it. The row_ values are what the module's "
+                                   "own table says this row issues, so each "
+                                   "prog_ count equals its row_ value times "
+                                   "empty_draws on an honest run and a difference "
+                                   "is a call the table named and the draw site did "
+                                   "not, or the reverse. draws_prog_tf and "
+                                   "draws_prog0 are the empty draws made with the "
+                                   "prepass program and with program 0 current, "
+                                   "taken from what this process made current and "
+                                   "not from the selector, and they sum to "
+                                   "empty_draws. These positions are what tell "
+                                   "apart two rows that the mode line's own fields "
+                                   "cannot: a switch pair before the draw and the "
+                                   "same pair after it leave that line's totals "
+                                   "identical. Commands ISSUED, not driver state "
+                                   "VERIFIED, and NOT a fix for any pixel - no "
+                                   "cause is named here\n",
+                                sl_bgtf_es_name(es_mode),
+                                t->es_prog_pre_zero, t->es_prog_pre_prog,
+                                t->es_prog_post_zero, t->es_prog_post_prog,
+                                t->es_draws_prog_tf, t->es_draws_prog0,
+                                t->es_draws,
+                                es_pz, es_pp2, es_qz, es_qp);
+                    }
+                }
+                /* v0.4 THE POST-RESET BOUNDARY CONTROL'S OWN LINE
+                 * (SL_BG_TF_POST_RESET), printed only when an arm is in force,
+                 * so an ordinary census and every launch of every other control
+                 * is byte for byte unchanged.
+                 *
+                 * WHY A LINE OF ITS OWN RATHER THAN FIELDS ON ANY LINE ABOVE.
+                 * Two reasons, and the second is the binding one. The lines
+                 * above are read by parsers keyed on their own subjects, and
+                 * widening a field list would present a different record under
+                 * the same key. And this control is INDEPENDENT of the
+                 * empty-draw mode and of the arm beneath it - it composes with
+                 * any of them and applies to the real nonzero transform path
+                 * too - so there is no line above that is printed on exactly the
+                 * launches this one is printed on.
+                 *
+                 * THE KEY IS THE SELECTOR'S OWN NAME, which is how the other
+                 * control lines are found, and no existing key is a prefix of
+                 * it. The converse rule is kept as well, which is why this text
+                 * names no OTHER control variable anywhere: a reader grepping
+                 * for one of those names must still land on exactly one line, so
+                 * the composed arm is named in words and the empty-draw row is
+                 * carried by the module's own row name instead. Every field name
+                 * here is distinct from every field name on every line above,
+                 * for the same reason.
+                 *
+                 * WHAT THE FIELDS SETTLE. boundary_reached is the denominator:
+                 * prepass brackets that reached the boundary with every
+                 * precondition proved. arm_empty_draw and arm_finish are what
+                 * the module's own table says this arm issues there, and
+                 * boundary_draws and boundary_finishes are what was ISSUED, each
+                 * raised immediately after its own call - so each count equals
+                 * its arm_ value times boundary_reached on an honest run, and
+                 * the pair (boundary_draws, boundary_finishes) names the arm
+                 * from the commands alone without consulting the selector.
+                 * boundary_skips is brackets at which a precondition was not
+                 * proved and NOTHING was issued, kept apart from the reached
+                 * count so a run cannot report an arm it did not execute; with
+                 * boundary_reuses - the cache hits, which have no boundary - the
+                 * three account for every mesh served.
+                 *
+                 * AND WHAT THEY SETTLE ABOUT THE REST OF THE PASS. The four
+                 * candidate_ fields are the candidate's own work counts,
+                 * repeated here under distinct names because the whole claim of
+                 * this control is that it changes nothing INSIDE the prepass
+                 * bracket: whatever arm is selected, they read exactly what they
+                 * read with this control absent.
+                 *
+                 * ISSUED IS NOT VERIFIED. Every number here counts a command
+                 * this process made. Nothing is read back from GL, glGetError is
+                 * not called on any arm, so no field is evidence about what a
+                 * driver did with any command or about any error state. Nothing
+                 * here is a fix for any pixel and no cause is named. */
+                if (sl_bgtf_post_reset() != SL_BGTF_PR_OFF) {
+                    int pr_d = 0, pr_fin = 0;
+                    const int pr_mode = sl_bgtf_post_reset();
+                    sl_bgtf_pr_calls(pr_mode, &pr_d, &pr_fin);
+                    fprintf(f, "#95 SL_BG_TF_POST_RESET post-reset boundary "
+                               "control, the calls issued AFTER the prepass draw "
+                               "and its restoration and BEFORE the original "
+                               "raster draw: arm %s, arm_empty_draw %d, "
+                               "arm_finish %d, boundary_reached %lu, "
+                               "boundary_draws %lu, boundary_draws_under_zero "
+                               "%lu, boundary_finishes %lu, boundary_skips %lu, "
+                               "boundary_reuses %lu, arm_refusals %lu, "
+                               "composed_empty_row %s; candidate_prepasses %lu, "
+                               "candidate_vertices %lu, candidate_binds %lu, "
+                               "candidate_submitted_runs %lu. The boundary is "
+                               "ONE point: the prepass draw has been issued, the "
+                               "matched feedback scope is closed, the indexed "
+                               "output binding is released, rasterizer discard "
+                               "is off and program 0 is current, and this "
+                               "function has not yet returned to the caller that "
+                               "rasterises. POST_PROGRAM0_EMPTY issues exactly "
+                               "one glDrawArrays(GL_POINTS, 0, 0) there and no "
+                               "glUseProgram of any kind, because program 0 is "
+                               "already current; POST_FINISH issues exactly one "
+                               "glFinish; BOTH issues the empty draw and then "
+                               "the glFinish, in that fixed order. The control "
+                               "composes with any empty-draw row and with the "
+                               "real nonzero transform path, and it changes "
+                               "nothing inside the prepass bracket, so every "
+                               "candidate_ count above and every field on the "
+                               "lines above read exactly as they do with this "
+                               "control absent. A bracket that cannot show the "
+                               "prepass draw, a closed feedback scope, the "
+                               "common discard disable, the common "
+                               "glUseProgram(0) with program 0 last made "
+                               "current, and no private vertex array held, "
+                               "issues NOTHING and raises boundary_skips "
+                               "instead; the reason is named once per launch on "
+                               "the error stream. boundary_draws equals "
+                               "boundary_draws_under_zero on an honest run, "
+                               "because the boundary admits program 0 only. "
+                               "arm_refusals is 0 on every line a reader can see "
+                               "because a refused launch prints no line at all. "
+                               "These are commands ISSUED, not driver state "
+                               "VERIFIED: no GL state is read back and no "
+                               "glGetError is called on any arm, so nothing here "
+                               "is evidence about an error state or about what a "
+                               "driver did. This is an EXPERIMENT ARM, NOT a "
+                               "fix, NOT TF-position-source coverage, and this "
+                               "run's frame times measure nothing\n",
+                            sl_bgtf_pr_name(pr_mode), pr_d, pr_fin,
+                            t->pr_setups, t->pr_draws, t->pr_draws_prog0,
+                            t->pr_finishes, t->pr_skips, t->pr_reuses,
+                            t->pr_refusals,
+                            sl_bgtf_es_name(sl_bgtf_empty_state()),
+                            t->prepasses, t->vertices, t->binds,
+                            t->raster_draws);
+                }
+                /* v0.4 THE NEUTRAL-PROGRAM EMPTY-DRAW CONTROL
+                 * (SL_BG_TF_NEUTRAL_PROG), default off and no line at all when
+                 * it is off.
+                 *
+                 * ON ITS OWN LINE, for the reason every control above has one:
+                 * a reader grepping for one of these field names must land on
+                 * exactly one line, so every field name here is distinct from
+                 * every field name on every line above.
+                 *
+                 * WHAT THE FIELDS SETTLE. empty_draws is the denominator: the
+                 * zero-count arm's own empty draw, issued with this control in
+                 * force. draws_under_neutral is how many of those were issued
+                 * with the NEUTRAL program the last one the bracket made
+                 * current, taken from the switches this process issued and not
+                 * from a glGet, so the two are equal on an honest run and an
+                 * inequality names a draw issued under a program the control
+                 * did not select. switches and restores are the two
+                 * glUseProgram calls around each of those draws - the second
+                 * being the ordinary prepass program, which is what hands the
+                 * bracket to the common cleanup in the state that cleanup has
+                 * on every arm - and each equals empty_draws on an honest run.
+                 * programs_created is 1 once a context linked the program;
+                 * create_failures and skips are served draws REFUSED to the CPU
+                 * path, and a refusal is never a draw under another program.
+                 * With reuses - the cache hits, which have no empty draw - the
+                 * reached, skipped and reused counts account for every mesh
+                 * served.
+                 *
+                 * AND THE THREE DELETE FIELDS ARE THE OBJECT-LIFETIME ACCOUNT.
+                 * The control makes two kinds of object, a vertex shader and a
+                 * program, and releases each exactly once.
+                 * neutral_shaders_deleted is the glDeleteShader calls the
+                 * acquire issued: it equals the shaders it created, because
+                 * every exit after the shader exists releases it - the refusals
+                 * free it and a successful link flags it, which the linked
+                 * program then holds until the program is deleted.
+                 * neutral_failed_programs_deleted is the programs deleted by
+                 * the acquire itself because their LINK failed, deleted there
+                 * because the context is current at that point and that name is
+                 * the only reference to the object. neutral_programs_deleted is
+                 * the teardown delete of a successfully linked program, and it
+                 * reads 0 on any line printed BEFORE teardown runs, which is
+                 * the honest value at that instant. The two program fields are
+                 * disjoint by construction, so no program is deleted twice.
+                 *
+                 * AND WHAT THEY SETTLE ABOUT THE REST OF THE PASS. The four
+                 * candidate_ counts are repeated here under distinct names
+                 * because this control runs on the zero-count arm and claims no
+                 * work: they read exactly as they do on that arm with this
+                 * control absent.
+                 *
+                 * ISSUED IS NOT VERIFIED. Every number here counts a command
+                 * this process made. No GL state is read back, glGetError is
+                 * not called, so no field is evidence about what a driver did
+                 * with any command. Nothing here is a fix for any pixel and no
+                 * cause is named. */
+                if (sl_bgtf_neutral_prog() == 1) {
+                    fprintf(f, "#95 SL_BG_TF_NEUTRAL_PROG neutral-program "
+                               "empty-draw control, the zero-count arm's one "
+                               "glDrawArrays(GL_POINTS, 0, 0) issued under a "
+                               "NEWLY LINKED minimal compatibility vertex "
+                               "program with NO transform-feedback varyings "
+                               "instead of under the prepass program: "
+                               "neutral_empty_draws %lu, "
+                               "neutral_draws_under_neutral %lu, "
+                               "neutral_switches %lu, neutral_restores %lu, "
+                               "neutral_reuses %lu, neutral_skips %lu, "
+                               "neutral_programs_created %lu, "
+                               "neutral_create_failures %lu, "
+                               "neutral_programs_deleted %lu, "
+                               "neutral_shaders_deleted %lu, "
+                               "neutral_failed_programs_deleted %lu, "
+                               "neutral_refusals %lu; candidate_prepasses %lu, "
+                               "candidate_vertices %lu, candidate_binds %lu, "
+                               "candidate_submitted_runs %lu. The conditions at "
+                               "that draw are SL_BG_TF_EMPTY_STATE row A's - "
+                               "transform feedback INACTIVE and rasterizer "
+                               "discard ON - and the only intended difference "
+                               "from row A is which program is bound for the "
+                               "call: one glUseProgram selects the neutral "
+                               "program immediately before it, one selects the "
+                               "ordinary prepass program immediately after it, "
+                               "and the ordinary common cleanup then runs "
+                               "unchanged. No uniform is ever written under the "
+                               "neutral program and no feedback scope is ever "
+                               "open at either switch. A context that could not "
+                               "resolve glDeleteProgram or glDeleteShader, "
+                               "compile the shader, "
+                               "obtain a program or link it REFUSES the served "
+                               "draw to the CPU path and raises "
+                               "neutral_create_failures: it never falls back to "
+                               "issuing the draw under the prepass program, "
+                               "because that is row A. neutral_refusals is 0 on "
+                               "every line a reader can see, because a refused "
+                               "launch prints no line at all. These are "
+                               "commands ISSUED, not driver state VERIFIED. "
+                               "This is an EXPERIMENT ARM, NOT a fix, NOT "
+                               "TF-position-source coverage, and this run's "
+                               "frame times measure nothing\n",
+                            t->np_draws, t->np_draws_neutral, t->np_switches,
+                            t->np_restores, t->np_reuses, t->np_skips,
+                            t->np_creates, t->np_create_fails, t->np_deletes,
+                            t->np_shader_deletes, t->np_fail_prog_deletes,
+                            t->np_refusals,
+                            t->prepasses, t->vertices, t->binds,
+                            t->raster_draws);
+                }
+                /* THE AUXILIARY-CONTEXT EMPTY-DRAW CONTROL'S OWN LINE
+                 * (SL_BG_TF_AUX_EMPTY), printed only on a launch where it is in
+                 * force, exactly as every control's line above is.
+                 *
+                 * WHAT THE FIELDS SETTLE. aux_brackets is the denominator: the
+                 * prepass brackets this control reached. main_draws_omitted is
+                 * the empty draws the MAIN context did NOT issue in them, which
+                 * is the one thing that distinguishes this arm from the ordinary
+                 * zero-count arm positively rather than by a count that failed
+                 * to rise; it equals aux_brackets on an honest run.
+                 * aux_empty_draws is the glDrawArrays(GL_POINTS, 0, 0) calls
+                 * issued on the AUXILIARY context and draws_on_aux is how many
+                 * of those were issued with that context the one this process
+                 * last switched to - taken from the switch this process made and
+                 * not from a query - so the two are equal on an honest run and
+                 * an inequality names a draw issued with the wrong context
+                 * current. context_switches and context_restores are the two
+                 * successful switches around each of those draws, each equal to
+                 * aux_empty_draws. aux_contexts_created is 1 once a main context
+                 * got a share-VERIFIED second context; aux_contexts_destroyed is
+                 * the teardown release of one, and reads 0 on any line printed
+                 * BEFORE teardown runs, which is the honest value at that
+                 * instant. create_failures and skips are served draws REFUSED to
+                 * the CPU path, and a refusal is never a draw made on the main
+                 * context.
+                 *
+                 * AND zc_calls DOES NOT RISE ON THIS ARM, which is the one
+                 * reading a reader of the zero-count arm's own line would get
+                 * wrong. That counter counts empty calls made on the MAIN
+                 * context; this arm makes none there. The candidate_ counts are
+                 * repeated here under distinct names for the same reason the
+                 * control above repeats them: this control claims no work, and
+                 * they read exactly as they do on that arm with it absent.
+                 *
+                 * THE FAILURE FIELDS ARE NOT INTERCHANGEABLE. share_check
+                 * _failures is a platform that did not honour the sharing
+                 * request, so the prepass program's name meant nothing in the
+                 * second context; proc_failures is an auxiliary context that did
+                 * not resolve its OWN entry points, which are not the main
+                 * context's and are never substituted; switch_failures is a
+                 * switch TO it after which the MAIN context was VERIFIED
+                 * current, which is what makes it recoverable;
+                 * main_context_lost is any outcome in which NEITHER context
+                 * could be verified current, which is the DIAGNOSTIC-INVALID
+                 * one.
+                 *
+                 * AND main_context_lost CANNOT BE READ ON A LINE THIS CENSUS
+                 * PRINTS, which is the honest statement of what that field is
+                 * for. That outcome terminates the process where it happens, so
+                 * a launch which reached it printed no census at all: the field
+                 * exists so that a FIXTURE which intercepts the termination can
+                 * read it, and so that a nonzero value - if a reader ever sees
+                 * one - is unambiguous. It is not a refusal and is not
+                 * recoverable; the run measures NOTHING and the words
+                 * DIAGNOSTIC IS INVALID are on stderr. terminations is the same
+                 * fact counted at the exit path itself.
+                 *
+                 * ISSUED IS NOT VERIFIED, with one named exception: the share
+                 * check reads glIsProgram, a query about a NAME. No other field
+                 * here reads GL state back, glGetError is not called, so nothing
+                 * is evidence about what a driver did with any command. Nothing
+                 * here is a fix for any pixel and no cause is named. */
+                if (sl_bgtf_aux_empty() == 1) {
+                    fprintf(f, "#95 SL_BG_TF_AUX_EMPTY auxiliary-context "
+                               "empty-draw control, the zero-count arm's one "
+                               "glDrawArrays(GL_POINTS, 0, 0) issued on a "
+                               "SECOND, OBJECT-SHARING GL context on the same "
+                               "window instead of on the main one: "
+                               "aux_brackets %lu, main_draws_omitted %lu, "
+                               "aux_empty_draws %lu, draws_on_aux %lu, "
+                               "context_switches %lu, context_restores %lu, "
+                               "aux_reuses %lu, aux_skips %lu, "
+                               "aux_contexts_created %lu, "
+                               "create_failures %lu, share_check_failures %lu, "
+                               "switch_failures %lu, proc_failures %lu, "
+                               "main_context_lost %lu, terminations %lu, "
+                               "aux_contexts_destroyed %lu, aux_refusals %lu; "
+                               "candidate_prepasses %lu, candidate_vertices "
+                               "%lu, candidate_binds %lu, "
+                               "candidate_submitted_runs %lu. The main context "
+                               "performs its existing setup and its existing "
+                               "restoration unchanged and simply does not issue "
+                               "the call; at that point the auxiliary context is "
+                               "made current, the SAME SHARED prepass program is "
+                               "bound there, discard is enabled there, the empty "
+                               "call is issued there, that context's own program "
+                               "and discard state are put back, and the main "
+                               "context is made current again. The conditions at "
+                               "the call are SL_BG_TF_EMPTY_STATE row A's - "
+                               "transform feedback INACTIVE and rasterizer "
+                               "discard ON - and the only intended difference "
+                               "from that arm is WHICH CONTEXT the call is "
+                               "issued on. NO BUFFER OUTPUT IS BOUND OR CONSUMED "
+                               "on either context, so cross-context buffer "
+                               "synchronisation is untouched and unqualified by "
+                               "this run. A context that could not resolve "
+                               "glIsProgram, could not be created, could not be "
+                               "made current with the MAIN context verified "
+                               "afterwards, could not resolve its own entry "
+                               "points or does not share object names REFUSES "
+                               "the served draw to the CPU path: it never falls "
+                               "back to issuing the call on the main context, "
+                               "because that is the ordinary zero-count arm. An "
+                               "outcome in which NEITHER context can be "
+                               "verified current is not refused but TERMINAL - "
+                               "the process ends at that point, so no line like "
+                               "this one is printed for such a launch. "
+                               "aux_refusals is 0 on every line "
+                               "a reader can see, because a refused launch "
+                               "prints no line at all. These are commands "
+                               "ISSUED, not driver state VERIFIED. This is an "
+                               "EXPERIMENT ARM, NOT a fix, NOT a shipping path - "
+                               "a context switch per mesh is slower than every "
+                               "arm by construction - NOT TF-position-source "
+                               "coverage, and this run's frame times measure "
+                               "nothing\n",
+                            t->ax_setups, t->ax_main_omits, t->ax_draws,
+                            t->ax_draws_aux, t->ax_switches, t->ax_restores,
+                            t->ax_reuses, t->ax_skips, t->ax_creates,
+                            t->ax_create_fails, t->ax_share_fails,
+                            t->ax_switch_fails, t->ax_proc_fails, t->ax_lost,
+                            t->ax_fatals, t->ax_destroys,
+                            t->ax_refusals,
+                            t->prepasses, t->vertices, t->binds,
+                            t->raster_draws);
+                }
+                /* THE AUXILIARY-CONTEXT REAL-PREPASS MODE'S OWN LINE
+                 * (SL_BG_TF_AUX_REAL, src/gfx/sl_gfx_bgtf.h), printed only on a
+                 * launch where one of its two arms is EFFECTIVE - the module's
+                 * own arbiter decides that, so a refused, unreadable or
+                 * miscombined request prints nothing here and is reported once
+                 * on stderr instead. An off launch adds no line of any kind,
+                 * which is what keeps the default census byte for byte what it
+                 * is without this mode existing.
+                 *
+                 * THE SUBJECT IS ITS OWN, keyed on the selector's own name like
+                 * the three controls above it, so the frozen parser keyed on
+                 * "#95 background GPU clip prepass" is untouched and a reader
+                 * grepping for this selector lands on exactly one census line.
+                 *
+                 * THE FIELD GRAMMAR IS key=value, with no space on either side
+                 * of the '=' and no space inside a value, unlike the labelled
+                 * "name value" fields of the four control lines above. This line
+                 * is read by a CAPTURE CHECKER as well as by a person, and
+                 * "name value" makes the separator between a field and its value
+                 * the same character as the separator between tokens - so a
+                 * value that ever acquired a space, or a key that ever acquired
+                 * one, would reparse as a different field set rather than fail.
+                 * key=value cannot do that: a token is split on its first '=',
+                 * and a reader can tokenise the field run on ", " and "; "
+                 * without knowing which keys exist. The prose tail names
+                 * counters in sentences and carries NO '=' character, so every
+                 * '=' in the line belongs to exactly one field and the count of
+                 * them is the count of fields.
+                 *
+                 * A READER MUST TOKENISE, NOT SUBSTRING-SEARCH PER KEY, and that
+                 * is a property of the key set rather than of the separator:
+                 * cpu_draws is a SUFFIX of ar_cpu_draws, as cpu_meshes and
+                 * cpu_indices are of nothing here only by accident. Searching
+                 * for "cpu_draws=" finds "ar_cpu_draws=" first and reads the
+                 * wrong field. Splitting the run on ", " and "; " and then at
+                 * each token's first '=' has no such case, which is why the
+                 * grammar above is stated as a token grammar.
+                 *
+                 * WHY IT EXISTS. Every ar_ counter lives in the module and no
+                 * census printed any of them, so a launch that ran this mode
+                 * reported its work only through the ABSENCE of failure
+                 * messages - and silence cannot separate a prepass that ran on
+                 * the second context from a mode that refused every served
+                 * draw, or from a launch that never reached a bracket at all.
+                 * Three readings, the same empty output, different meanings.
+                 *
+                 * WHICH FIELDS SEPARATE THE TWO ARMS. ar_prepasses with
+                 * ar_vertices is the work that ran; ar_cpu_draws and
+                 * ar_gpu_submits are the served draws each arm handed back and
+                 * are disjoint by construction, so the arm that actually
+                 * rasterised is readable from the numbers and not only from the
+                 * token. On GPU_SOURCE the shared pool is bound and submitted,
+                 * so candidate_binds and candidate_submitted_runs rise with
+                 * ar_gpu_submits; on CPU_SOURCE the original position stream is
+                 * rasterised through the original-raster control, so those two
+                 * stay 0 by construction and cpu_draws carries the raster
+                 * instead. A pool written and never read is the CPU_SOURCE arm;
+                 * a pool neither written nor read is a refusal.
+                 *
+                 * THE ARM TOKEN IS THE EFFECTIVE ONE, read from the module's own
+                 * ar_mode record rather than from the request, so a line can
+                 * never name an arm the arbiter did not grant. ar_refusals is 0
+                 * on every line a reader can see, because a refused launch
+                 * prints no line at all.
+                 *
+                 * ar_lost AND ar_fatals CANNOT BE READ NONZERO ON A LINE THIS
+                 * CENSUS PRINTS, for the reason the control above states about
+                 * its own pair: that outcome ends the process where it happens,
+                 * so a launch which reached it printed no census. The fields
+                 * are here so that a FIXTURE which intercepts the termination
+                 * can read them, and so that a nonzero value - if a reader ever
+                 * sees one - is unambiguous.
+                 *
+                 * ISSUED IS NOT VERIFIED, with the four exceptions the module
+                 * declares: the share check, the two per-bracket glIsBuffer
+                 * questions - each a query about a NAME - and the per-bracket
+                 * error-state drain, which is where the seven ar_gl_ fields come
+                 * from. No other number here reads GL state back, so nothing is
+                 * evidence about what a driver did with any command. This mode
+                 * adds two synchronisation points per served mesh by
+                 * construction, so no field here is evidence about any frame
+                 * time either, and none is evidence about any pixel. */
+                {
+                    const int ar_eff = sl_bgtf_aux_real();
+                    if (ar_eff == SL_BGTF_AR_CPU || ar_eff == SL_BGTF_AR_GPU)
+                        fprintf(f, "#95 SL_BG_TF_AUX_REAL auxiliary-context "
+                                   "real-prepass mode, the REAL nonzero "
+                                   "glDrawArrays(GL_POINTS, 0, nverts) prepass "
+                                   "issued on a SECOND, OBJECT-SHARING GL "
+                                   "context on the same window, whose output "
+                                   "pool the main context rasterises on "
+                                   "GPU_SOURCE and leaves unread on "
+                                   "CPU_SOURCE: arm=%s, ar_mode=%lu, "
+                                   "ar_setups=%lu, ar_main_omits=%lu, "
+                                   "ar_prepasses=%lu, ar_prepasses_aux=%lu, "
+                                   "ar_vertices=%lu, ar_writes=%lu, "
+                                   "ar_cpu_draws=%lu, ar_gpu_submits=%lu, "
+                                   "ar_switches=%lu, ar_restores=%lu, "
+                                   "ar_syncs=%lu, ar_rebinds=%lu, "
+                                   "ar_reuses=%lu, ar_skips=%lu, "
+                                   "ar_creates=%lu, ar_create_fails=%lu, "
+                                   "ar_proc_fails=%lu, ar_prog_fails=%lu, "
+                                   "ar_vao_fails=%lu, ar_buf_checks=%lu, "
+                                   "ar_buf_fails=%lu, ar_switch_fails=%lu, "
+                                   "ar_sync_refusals=%lu, ar_lost=%lu, "
+                                   "ar_fatals=%lu, ar_refusals=%lu, "
+                                   "ar_gl_pre_errors=%lu, "
+                                   "ar_gl_pre_refusals=%lu, "
+                                   "ar_gl_first_pre_error=%lu, "
+                                   "ar_gl_errors=%lu, "
+                                   "ar_gl_error_refusals=%lu, "
+                                   "ar_gl_first_error=%lu, "
+                                   "ar_gl_drain_caps=%lu; "
+                                   "candidate_prepasses=%lu, "
+                                   "candidate_vertices=%lu, "
+                                   "candidate_binds=%lu, "
+                                   "candidate_submitted_runs=%lu, "
+                                   "candidate_submitted_indices=%lu; "
+                                   "cpu_meshes=%u, cpu_draws=%lu, "
+                                   "cpu_indices=%lu. ar_prepasses with "
+                                   "ar_vertices is the work that RAN, and a "
+                                   "line reporting prepasses without vertices "
+                                   "is an empty-draw control under another "
+                                   "name. ar_cpu_draws and ar_gpu_submits are "
+                                   "the served draws each arm handed back and "
+                                   "are DISJOINT, so the arm that rasterised is "
+                                   "readable from the numbers and not only from "
+                                   "the token above; on GPU_SOURCE "
+                                   "candidate_binds and "
+                                   "candidate_submitted_runs rise with "
+                                   "ar_gpu_submits, and on CPU_SOURCE those two "
+                                   "are 0 by construction while cpu_draws "
+                                   "carries the raster, so a pool WRITTEN AND "
+                                   "NEVER READ is that arm and a pool neither "
+                                   "written nor read is a refusal. The arm "
+                                   "named is the EFFECTIVE one the arbiter "
+                                   "granted, taken from ar_mode and never from "
+                                   "the request, and ar_refusals is 0 on every "
+                                   "line a reader can see because a refused "
+                                   "launch prints no line at all. ar_lost and "
+                                   "ar_fatals cannot be nonzero here either: "
+                                   "that outcome ENDS the process where it "
+                                   "happens, so such a launch printed no "
+                                   "census, and the fields exist for a fixture "
+                                   "that intercepts the termination. EVERY "
+                                   "NUMBER ABOVE IS A COMMAND THIS PROCESS "
+                                   "ISSUED OR A SERVED DRAW THIS MODULE "
+                                   "ACCEPTED, AS THE MODULE RECORDED IT - NOT "
+                                   "INDEPENDENT DRIVER VERIFICATION, with the "
+                                   "four exceptions the module declares: the "
+                                   "share check, the two per-bracket "
+                                   "glIsBuffer questions, each a query about a "
+                                   "NAME, and the per-bracket error-state "
+                                   "drain the seven ar_gl_ fields come from. "
+                                   "Nothing here is evidence about any pixel, "
+                                   "and this mode adds two synchronisation "
+                                   "points per served mesh by construction, so "
+                                   "NO FIELD HERE IS PERFORMANCE EVIDENCE and "
+                                   "%s"
+                                   "This is an EXPERIMENT ARM, NOT a fix and "
+                                   "NOT a shipping path\n",
+                                sl_bgtf_ar_name((int) t->ar_mode),
+                                t->ar_mode,
+                                t->ar_setups, t->ar_main_omits,
+                                t->ar_prepasses, t->ar_prepasses_aux,
+                                t->ar_vertices, t->ar_writes,
+                                t->ar_cpu_draws, t->ar_gpu_submits,
+                                t->ar_switches, t->ar_restores,
+                                t->ar_syncs, t->ar_rebinds,
+                                t->ar_reuses, t->ar_skips,
+                                t->ar_creates, t->ar_create_fails,
+                                t->ar_proc_fails, t->ar_prog_fails,
+                                t->ar_vao_fails, t->ar_buf_checks,
+                                t->ar_buf_fails, t->ar_switch_fails,
+                                t->ar_sync_refusals, t->ar_lost,
+                                t->ar_fatals, t->ar_refusals,
+                                t->ar_gl_pre_errors,
+                                t->ar_gl_pre_refusals,
+                                t->ar_gl_first_pre_error,
+                                t->ar_gl_errors,
+                                t->ar_gl_error_refusals,
+                                t->ar_gl_first_error,
+                                t->ar_gl_drain_caps,
+                                t->prepasses, t->vertices, t->binds,
+                                t->raster_draws, t->raster_indices,
+                                g_bgtf_cpur_meshes, g_bgtf_cpur_draws,
+                                g_bgtf_cpur_indices,
+                                /* THE ONE MODE-DEPENDENT CLAUSE IN THIS LINE,
+                                 * and the FINISH text is the original byte for
+                                 * byte. Under FINISH each of the two
+                                 * synchronisation points is a full pipeline
+                                 * drain, so the launch's frame time is the
+                                 * drains' cost and measures nothing about the
+                                 * mode - which is what the original sentence
+                                 * says and what stays true. Under FENCE the two
+                                 * points are a fence with a producer flush and a
+                                 * SERVER-SIDE wait that returns at once, so the
+                                 * sentence would be false: a FENCE frame time is
+                                 * not meaningless by construction, it is simply
+                                 * not something this census or this round has
+                                 * measured. The clause is evaluated only when
+                                 * the line is printed, so no off launch reaches
+                                 * sl_bgtf_ar_sync through it. */
+                                sl_bgtf_ar_sync() == SL_BGTF_FX_FENCE
+                                  ? "this run's frame times are not evidence "
+                                    "from this census either, for a different "
+                                    "reason: under FENCE the two points are a "
+                                    "fence with its producer flush and a "
+                                    "server-side wait that returns at once on "
+                                    "the CPU, so a FENCE frame time is "
+                                    "something a CONTROLLED BENCHMARK of the "
+                                    "two modes could measure and is not "
+                                    "something anything here has measured. "
+                                  : "this run's frame times measure nothing. ");
+                }
+                /* ---- AND HOW THAT MODE SYNCHRONISED, WHEN IT WAS ASKED TO USE
+                 * SYNC OBJECTS (SL_BG_TF_AUX_SYNC). ONE LINE, FENCE ONLY.
+                 *
+                 * WHY A SECOND LINE RATHER THAN MORE FIELDS ABOVE. The 43 tokens
+                 * of the AUX_REAL line are the schema a capture package parses,
+                 * and a FINISH launch's output has to stay byte-identical to
+                 * what it was before this mode had a second synchronisation
+                 * option at all. Adding fields would move that line on every
+                 * launch, FINISH included. A separate line, printed only when
+                 * the EFFECTIVE mode is FENCE, moves nothing: an off launch, a
+                 * default launch and an armed FINISH launch print exactly the
+                 * bytes they printed before, and this line exists only where
+                 * there is something new to say.
+                 *
+                 * WHY IT EXISTS. Without it a FENCE launch is INDISTINGUISHABLE
+                 * from a FINISH one in the product's own output. The selector
+                 * can be refused for a capability that did not resolve, a sync
+                 * object a context would not create, or a handoff that was never
+                 * proved - and every one of those refusals falls back to NOTHING
+                 * rather than to the drains, so the AUX_REAL line above reports
+                 * fewer writes and says nothing about why. Three readings, one
+                 * output, different meanings. A capture that cannot tell them
+                 * apart cannot be evidence either way.
+                 *
+                 * THE FIELD SET IS 28 TOKENS: the effective arm, the effective
+                 * synchronisation mode by name, and every one of the 26 members
+                 * of struct sl_bgtf_fence_counters. All 26 are printed, so the
+                 * line describes its own struct and a counter added to that
+                 * struct without a token here is a census that no longer does.
+                 *
+                 * A READER MUST TOKENISE, AS IT MUST FOR THE LINE ABOVE. Split
+                 * the run on ", " and "; " and then at each token's first equals
+                 * sign. There is no equals sign anywhere in the emitted line
+                 * outside a field label, which is what makes the count of them
+                 * readable as the field count. No key in THIS set is a suffix of
+                 * another, so a per-key substring search would happen to work
+                 * here; the AUX_REAL line's set is not so lucky - cpu_draws is a
+                 * suffix of ar_cpu_draws - so a parser shared between the two
+                 * lines has to tokenise, and this line is written to the same
+                 * grammar so that one parser serves both.
+                 *
+                 * WHAT A CAPTURE CHECKER DOES WITH IT is the invariant list in
+                 * src/gfx/sl_gfx_bgtf.h beside the struct: M1-M2 that the mode
+                 * is FENCE, H1-H2 that every COMPLETED prepass proved both of
+                 * its handoffs, D1-D4 the per-direction and per-context
+                 * equalities on a clean run, A1-A4 the identities that hold
+                 * whatever happened, F1 the failure fields that make the line
+                 * evidence of a REFUSAL rather than of a proved run, and X1-X4
+                 * the cross-checks against the AUX_REAL line printed
+                 * immediately above. The rules live with the struct because the
+                 * struct is their authority; they are repeated nowhere, so they
+                 * cannot drift apart.
+                 *
+                 * EVERY NUMBER IS A CALL THIS PROCESS ISSUED OR A DECISION IT
+                 * TOOK. A "proved" handoff is a glWaitSync this process issued
+                 * into the consumer context's command stream after a fence and a
+                 * producer flush on the other - an ORDERING it established, NOT
+                 * a completion it observed and NOT a pixel. No field here is a
+                 * frame time, and this line is not a performance claim: see the
+                 * clause the line above prints under FENCE. */
+                {
+                    const int fx_eff = sl_bgtf_ar_sync();
+                    const int ar_fx  = sl_bgtf_aux_real();
+                    if (fx_eff == SL_BGTF_FX_FENCE
+                        && (ar_fx == SL_BGTF_AR_CPU || ar_fx == SL_BGTF_AR_GPU)) {
+                        const struct sl_bgtf_fence_counters *x =
+                            sl_bgtf_fence_stats();
+                        fprintf(f, "#95 SL_BG_TF_AUX_SYNC fence handoff census, "
+                                   "the cross-context visibility the "
+                                   "real-prepass mode above established with "
+                                   "two sync objects per served mesh instead of "
+                                   "two pipeline drains, printed ONLY when the "
+                                   "EFFECTIVE mode is FENCE: arm=%s, sync=%s, "
+                                   "fx_mode=%lu, fx_asked=%lu, fx_writes=%lu; "
+                                   "fx_in_fences=%lu, fx_in_fence_fails=%lu, "
+                                   "fx_in_flushes=%lu, fx_in_waits=%lu, "
+                                   "fx_in_proved=%lu; fx_out_fences=%lu, "
+                                   "fx_out_fence_fails=%lu, "
+                                   "fx_out_flushes=%lu, fx_out_waits=%lu, "
+                                   "fx_out_proved=%lu; fx_deletes=%lu, "
+                                   "fx_deletes_main=%lu, fx_deletes_aux=%lu, "
+                                   "fx_live=%lu, fx_peak=%lu, fx_leaks=%lu, "
+                                   "fx_fatal_drops=%lu; fx_finish_omits=%lu, "
+                                   "fx_proc_fails=%lu, fx_proc_fails_main=%lu, "
+                                   "fx_proc_fails_aux=%lu, fx_refusals=%lu, "
+                                   "fx_unproved_refusals=%lu. TWENTY-EIGHT "
+                                   "TOKENS, and a reader SPLITS the run on the "
+                                   "two separators and then at each token's "
+                                   "first equals sign rather than searching for "
+                                   "a key, which is the grammar the AUX_REAL "
+                                   "line above requires and this one follows so "
+                                   "that one parser serves both. THE INPUT "
+                                   "HANDOFF runs MAIN to AUXILIARY: the fence "
+                                   "and the fx_in_flushes producer flush are "
+                                   "issued on the MAIN context and the "
+                                   "fx_in_waits wait on the AUXILIARY one, "
+                                   "which also deletes, so fx_deletes_aux is "
+                                   "the input side's. THE OUTPUT HANDOFF runs "
+                                   "AUXILIARY to MAIN after the matched "
+                                   "feedback scope closes: fence and flush on "
+                                   "the AUXILIARY context, wait on the MAIN one "
+                                   "after the VERIFIED switch home, which "
+                                   "deletes - so ON A COMPLETED BRACKET "
+                                   "fx_deletes_main is the output side's, while "
+                                   "a REFUSAL still holding the INPUT object "
+                                   "deletes that one on the main context too, "
+                                   "which is where that path's context is "
+                                   "verified current. fx_writes is the "
+                                   "prepasses this "
+                                   "mode COMPLETED, meaning the slot was tagged "
+                                   "written and a caller may bind and rasterise "
+                                   "the pool; ON A CLEAN RUN each of "
+                                   "fx_in_fences, fx_in_flushes, fx_in_waits, "
+                                   "fx_deletes_aux, fx_out_fences, "
+                                   "fx_out_flushes, fx_out_waits, "
+                                   "fx_deletes_main, fx_in_proved and "
+                                   "fx_out_proved equals it, fx_deletes and "
+                                   "fx_finish_omits are twice it, and the "
+                                   "AUX_REAL line's ar_writes equals it while "
+                                   "its ar_syncs equals fx_in_flushes plus "
+                                   "fx_out_flushes - two synchronisation points "
+                                   "per bracket, the same count this work "
+                                   "reports under FINISH. fx_finish_omits is "
+                                   "the drains this mode did NOT issue and is "
+                                   "the positive record that the fences "
+                                   "REPLACED them rather than joining them. "
+                                   "fx_peak is AT MOST 1, which is the claim "
+                                   "about the object population that holds "
+                                   "whatever happened: the two handles are "
+                                   "single locals and the input object is "
+                                   "released before the output object is "
+                                   "created, so no path overlaps them, and a "
+                                   "launch whose FIRST fence create answered 0 "
+                                   "never held one at all and reports fx_peak "
+                                   "as 0. ON AN ACCEPTED CLEAN RUN fx_live and "
+                                   "fx_leaks are both 0 - nothing is held at "
+                                   "the census and nothing was held at a "
+                                   "bracket's return - and NEITHER IS ASSUMED "
+                                   "OF A RECORDED FAILURE: this mode RAISES "
+                                   "fx_leaks at a bracket that returns still "
+                                   "holding an object, which is why the two are "
+                                   "counted and printed rather than asserted "
+                                   "away. ANY NONZERO "
+                                   "VALUE AMONG fx_proc_fails, "
+                                   "fx_in_fence_fails, fx_out_fence_fails, "
+                                   "fx_refusals, fx_unproved_refusals, "
+                                   "fx_leaks AND fx_fatal_drops MAKES THIS LINE "
+                                   "EVIDENCE OF A REFUSAL AND NOT OF A PROVED "
+                                   "FENCE RUN, and a capture checker must "
+                                   "REJECT it as the latter: a refused handoff "
+                                   "never falls back to the drains, so the "
+                                   "shortfall appears here and in the AUX_REAL "
+                                   "line's writes and nowhere else. The full "
+                                   "acceptance rules are stated once, beside "
+                                   "the struct in src/gfx/sl_gfx_bgtf.h. EVERY "
+                                   "NUMBER ABOVE IS A CALL THIS PROCESS ISSUED "
+                                   "OR A DECISION IT TOOK; a PROVED handoff is "
+                                   "a wait this process issued into the "
+                                   "consumer context's command stream, an "
+                                   "ORDERING IT ESTABLISHED AND NOT A "
+                                   "COMPLETION IT OBSERVED, because glWaitSync "
+                                   "returns at once on the CPU. Nothing here is "
+                                   "evidence about any pixel or any frame time, "
+                                   "and nothing here makes this a fix or a "
+                                   "shipping path: A CONTROLLED BENCHMARK OF "
+                                   "THE TWO MODES AND AN EXACT-IMAGE CAPTURE "
+                                   "REMAIN NECESSARY\n",
+                                sl_bgtf_ar_name(ar_fx),
+                                sl_bgtf_fx_name(fx_eff),
+                                x->fx_mode, x->fx_asked, x->fx_writes,
+                                x->fx_in_fences, x->fx_in_fence_fails,
+                                x->fx_in_flushes, x->fx_in_waits,
+                                x->fx_in_proved,
+                                x->fx_out_fences, x->fx_out_fence_fails,
+                                x->fx_out_flushes, x->fx_out_waits,
+                                x->fx_out_proved,
+                                x->fx_deletes, x->fx_deletes_main,
+                                x->fx_deletes_aux, x->fx_live, x->fx_peak,
+                                x->fx_leaks, x->fx_fatal_drops,
+                                x->fx_finish_omits, x->fx_proc_fails,
+                                x->fx_proc_fails_main, x->fx_proc_fails_aux,
+                                x->fx_refusals, x->fx_unproved_refusals);
+                    }
+                }
+                /* ---- AND HOW THAT MODE WAS SELECTED, WHEN NOTHING NAMED IT.
+                 * ONE LINE, THE OPT-IN CANDIDATE ONLY.
+                 *
+                 * WHY A THIRD LINE RATHER THAN A FIELD IN EITHER OF THE TWO
+                 * ABOVE. The AUX_REAL line's tokens are the schema a capture
+                 * package parses and the FENCE line's are a second one; adding a
+                 * field to either moves a line that every named-arm launch
+                 * prints, which is the one thing those two may not do. A
+                 * separate line, printed only when the arm in force was selected
+                 * by the opt-in candidate rather than named, moves neither: an
+                 * off launch, a named-arm launch and a stood-down launch print
+                 * nothing here and their output is byte-identical to what it was
+                 * before this selection existed.
+                 *
+                 * WHAT IT IS FOR. The candidate and a named GPU_SOURCE arm issue
+                 * the same commands, so the two census lines above read
+                 * identically for both - and they are not the same thing. One is
+                 * an A/B arm a reader set up and the other is what an opted-in
+                 * session got without asking. This line is the difference, and
+                 * it is also where the selection's BOUNDARY is stated beside the
+                 * numbers rather than only in a document.
+                 *
+                 * NO ENVIRONMENT VALUE IS PRINTED. The two tokens are the names
+                 * of the mode in force, which is what the lines above already
+                 * print, and the opt-in switch's own value appears nowhere.
+                 *
+                 * AND IT IS KEYED BY THE SELECTOR'S NAME, like the two lines
+                 * above and unlike the module's own census. The witness checker
+                 * in tools/windows/perflive-check.py counts every line carrying
+                 * the module's census prefix and requires each to parse as a
+                 * census or to be one of four named diagnostics, so a new line
+                 * under that prefix would read as a DRIFTED census rather than
+                 * as a new fact. The selector-keyed prefix the sibling lines use
+                 * is outside that rule by construction. */
+                {
+                    const int ar_opt = sl_bgtf_aux_real();
+                    /* v0.4 AND THE PRODUCTION SELECTION GETS ITS OWN LINE, for
+                     * the reason the candidate's exists at all: the two reach
+                     * the identical arm by identical commands, so every line
+                     * above reads the same for both, and the one thing a reader
+                     * needs is which of them this launch is. They are two
+                     * statements rather than one line with a conditional clause
+                     * in it, because what each has to say about HOW the arm was
+                     * reached is different and a branch inside a sentence would
+                     * be false for one of the two launches that print it.
+                     *
+                     * BOTH ARE GUARDED ON THE IMPLICIT RECORD AND ON THE ARM,
+                     * so an off launch, a named-arm launch and a stood-down
+                     * launch print neither. */
+                    if (sl_bgtf_ar_implicit() && sl_bgtf_production()
+                        && (ar_opt == SL_BGTF_AR_CPU
+                            || ar_opt == SL_BGTF_AR_GPU))
+                        fprintf(f, "#95 OPTIMIZED RENDERING production selection "
+                                   "census, printed ONLY when the arm in force "
+                                   "was selected by the row rather than named: "
+                                   "selection=PRODUCTION, arm=%s, sync=%s - the "
+                                   "row admitted these walks, no selector named "
+                                   "an arm, and the effective mode above was "
+                                   "selected by the production default. The "
+                                   "MAIN-CONTEXT prepass and the background "
+                                   "vertex program were NOT run: each was "
+                                   "measured ONE BLUE VALUE APART from the "
+                                   "original renderer's frames on the scene that "
+                                   "carries the defect, while this arm's were "
+                                   "BYTE EXACT on the viewpoints recorded for "
+                                   "this selection. THAT IS AN IMAGE RESULT AND "
+                                   "NOTHING ELSE: it is NOT wider exact-image "
+                                   "coverage, NOT a frame-time or frame-rate "
+                                   "result, and NOT release acceptance. The "
+                                   "main-context arm is reachable only by name "
+                                   "with SL_BG_TF_CLIP=1\n",
+                                sl_bgtf_ar_name(ar_opt),
+                                sl_bgtf_fx_name(sl_bgtf_ar_sync()));
+                    if (sl_bgtf_ar_implicit() && !sl_bgtf_production()
+                        && (ar_opt == SL_BGTF_AR_CPU
+                            || ar_opt == SL_BGTF_AR_GPU))
+                        fprintf(f, "#95 SL_BG_TF_CLIP opt-in candidate census, "
+                                   "the selection a launch that named no arm "
+                                   "received, printed ONLY when the arm in force "
+                                   "was selected by the candidate: "
+                                   "selection=IMPLICIT, arm=%s, "
+                                   "sync=%s - this launch opted into the clip "
+                                   "prepass and NAMED NO ARM, so the effective "
+                                   "mode above was selected by the candidate's "
+                                   "own default and not requested. The "
+                                   "MAIN-CONTEXT prepass was NOT run: its frames "
+                                   "were measured ONE BLUE VALUE APART from the "
+                                   "original renderer's on the scene that "
+                                   "carries the defect, while this arm's were "
+                                   "byte-identical there under both "
+                                   "synchronisation modes. THAT MEASUREMENT IS "
+                                   "ONE VIEWPOINT, ONE MACHINE AND ONE DRIVER: "
+                                   "it is why this arm is the default and it is "
+                                   "NOT wider exact-image coverage, NOT a "
+                                   "performance result and NOT release "
+                                   "acceptance. THIS LAUNCH REACHED THE ARM BY "
+                                   "NAMING SL_BG_TF_CLIP: the OPTIMIZED "
+                                   "RENDERING row selects the same arm for an "
+                                   "ordinary session, and the production "
+                                   "census line is what says so for that one\n",
+                                sl_bgtf_ar_name(ar_opt),
+                                sl_bgtf_fx_name(sl_bgtf_ar_sync()));
+                }
+            }
             fprintf(f, "#68 background fog: projection %d, mode %d (0 none, 1 the RSP's "
                        "per-vertex value, 2 the fog colour's alpha), colour "
                        "%u %u %u, band fm %d fo %d (no fog below ndc z %.5f, "

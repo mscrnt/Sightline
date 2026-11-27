@@ -87,6 +87,99 @@ from a source checkout, see [docs/xbla-setup.md](docs/xbla-setup.md). The screen
 the Community HD project's and the remaster's artwork, which belong to their
 rightsholders ([docs/images/README.md](docs/images/README.md)).
 
+## Optimized rendering
+
+One setting, **OPTIMIZED RENDERING**, chooses how three parts of the renderer
+submit their geometry. It is **on by default**. It does not change how the game
+plays: the simulation, the controls and every timer are the same in both
+positions, and nothing in the simulation reads it.
+
+Both views edit the same stored value, so they can never disagree:
+
+- the front end, **OPTIONS → SETTINGS → DISPLAY**;
+- the in-game watch, **SIGHTLINE → GRAPHICS**.
+
+It is saved with your other settings in `%LOCALAPPDATA%\sightline\config.ini`
+and survives a restart. A new install has it on; a config file written before
+this setting existed reads as on.
+
+| | What it selects |
+|---|---|
+| **ON** | the skydome's cloud draws submit one indexed buffer per material instead of one command per index; the background's clip positions are computed on the GPU, by a prepass whose output has been checked pixel for pixel against the original path; and the per-vertex CPU loop behind it skips the vertices no mesh of the frame reads |
+| **OFF** | all three draw through the original paths, which is what every build before this setting did |
+
+**What ON is and is not a promise of.** It is a promise about the **picture**,
+and it reaches exactly as far as the comparison that was run. The **candidate
+executable** — a candidate until the final commit and release, not a shipped
+build — has now been compared through the setting itself rather than through a
+developer switch: six clean starts, three scenes (Runway, Frigate, Facility),
+the stored setting off for one start and on for the next, and all nine
+frame-matched moments came back **byte-identical** at 640×480. **That is the
+promise, and its scope is those three viewpoints at that resolution**: other
+scenes and other resolutions have not been compared through this setting at
+all, so the picture there is untested rather than guaranteed.
+Earlier captures at 1920×1080 found the same renderer path byte-identical too,
+but those selected it with developer switches on an earlier candidate build, so
+they are evidence about that path and that build, not about this setting at that
+resolution. It is **not** a promise about frame rate. Turning it on is not a
+guarantee that any scene reaches any particular frame rate, and the frame times
+that have been measured for it are a relative comparison between the two
+positions rather than a speed claim.
+
+**What OFF does not change.** The processor-side work accepted earlier in this
+sprint is compiled in and runs either way — the background vertex helper, the
+fill-query workers, the cached renderer settings and the conditional
+diagnostics all keep their own eligibility rules, and no worker is started or
+stopped by this setting. OFF does not rebuild an older executable.
+
+**It falls back rather than breaking, with one exception.** Each part checks
+what it needs before it draws anything: if the driver lacks an entry point, a
+shader will not compile, or memory cannot be allocated, that part draws through
+its original path instead and the picture is unchanged. The exception is a
+graphics context that can no longer be identified: when the backend cannot
+establish which context is current, that is not a fallback — the run ends
+rather than drawing through either path.
+Setting up a shader, allocating a buffer or redoing a frame's work after a
+fallback all take time, so a fallback is not free — what it protects is the
+picture, not the frame rate. Switching the setting applies at the next frame
+boundary, never halfway through a draw.
+
+**What the timing measurement says, and what it does not.** One relative
+timing screen has now been taken on the pinned candidate executable
+(SHA-256 `852073d3c4e3c6b618f0ab03f77860a0eb22c14b7bb332739dfd51f9bf8d97bd`,
+run receipt `efb98bcd1037e828b3b5676cf6a075b8941644ed06221ccc10403f540bba945d`)
+through the setting itself: Runway at 640×480, four clean starts of 5200 frames
+each, in off / on / on / off order. Judged by the project's own one-bar relative
+screen the result is **no material regression** — p99 frame interval 31.312 ms
+and 30.830 ms with the setting off, 30.867 ms and 30.746 ms with it on, against
+a bar of 32.8535 ms. The mean near 16.667 ms in all four starts is the
+presentation pacing lock, not a measure of speed, so no difference can be read
+off the mean at all. **This is not a speed-up claim.** The screen reports **no
+optimization verdict** — it was declared a narrow screen and takes no readiness
+plan — and its *over budget* label comes from a descriptive 1920×1080 60 Hz
+target carried beside it, not from an absolute failure at 640×480. It covers one
+scene at one resolution on one machine and one driver: no frame rate, no
+1080p60, and nothing about any other scene or resolution follows from it. **The
+setting is still named for what it selects, not for a speed-up that has been
+demonstrated.** A separate, earlier screen was taken at 1920×1080 on an earlier
+candidate build driven by developer switches rather than through this setting:
+it found no material regression between the two paths, and **both** of them
+missed the 60 Hz frame budget it was screened against. It is evidence about that
+build, and nothing here promises 1080p60.
+The byte-identical picture comparison covers three scenes at 640×480 and nothing
+further — other scenes and other resolutions are unproved, each position was
+started once per scene, and the comparison is between the two paths of the same
+build rather than against an external reference image. A driver fault seen
+during this work is also unresolved: intermittently a start dies on its very
+first frame inside the graphics driver (`nvoglv32`), dereferencing a null value
+on a driver worker thread. It was observed on the **original** path at both
+1920×1080 and 640×480, and its initiating cause is unknown. Starts whose process
+environment carried the Windows system variables were clean and starts without
+them faulted, which is a correlation across the starts recorded so far and not
+an established cause. One case is deliberately held back meanwhile: a background
+frame that spans the game's far plane draws in two depth ranges, and ON keeps
+that frame on the original processor path rather than on either GPU path.
+
 ## Goals
 
 Three deliverables, in dependency order — these are **goals**, not shipped
@@ -285,8 +378,11 @@ archive's known-good checksums, the options and the per-stage details are in
 ### Beyond the quick start
 
 `tools\windows\package-demo.ps1` bundles a build with a ROM you supply into
-a single private, local executable; that output is git-ignored and is not
-something this repository ships. `tools\windows\README.md` covers the
+a single private, local executable - with the COMMUNITY HD and XBLA sets
+prepared in `texpacks\` and `worldassets\`, when they exist - that runs on
+another Windows machine with no checkout and no preparation; it unpacks the
+sets on its first run. That output is git-ignored and is not something this
+repository ships. `tools\windows\README.md` covers the
 launcher and measurement modes in more detail.
 
 The matching build and the trace tooling are driven through `make`
